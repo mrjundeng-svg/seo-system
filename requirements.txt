@@ -6,3 +6,4 @@ google-genai
 requests
 python-docx
 google-api-python-client
+streamlit-option-menu
