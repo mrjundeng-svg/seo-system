@@ -1,136 +1,156 @@
 import streamlit as st
 import pandas as pd
+import io
 
-# 1. CẤU HÌNH TRANG
-st.set_page_config(page_title="Hệ thống SEO Lái Hộ - Admin Panel", layout="wide")
+# 1. CẤU HÌNH TRANG & GIAO DIỆN (UI/UX)
+st.set_page_config(page_title="Hệ thống SEO Quản trị - Lái Hộ", layout="wide")
 
-# 2. LOGIN LOGIC
+# Custom CSS để làm bảng hiển thị full, không bị cuộn nội dung bên trong
+st.markdown("""
+    <style>
+    .stDataFrame div[data-testid="stTable"] { width: 100%; }
+    /* Tối ưu hóa khoảng cách và màu sắc */
+    .main { background-color: #f8f9fa; }
+    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
+    div[data-testid="stExpander"] { border: 1px solid #dee2e6; border-radius: 8px; background-color: white; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# 2. KHỞI TẠO DỮ LIỆU (SESSION STATE) - Để lưu thông tin khi Import hoặc sửa
+def init_data(key, default_df):
+    if key not in st.session_state:
+        st.session_state[key] = default_df
+
+# Dữ liệu mẫu dựa trên template của bạn
+init_data('df_config', pd.DataFrame({
+    "Hạng mục": ["GEMINI_API_KEY", "SERPAPI_KEY", "SENDER_EMAIL", "TARGET_URL", "Số lượng bài/ngày"],
+    "Giá trị": ["", "", "jundeng.po@gmail.com", "https://laiho.vn/", "10"]
+}))
+
+init_data('df_backlink', pd.DataFrame({
+    "Từ khóa": ["lái xe hộ", "thuê tài xế"],
+    "URL Đích": ["https://laiho.vn", "https://laiho.vn"],
+    "Đã dùng": [0, 5]
+}))
+
+# 3. HÀM TIỆN ÍCH: IMPORT & EXPORT
+def export_csv(df):
+    return df.to_csv(index=False).encode('utf-8-sig')
+
+def import_csv(uploaded_file, key):
+    if uploaded_file is not None:
+        st.session_state[key] = pd.read_csv(uploaded_file)
+        st.success("Đã nạp dữ liệu từ file thành công!")
+
+# 4. KIỂM TRA ĐĂNG NHẬP
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
 if not st.session_state['logged_in']:
-    st.title("🔐 Đăng nhập Hệ thống SEO")
-    user = st.text_input("Tên đăng nhập")
-    pw = st.text_input("Mật khẩu", type="password")
-    if st.button("Đăng nhập"):
-        if (user == "admin" and pw == "123") or (user == "editor" and pw == "456"):
-            st.session_state['logged_in'] = True
-            st.rerun()
-        else:
-            st.error("Sai thông tin!")
+    st.title("🔐 Hệ thống SEO Nội bộ")
+    with st.container(border=True):
+        user = st.text_input("Tài khoản")
+        pw = st.text_input("Mật khẩu", type="password")
+        if st.button("Đăng nhập"):
+            if (user == "admin" and pw == "123"):
+                st.session_state['logged_in'] = True
+                st.rerun()
+            else:
+                st.error("Sai thông tin!")
 else:
-    # SIDEBAR MENU
-    st.sidebar.title("🎮 ĐIỀU HÀNH")
-    project = st.sidebar.selectbox("📂 Chọn Dự án", ["Lái Hộ", "Giúp Việc Nhanh"])
-    menu = st.sidebar.radio("📍 Danh mục Quản lý", [
-        "Config", 
-        "Data_Backlink", 
-        "Data_Website", 
-        "Data_Image", 
-        "Data_Spin", 
-        "Data_Local", 
-        "Data_Report"
-    ])
-    
-    if st.sidebar.button("🚪 Đăng xuất"):
-        st.session_state['logged_in'] = False
-        st.rerun()
+    # 5. SIDEBAR NAVIGATION
+    with st.sidebar:
+        st.title("🎮 ĐIỀU HÀNH")
+        project = st.selectbox("Dự án", ["Lái Hộ", "Giúp Việc Nhanh"])
+        menu = st.radio("Danh mục", ["Config", "Data_Backlink", "Data_Website", "Data_Local", "Data_Report"])
+        st.markdown("---")
+        if st.button("🚪 Đăng xuất", key="logout"):
+            st.session_state['logged_in'] = False
+            st.rerun()
 
     st.title(f"🚀 {project} - {menu}")
+
+    # --- CÔNG CỤ CHUNG: IMPORT / EXPORT ---
+    with st.expander("📥 Thao tác File (Import/Export)"):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("📤 Xuất dữ liệu")
+            current_df = st.session_state.get(f'df_{menu.lower()}', pd.DataFrame())
+            st.download_button(
+                label=f"Tải file {menu}.csv",
+                data=export_csv(current_df),
+                file_name=f"{menu}_export.csv",
+                mime='text/csv'
+            )
+        with col2:
+            st.write("📥 Nhập dữ liệu")
+            up_file = st.file_uploader(f"Chọn file CSV cho {menu}", type=["csv"])
+            if st.button(f"Nạp dữ liệu {menu}"):
+                import_csv(up_file, f'df_{menu.lower()}')
+
     st.markdown("---")
 
-    # --- 1. CONFIG (Theo image_3079ff.png) ---
+    # --- HIỂN THỊ NỘI DUNG THEO MENU ---
     if menu == "Config":
-        st.subheader("⚙️ Cấu hình thông số hệ thống")
-        config_data = {
-            "Cột A (Nội dung - Fix cứng)": [
-                "GEMINI_API_KEY", "SERPAPI_KEY", "SENDER_EMAIL", "SENDER_PASSWORD", 
-                "RECEIVER_EMAIL", "Danh sách Keyword bài viết", "TARGET_URL", 
-                "Website đối thủ", "Mục tiêu bài viết", "Số lượng bài cần tạo", 
-                "Thiết lập số lượng chữ", "Số lượng backlink/bài", "FOLDER_DRIVE_ID"
-            ],
-            "Cột B (Dữ liệu - Bạn điền vào đây)": [
-                "", "", "jundeng.po@gmail.com", "", "jundeng.po@gmail.com", 
-                "thuê tài xế lái hộ, đưa người say...", "https://laiho.vn/", 
-                "lmd.vn, butl.vn...", "bài viết dạng tư vấn...", "10", "900 - 1200", "3 - 4", ""
-            ]
-        }
-        st.data_editor(pd.DataFrame(config_data), use_container_width=True, num_rows="fixed")
-        st.button("Lưu Config")
+        st.subheader("⚙️ Cài đặt hệ thống")
+        # height=400 và use_container_width giúp bảng hiển thị full không scroll
+        st.session_state.df_config = st.data_editor(
+            st.session_state.df_config, 
+            use_container_width=True, 
+            num_rows="fixed",
+            height=300 
+        )
 
-    # --- 2. DATA_BACKLINK (Theo image_307a1e.png) ---
     elif menu == "Data_Backlink":
-        st.subheader("🔗 Quản lý Từ khóa & URL Đích")
-        backlink_data = {
-            "DatDat (Từ khóa)": ["lái xe hộ", "dịch vụ lái xe hộ", "giá thuê tài xế đi tỉnh"],
-            "Cột B (Danh sách URL Đích)": ["https://laiho.vn", "https://laiho.vn", "https://laiho.vn"],
-            "Cột C (Số lần đã dùng)": [0, 4, 3]
-        }
-        st.data_editor(pd.DataFrame(backlink_data), use_container_width=True, num_rows="dynamic")
-        st.button("Cập nhật Backlink")
+        st.subheader("🔗 Quản lý Link & Từ khóa")
+        st.session_state.df_backlink = st.data_editor(
+            st.session_state.df_backlink,
+            use_container_width=True,
+            num_rows="dynamic",
+            height=500 # Tăng chiều cao để hiện hết các hàng
+        )
 
-    # --- 3. DATA_WEBSITE (Theo image_307cc7.png) ---
     elif menu == "Data_Website":
-        st.subheader("🌐 Quản lý Tài khoản Blog/Website")
-        web_data = {
-            "ID": ["Blog Lái Hộ 1", "Blog Lái Hộ 2", "Blog Lái Hộ 3"],
-            "Nền tảng": ["Blogger", "Blogger", "Blogger"],
-            "URL / ID": ["muontaixelaxe.laiho1@...", "muontaixelaxe.laiho2@...", "thuetaixelaxe.laiho3@..."],
-            "Tài khoản (Chỉ WP)": ["", "", ""],
-            "Mật khẩu ứng dụng (Chỉ WP)": ["", "", ""],
-            "Trạng thái": ["Bật", "Bật", "Bật"],
-            "Giới hạn bài/ngày": ["1 - 2", "1 - 2", "1 - 2"]
-        }
-        st.data_editor(pd.DataFrame(web_data), use_container_width=True, num_rows="dynamic")
-        st.button("Lưu danh sách Web")
+        st.subheader("🌐 Hệ thống Website vệ tinh")
+        init_data('df_website', pd.DataFrame({
+            "ID Blog": ["Blog 1", "Blog 2"],
+            "Nền tảng": ["Blogger", "Blogger"],
+            "Trạng thái": ["Bật", "Bật"]
+        }))
+        st.session_state.df_website = st.data_editor(
+            st.session_state.df_website,
+            use_container_width=True,
+            num_rows="dynamic",
+            height=500
+        )
 
-    # --- 4. DATA_IMAGE (Theo image_307ce6.png) ---
-    elif menu == "Data_Image":
-        st.subheader("🖼️ Kho ảnh SEO")
-        image_data = {
-            "Link Ảnh (URL)": ["https://i.postimg.cc/...", "https://i.postimg.cc/..."],
-            "Số lần đã dùng": [3, 3]
-        }
-        st.data_editor(pd.DataFrame(image_data), use_container_width=True, num_rows="dynamic")
-        st.button("Cập nhật kho ảnh")
-
-    # --- 5. DATA_SPIN (Theo image_307d1d.png) ---
-    elif menu == "Data_Spin":
-        st.subheader("✍️ Từ điển Spin nội dung")
-        spin_data = {
-            "Từ khóa gốc": ["chúng tôi", "bạn", "dịch vụ lái xe hộ", "an toàn"],
-            "Từ đồng nghĩa (Cách nhau bằng dấu phẩy)": [
-                "tụi mình, bên mình, phía chúng tôi...", 
-                "anh/chị, quý khách, khách hàng...", 
-                "dịch vụ thuê tài xế, gọi tài xế...", 
-                "an tâm, yên tâm, đảm bảo..."
-            ]
-        }
-        st.data_editor(pd.DataFrame(spin_data), use_container_width=True, num_rows="dynamic")
-        st.button("Lưu từ điển")
-
-    # --- 6. DATA_LOCAL (Theo image_307d3c.png) ---
     elif menu == "Data_Local":
         st.subheader("📍 Phủ sóng địa phương")
-        local_data = {
-            "Tỉnh/Thành phố": ["Tp Hồ Chí Minh", "Tp Hồ Chí Minh", "Tp Hồ Chí Minh"],
-            "Quận/Huyện": ["Quận 1", "Quận 1", "Bình Thạnh"],
-            "Địa điểm/Tuyến đường": ["Bùi Viện", "Nguyễn Huệ", "Phạm Viết Chánh"]
-        }
-        st.data_editor(pd.DataFrame(local_data), use_container_width=True, num_rows="dynamic")
-        st.button("Lưu địa điểm")
+        init_data('df_local', pd.DataFrame({
+            "Tỉnh/Thành": ["TP.HCM", "Hà Nội"],
+            "Quận/Huyện": ["Quận 1", "Cầu Giấy"],
+            "Địa danh": ["Bùi Viện", "Duy Tân"]
+        }))
+        st.session_state.df_local = st.data_editor(
+            st.session_state.df_local,
+            use_container_width=True,
+            num_rows="dynamic",
+            height=600
+        )
 
-    # --- 7. DATA_REPORT (Theo image_307d5b.jpg) ---
     elif menu == "Data_Report":
-        st.subheader("📊 Nhật ký thực thi (Log report)")
-        report_data = {
-            "Website": ["Blog Lái Hộ 1", "Blog Lái Hộ 2"],
-            "Nền tảng": ["Blogger", "Blogger"],
-            "Ngày đăng bài": ["2026-03-22", "2026-03-23"],
-            "Từ khoá 1": ["thuê tài xế", "lái xe hộ"],
-            "Link bài viết": ["Check link trên blog...", "Check link trên blog..."],
-            "Trạng thái": ["DONE", "DONE"]
-        }
-        # Tab này cho phép xem và sửa log
-        st.data_editor(pd.DataFrame(report_data), use_container_width=True, num_rows="dynamic")
-        st.success("Hệ thống tự động cập nhật nhật ký sau mỗi lần đăng bài.")
+        st.subheader("📊 Nhật ký thực thi (Logs)")
+        init_data('df_report', pd.DataFrame({
+            "Ngày": ["2026-03-23"],
+            "Website": ["Blog 1"],
+            "Từ khóa": ["lái xe hộ"],
+            "Trạng thái": ["DONE"]
+        }))
+        st.session_state.df_report = st.data_editor(
+            st.session_state.df_report,
+            use_container_width=True,
+            num_rows="dynamic",
+            height=800
+        )
+
+    st.success("✅ Mọi thay đổi trên bảng đều được tự động ghi nhận trong phiên làm việc này.")
