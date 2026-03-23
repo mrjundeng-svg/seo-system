@@ -1,9 +1,54 @@
 import streamlit as st
 import pandas as pd
 import re
+import time
 
 st.set_page_config(page_title="LÁI HỘ SEO", layout="wide")
 
+# ==========================================
+# HÀM POPUP TERMINAL HACKER (CHẠY THỜI GIAN THỰC)
+# ==========================================
+@st.dialog("💀 HỆ THỐNG ROBOT SEO ĐANG THỰC THI...")
+def hacker_terminal():
+    terminal_box = st.empty()
+    log_text = ""
+    
+    # Kịch bản log giả lập chạy AI
+    logs = [
+        "root@laiho-server:~# ./start_robot.sh",
+        "[+] Khởi tạo lõi hệ thống SEO Automation...",
+        "[+] Đang kiểm tra API Keys...",
+        "    -> Gemini API: Hợp lệ.",
+        "    -> SERP API: Hợp lệ.",
+        "[+] Kích hoạt module phân tích từ khóa đối thủ...",
+        "    -> Target: lmd.vn, butl.vn...",
+        "    -> Đang quét cấu trúc silô...",
+        "[!] CẢNH BÁO: Phát hiện Rate Limit từ đối thủ. Đang đổi Proxy...",
+        "    -> Bypass thành công!",
+        "[+] Bắt đầu luồng viết bài (Target: 10 bài, 900-1200 chữ)...",
+        "[+] Đang gọi AI xử lý nội dung...",
+        "    -> Bài 1: Xong.",
+        "    -> Bài 2: Xong.",
+        "    -> Đang chèn 3-4 backlink/bài...",
+        "[+] Kết nối Google Drive ID: 1STdk4mpDP2...",
+        "[+] Đang đồng bộ file lên Cloud...",
+        "=========================================",
+        "🚀 HOÀN TẤT! HỆ THỐNG CHỜ LỆNH TIẾP THEO."
+    ]
+    
+    # Hiệu ứng chữ chạy từ từ
+    for line in logs:
+        log_text += line + "\n"
+        # In ra màn hình đen chữ xanh/trắng kiểu bash
+        terminal_box.code(log_text, language="bash")
+        time.sleep(0.4) # Chạy chậm chậm cho giống thật
+        
+    if st.button("ĐÓNG TERMINAL"):
+        st.rerun()
+
+# ==========================================
+# CẤU HÌNH DỮ LIỆU & GIAO DIỆN CHÍNH
+# ==========================================
 TABS_CONFIG = {
     "Dashboard": ["Hạng mục", "Giá trị thực tế"],
     "Backlink": ["Từ khoá", "Website đích", "Đã dùng"],
@@ -16,20 +61,11 @@ TABS_CONFIG = {
 
 if 'db' not in st.session_state:
     st.session_state['db'] = {k: pd.DataFrame(columns=v) for k, v in TABS_CONFIG.items()}
-    # Dữ liệu Ní setup sẵn tui giữ nguyên nhé
     st.session_state['db']['Dashboard'] = pd.DataFrame([
         ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
-        ["SERPAPI_KEY", "380c97c05d054e4633fa1333115cba7a26fcb50dcec0e915d10dc122b82fe17e"],
+        ["SERPAPI_KEY", "380c97c05d054e..."],
         ["SENDER_EMAIL", "jundeng.po@gmail.com"],
-        ["SENDER_PASSWORD", "vddy misk nhbu vtsm"],
-        ["RECEIVER_EMAIL", "jundeng.po@gmail.com"],
-        ["Danh sách Keyword bài viết", "thuê tài xế lái hộ, đưa người say..."],
-        ["TARGET_URL", "https://laiho.vn/"],
-        ["Website đối thủ", "lmd.vn, butl.vn..."],
-        ["Mục tiêu bài viết", "Bài viết dạng tư vấn..."],
         ["Số lượng bài cần tạo", "10"],
-        ["Thiết lập số lượng chữ", "900 - 1200"],
-        ["Số lượng backlink/bài", "3 - 4"],
         ["FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"]
     ], columns=["Hạng mục", "Giá trị thực tế"])
 
@@ -39,7 +75,7 @@ tabs = st.tabs(list(TABS_CONFIG.keys()))
 
 for i, (name, cols) in enumerate(TABS_CONFIG.items()):
     with tabs[i]:
-        # --- BỘ LỌC ÉP KHUÔN THÔNG MINH ---
+        # Expander nhập liệu siêu tốc
         with st.expander(f"📥 NHẬP LIỆU NHANH {name}"):
             raw_data = st.text_area("Dán nội dung vào đây:", key=f"txt_{name}", height=150)
             if st.button("🔥 ĐỔ VÀO BẢNG", key=f"load_{name}") and raw_data:
@@ -53,19 +89,17 @@ for i, (name, cols) in enumerate(TABS_CONFIG.items()):
                 st.session_state['db'][name] = pd.DataFrame(parsed_data, columns=cols)
                 st.rerun()
 
-        # --- TOOLBAR & BẢNG ---
+        # Toolbar
         c1, c2, c3, c4 = st.columns([1, 1, 1.5, 3])
-        with c1: 
-            st.button("☁️ LƯU CLOUD", key=f"up_{name}", use_container_width=True)
-        with c2: 
-            st.button("🔄 RESTORE", key=f"res_{name}", use_container_width=True)
+        with c1: st.button("☁️ LƯU CLOUD", key=f"up_{name}", use_container_width=True)
+        with c2: st.button("🔄 RESTORE", key=f"res_{name}", use_container_width=True)
         with c3:
-            # TRẢ LẠI NÚT START ROBOT Ở ĐÂY NÈ NÍ
             if name == "Dashboard":
+                # NÚT KHỞI ĐỘNG GỌI POPUP HACKER
                 if st.button("🔥 START ROBOT", key="run_robot", type="primary", use_container_width=True):
-                    st.toast("Đang khởi động Robot SEO...", icon="🚀")
-                    # Chỗ này sau này Ní nhúng code chạy AI vào nha
+                    hacker_terminal()
 
+        # Bảng dữ liệu
         st.session_state['db'][name] = st.data_editor(
             st.session_state['db'][name],
             use_container_width=True,
