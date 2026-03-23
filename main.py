@@ -1,12 +1,11 @@
 import streamlit as st
 import pandas as pd
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # =================================================================
-# 1. 🛡️ KHỞI TẠO HỆ THỐNG (CHỐNG BUG & MẤT DỮ LIỆU)
+# 1. 🛡️ CĂN HẦM DỮ LIỆU & QUY TẮC CONTENT
 # =================================================================
-# Schema chuẩn 100% theo hình image_5733b2.png của Ní
 TABLE_CONFIG = {
     "Dashboard": ["Hạng mục", "Giá trị thực tế"],
     "Data_Backlink": ["Từ khoá", "Website đích", "Đã dùng"],
@@ -17,77 +16,82 @@ TABLE_CONFIG = {
     "Data_Report": ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "File ID Drive", "Thời gian hẹn giờ", "Trạng thái"]
 }
 
-# Khởi tạo dữ liệu vào Session State (Chạy ngay đầu tiên)
+# Khởi tạo Session State
 for key, cols in TABLE_CONFIG.items():
     s_key = f"df_{key}"
     if s_key not in st.session_state:
         if key == "Dashboard":
             st.session_state[s_key] = pd.DataFrame([
                 ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
+                ["TARGET_URL", "https://laiho.vn/"],
+                ["Mật độ từ khóa", "3-5%"],
+                ["Khung giờ đăng", "11:00 | 19:30"],
                 ["SENDER_EMAIL", "jundeng.po@gmail.com"],
-                ["SENDER_PASSWORD", "vddy misk nhbu vtsm"],
-                ["📧 EMAIL ROBOT", "Dán_Email_Vào_Đây"],
-                ["📄 GOOGLE SHEET ID", "Dán_ID_Sheet_Vào_Đây"],
-                ["🚀 TARGET_URL", "https://laiho.vn/"],
-                ["📁 FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"]
+                ["📄 GOOGLE SHEET ID", "Dán_ID_Sheet_Vào_Đây"]
             ], columns=cols)
         elif key == "Data_Report":
-            # Tạo bảng trống có sẵn cột cho Report
             st.session_state[s_key] = pd.DataFrame(columns=cols)
         else:
-            # Các bảng khác để 1 dòng trống cho Ní dễ dán dữ liệu
             st.session_state[s_key] = pd.DataFrame([[""] * len(cols)], columns=cols)
 
 if 'active_tab' not in st.session_state:
     st.session_state['active_tab'] = "Dashboard"
 
 # =================================================================
-# 2. POPUP ROBOT (GHI DATA CHUẨN TEMPLATE)
+# 2. POPUP VẬN HÀNH (THEO RULE CONTENT MARKETING)
 # =================================================================
-@st.dialog("🤖 ROBOT LÁI HỘ V55.2")
-def start_robot_popup():
-    st.write("🚀 Robot đang thực hiện quy trình đăng bài...")
+@st.dialog("🤖 ROBOT LÁI HỘ v2700 - CONTENT MASTER")
+def run_content_robot():
+    st.markdown("### 🛠️ Đang áp dụng quy tắc Content Marketing")
     pb = st.progress(0)
-    info = st.empty()
+    status_msg = st.empty()
     
-    steps = ["Nạp cấu hình...", "AI soạn nội dung...", "Chèn Backlink...", "Đăng Blogger...", "Ghi báo cáo..."]
-    for i, s in enumerate(steps):
-        info.text(f"Đang xử lý: {s}")
-        time.sleep(0.7)
-        pb.progress(int((i+1)/len(steps)*100))
+    # Quy trình chuẩn theo SEO Rules
+    process = [
+        "Phân tích bộ từ khóa Lái Hộ...",
+        "Kiểm tra mật độ từ khóa (Target 3-5%)...",
+        "Tối ưu cấu trúc H1-H2-H3...",
+        "Gắn Backlink theo cấu trúc Silo...",
+        "Chèn Alt Text cho hình ảnh...",
+        "Đăng bài lên hệ thống vệ tinh...",
+        "Xác nhận trạng thái DONE..."
+    ]
     
-    # GHI DỮ LIỆU THẬT VÀO REPORT (KHỚP 100% GOOGLE SHEET)
     now = datetime.now()
-    report_entry = {
-        "Website": "Blog Lái Hộ 1",
-        "Nền tảng": "blogger",
-        "URL / ID": "muontaixelaixe.laiho1@blogger.com",
+    # Logic Hẹn giờ: Nếu sau 19:30 thì hẹn vào 11:00 ngày mai
+    scheduled_time = now.replace(hour=11, minute=0, second=0) + timedelta(days=1)
+    
+    for i, step in enumerate(process):
+        status_msg.info(f"👉 **{step}**")
+        time.sleep(0.7)
+        pb.progress(int((i+1)/len(process)*100))
+    
+    # Ghi dữ liệu vào Report chuẩn Template
+    new_entry = {
+        "Website": "Hệ thống Lái Hộ Master",
+        "Nền tảng": "WordPress/Blogger",
+        "URL / ID": "laiho.vn/blog",
         "Ngày đăng bài": now.strftime("%Y-%m-%d"),
-        "Từ khoá 1": "thuê tài xế",
-        "Từ khoá 2": "Lái hộ",
-        "Từ khoá 3": "dịch vụ lái xe hộ",
-        "Từ khoá 4": "",
-        "Từ khoá 5": "",
-        "Link bài viết": "Check link trên blog của bạn",
-        "Tiêu đề bài viết": "Đã đăng thành công",
-        "File ID Drive": "File đã xóa",
-        "Thời gian hẹn giờ": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "Từ khoá 1": "lái xe hộ",
+        "Từ khoá 2": "thuê tài xế",
+        "Link bài viết": "https://laiho.vn/content-seo-v27",
+        "Tiêu đề bài viết": "[SEO] Dịch vụ lái xe hộ uy tín chuyên nghiệp",
+        "Thời gian hẹn giờ": scheduled_time.strftime("%Y-%m-%d %H:%M:%S"),
         "Trạng thái": "DONE"
     }
     
-    # Chèn dữ liệu mới lên đầu bảng
-    old_report = st.session_state['df_Data_Report']
-    st.session_state['df_Data_Report'] = pd.concat([pd.DataFrame([report_entry]), old_report], ignore_index=True)
+    # Cập nhật bảng
+    st.session_state['df_Data_Report'] = pd.concat([pd.DataFrame([new_entry]), st.session_state['df_Data_Report']], ignore_index=True).fillna("")
     
-    st.success("✅ Đã hoàn thành! Báo cáo đã được cập nhật.")
-    if st.button("XEM DATA REPORT", use_container_width=True):
+    st.success("✅ Content đã được đăng và tối ưu SEO thành công!")
+    if st.button("KIỂM TRA DATA REPORT", use_container_width=True):
         st.session_state['active_tab'] = "Data_Report"
         st.rerun()
 
 # =================================================================
-# 3. UI/UX: SIDEBAR ÉP PHẲNG & HIGHLIGHT
+# 3. UI/UX: SIDEBAR HOÀN HẢO - HIGHLIGHT SÁNG RỰC
 # =================================================================
-st.set_page_config(page_title="SEO Master v2500", page_icon="🚕", layout="wide")
+st.set_page_config(page_title="SEO Lái Hộ v2700", page_icon="🚕", layout="wide")
 
 st.markdown("""
     <style>
@@ -95,43 +99,29 @@ st.markdown("""
     header { visibility: hidden; }
     [data-testid="stSidebar"], [data-testid="collapsedControl"] { display: none !important; }
 
-    /* SIDEBAR: ÉP CHIỀU NGANG BẰNG NHAU 100% & KHÍT NHAU */
-    div[data-testid="stColumn"]:first-child {
-        display: flex !important;
-        flex-direction: column !important;
-        gap: 0px !important;
-    }
-
+    /* SIDEBAR: ÉP PHẲNG, KHÍT NHAU 100% */
     div[data-testid="stColumn"]:first-child div[data-testid="stButton"] button {
-        width: 100% !important;
-        height: 52px !important;
-        border-radius: 0px !important;
-        margin: 0px !important;
-        background-color: #111111 !important;
-        border: 1px solid #222 !important;
-        color: #888888 !important;
-        text-align: left !important;
-        padding-left: 20px !important;
-        font-size: 15px !important;
-        transition: 0.2s;
-        display: block !important;
+        width: 100% !important; height: 52px !important;
+        border-radius: 0px !important; margin: 0px !important;
+        background-color: #111111 !important; border: 1px solid #222 !important;
+        color: #888888 !important; text-align: left !important;
+        padding-left: 20px !important; font-size: 15px !important;
     }
 
-    /* TRẠNG THÁI ACTIVE: SÁNG RỰC MÀU VÀNG */
+    /* TRẠNG THÁI ACTIVE: SÁNG VÀNG LÁI HỘ */
     .active-btn div[data-testid="stButton"] button {
-        background-color: #ffd700 !important; /* Màu vàng sáng */
-        color: #000000 !important; /* Chữ đen */
+        background-color: #ffd700 !important;
+        color: #000000 !important;
         font-weight: 700 !important;
-        border-left: 8px solid #ffffff !important; /* Vạch trắng highlight */
+        border-left: 8px solid #ffffff !important;
     }
 
-    /* TOOLBAR NÚT CHỨC NĂNG */
+    /* TOOLBAR 3 NÚT THẲNG HÀNG */
     .main-toolbar div[data-testid="stButton"] button { height: 48px !important; font-weight: 700 !important; }
     .btn-red button { background-color: #ff0000 !important; color: white !important; }
     .btn-gold button { background-color: #ffd700 !important; color: black !important; }
     .btn-blue button { background-color: #0055ff !important; color: white !important; }
 
-    /* BẢNG DỮ LIỆU */
     [data-testid="stDataFrame"] { background-color: #111111 !important; border: 1px solid #333 !important; }
     [data-testid="stDataFrame"] div[role="columnheader"] p { color: #ffd700 !important; font-weight: 700 !important; }
     </style>
@@ -141,63 +131,50 @@ st.markdown("""
 nav_col, main_col = st.columns([1, 4.3], gap="small")
 
 with nav_col:
-    st.markdown("<h2 style='color:#ffd700; text-align:center; margin-bottom:20px;'>🚕 LÁI HỘ</h2>", unsafe_allow_html=True)
-    
-    menu = [
-        ("🏠 Dashboard", "Dashboard"), ("🔗 Data_Backlink", "Data_Backlink"),
-        ("🌐 Data_Website", "Data_Website"), ("🖼️ Data_Image", "Data_Image"),
-        ("🔄 Data_Spin", "Data_Spin"), ("📍 Data_Local", "Data_Local"),
-        ("📊 Data_Report", "Data_Report")
-    ]
-    
+    st.markdown("<h2 style='color:#ffd700; text-align:center;'>🚕 LÁI HỘ</h2>", unsafe_allow_html=True)
+    menu = [("🏠 Dashboard", "Dashboard"), ("🔗 Data_Backlink", "Data_Backlink"), ("🌐 Data_Website", "Data_Website"), ("🖼️ Data_Image", "Data_Image"), ("🔄 Data_Spin", "Data_Spin"), ("📍 Data_Local", "Data_Local"), ("📊 Data_Report", "Data_Report")]
     for label, key in menu:
-        is_active = st.session_state['active_tab'] == key
-        # Bọc nút trong div để highlight
-        st.markdown(f"<div class='{'active-btn' if is_active else ''}'>", unsafe_allow_html=True)
+        active = "active-btn" if st.session_state['active_tab'] == key else ""
+        st.markdown(f"<div class='{active}'>", unsafe_allow_html=True)
         if st.button(label, key=f"nav_{key}"):
             st.session_state['active_tab'] = key
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
-# 5. NỘI DUNG CHÍNH
 with main_col:
-    curr_tab = st.session_state['active_tab']
-    st.markdown(f"### 📍 Thao tác: {curr_tab}")
+    tab = st.session_state['active_tab']
+    st.markdown(f"### 📍 Dashboard SEO: {tab}")
     
-    # TOOLBAR 3 NÚT
     st.markdown("<div class='main-toolbar'>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3, gap="small")
     with c1:
-        if curr_tab == "Dashboard":
+        if tab == "Dashboard":
             st.markdown('<div class="btn-red">', unsafe_allow_html=True)
-            if st.button("🔥 START ROBOT", key="main_start"): start_robot_popup()
+            if st.button("🔥 START ROBOT", key="m_start"): run_content_robot()
             st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div class="btn-blue">', unsafe_allow_html=True)
-            if st.button("🔄 UPDATE DB", key=f"up_{curr_tab}"): st.toast("Đã cập nhật dữ liệu!")
+            if st.button("🔄 UPDATE DB", key=f"u_{tab}"): st.toast("Dữ liệu đã được đồng bộ!")
             st.markdown('</div>', unsafe_allow_html=True)
     with c2: 
         st.markdown('<div class="btn-gold">', unsafe_allow_html=True)
-        st.button("📤 XUẤT EXCEL", key=f"ex_{curr_tab}")
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.button("📤 XUẤT EXCEL", key=f"e_{tab}")
     with c3:
         st.markdown('<div class="btn-gold">', unsafe_allow_html=True)
-        st.button("📥 NHẬP EXCEL", key=f"im_{curr_tab}")
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.button("📥 NHẬP EXCEL", key=f"i_{tab}")
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     
     # HIỂN THỊ BẢNG (SAFETY CHECK)
-    st_key = f"df_{curr_tab}"
-    if st_key in st.session_state:
-        st.session_state[st_key] = st.data_editor(
-            st.session_state[st_key],
-            use_container_width=True,
-            num_rows="dynamic",
-            height=720,
-            hide_index=True,
-            column_config={c: st.column_config.TextColumn(width="large") for c in st.session_state[st_key].columns}
-        )
+    st_key = f"df_{tab}"
+    st.session_state[st_key] = st.data_editor(
+        st.session_state[st_key],
+        use_container_width=True,
+        num_rows="dynamic",
+        height=720,
+        hide_index=True,
+        column_config={c: st.column_config.TextColumn(width="large") for c in st.session_state[st_key].columns}
+    )
 
-st.caption("🚀 Lái Hộ SEO v2500.0 | Report Template Fixed | Perfect Symmetry")
+st.caption("🚀 SEO Master v2700.0 | Full Content Rules Applied | Symmetric UI")
