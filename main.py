@@ -2,75 +2,69 @@ import streamlit as st
 import pandas as pd
 
 # 1. CẤU HÌNH TRANG
-st.set_page_config(page_title="LÁI HỘ SEO MASTER", layout="wide", page_icon="🚕")
+st.set_page_config(page_title="LÁI HỘ SEO - IRON WALL", layout="wide", page_icon="🚕")
 
-# 2. KHỞI TẠO BỘ NHỚ CỨNG (SESSION STATE)
-# Tui khởi tạo thủ công từng cái để không bị lỗi Key
-if 'df_Dashboard' not in st.session_state:
-    st.session_state['df_Dashboard'] = pd.DataFrame([
-        ["GOOGLE_SHEET_ID", "1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw"],
-        ["SERVICE_ACCOUNT_JSON", ""],
-        ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
-        ["FOLDER_DRIVE_ID", ""],
-        ["Số lượng bài cần tạo", "3"]
-    ], columns=["Hạng mục", "Giá trị thực tế"])
+# 2. KHỞI TẠO TEMPLATE CHUẨN
+REPORT_COLS = ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "File ID Drive", "Thời gian hẹn giờ", "Trạng thái"]
 
-if 'df_Backlink' not in st.session_state:
-    st.session_state['df_Backlink'] = pd.DataFrame(columns=["Từ khoá", "Website đích", "Đã dùng"])
+TABS_CONFIG = {
+    "Dashboard": ["Hạng mục", "Giá trị thực tế"],
+    "Backlink": ["Từ khoá", "Website đích", "Đã dùng"],
+    "Website": ["Tên web", "Nền tảng", "URL / ID", "Trạng thái", "Giới hạn bài/ngày"],
+    "Image": ["Link ảnh", "Số lần dùng"],
+    "Spin": ["Từ Spin", "Bộ Spin"],
+    "Local": ["Tỉnh thành", "Quận", "Điểm nóng"],
+    "Report": REPORT_COLS
+}
 
-if 'df_Website' not in st.session_state:
-    st.session_state['df_Website'] = pd.DataFrame(columns=["Tên web", "Nền tảng", "URL / ID", "Trạng thái", "Giới hạn bài/ngày"])
+# 3. HÀM KHỞI TẠO DỮ LIỆU (CHỐNG RESET)
+if 'main_db' not in st.session_state:
+    st.session_state['main_db'] = {}
+    for name, cols in TABS_CONFIG.items():
+        if name == "Dashboard":
+            st.session_state['main_db'][name] = pd.DataFrame([
+                ["GOOGLE_SHEET_ID", "1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw"],
+                ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
+                ["Số lượng bài cần tạo", "3"]
+            ], columns=cols)
+        else:
+            st.session_state['main_db'][name] = pd.DataFrame(columns=cols)
 
-if 'df_Image' not in st.session_state:
-    st.session_state['df_Image'] = pd.DataFrame(columns=["Link ảnh", "Số lần dùng"])
+# 4. GIAO DIỆN
+st.markdown("<h2 style='color:#ffd700;'>🚕 LÁI HỘ SEO MASTER v9300</h2>", unsafe_allow_html=True)
 
-if 'df_Spin' not in st.session_state:
-    st.session_state['df_Spin'] = pd.DataFrame(columns=["Từ Spin", "Bộ Spin"])
+# Dùng Tabs ngang
+tab_list = list(TABS_CONFIG.keys())
+tabs = st.tabs([f" {t}" for t in tab_list])
 
-if 'df_Local' not in st.session_state:
-    st.session_state['df_Local'] = pd.DataFrame(columns=["Tỉnh thành", "Quận", "Điểm nóng"])
+for i, name in enumerate(tab_list):
+    with tabs[i]:
+        st.subheader(f"📍 Phân mục: {name}")
+        
+        # Toolbar
+        col_save, col_clear, _ = st.columns([1, 1, 3])
+        
+        # HIỂN THỊ BẢNG (Dùng key tĩnh để Streamlit không bị lú)
+        # Ní dán dữ liệu vào đây thoải mái
+        edited_df = st.data_editor(
+            st.session_state['main_db'][name],
+            use_container_width=True,
+            num_rows="dynamic",
+            height=600,
+            hide_index=True,
+            key=f"editor_v93_{name}"
+        )
+        
+        with col_save:
+            # NÚT CHỐT: Chỉ khi Ní bấm nút này, dữ liệu mới thực sự được khóa vào Session
+            if st.button(f"💾 CHỐT DỮ LIỆU {name.upper()}", key=f"save_{name}"):
+                st.session_state['main_db'][name] = edited_df
+                st.success(f"Đã khóa {len(edited_df)} dòng vào bộ nhớ!")
+                st.balloons() # Ăn mừng dán thành công
 
-if 'df_Report' not in st.session_state:
-    st.session_state['df_Report'] = pd.DataFrame(columns=["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "File ID Drive", "Thời gian hẹn giờ", "Trạng thái"])
+        with col_clear:
+            if st.button(f"🗑️ XÓA BẢNG", key=f"clear_{name}"):
+                st.session_state['main_db'][name] = pd.DataFrame(columns=TABS_CONFIG[name])
+                st.rerun()
 
-# 3. GIAO DIỆN
-st.markdown("<h2 style='color:#ffd700;'>🚕 LÁI HỘ SEO MASTER</h2>", unsafe_allow_html=True)
-
-# Tabs ngang (Tui viết code riêng cho từng Tab để chống reset)
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["🏠 Dashboard", "🔗 Backlink", "🌐 Website", "🖼️ Image", "🔄 Spin", "📍 Local", "📊 Report"])
-
-with tab1:
-    st.button("🔥 START ROBOT", key="run_p1")
-    st.session_state['df_Dashboard'] = st.data_editor(st.session_state['df_Dashboard'], use_container_width=True, hide_index=True, key="edit_p1")
-
-with tab2:
-    col_a, col_b = st.columns([1, 4])
-    with col_a: st.button("☁️ UPDATE BACKLINK", key="up_p2")
-    st.session_state['df_Backlink'] = st.data_editor(st.session_state['df_Backlink'], use_container_width=True, num_rows="dynamic", hide_index=True, key="edit_p2")
-
-with tab3:
-    col_a, col_b = st.columns([1, 4])
-    with col_a: st.button("☁️ UPDATE WEBSITE", key="up_p3")
-    st.session_state['df_Website'] = st.data_editor(st.session_state['df_Website'], use_container_width=True, num_rows="dynamic", hide_index=True, key="edit_p3")
-
-with tab4:
-    col_a, col_b = st.columns([1, 4])
-    with col_a: st.button("☁️ UPDATE IMAGE", key="up_p4")
-    st.session_state['df_Image'] = st.data_editor(st.session_state['df_Image'], use_container_width=True, num_rows="dynamic", hide_index=True, key="edit_p4")
-
-with tab5:
-    col_a, col_b = st.columns([1, 4])
-    with col_a: st.button("☁️ UPDATE SPIN", key="up_p5")
-    st.session_state['df_Spin'] = st.data_editor(st.session_state['df_Spin'], use_container_width=True, num_rows="dynamic", hide_index=True, key="edit_p5", column_config={"Bộ Spin": st.column_config.TextColumn(width="large")})
-
-with tab6:
-    col_a, col_b = st.columns([1, 4])
-    with col_a: st.button("☁️ UPDATE LOCAL", key="up_p6")
-    st.session_state['df_Local'] = st.data_editor(st.session_state['df_Local'], use_container_width=True, num_rows="dynamic", hide_index=True, key="edit_p6")
-
-with tab7:
-    col_a, col_b = st.columns([1, 4])
-    with col_a: st.button("🔄 RESTORE REPORT", key="up_p7")
-    st.session_state['df_Report'] = st.data_editor(st.session_state['df_Report'], use_container_width=True, num_rows="dynamic", hide_index=True, key="edit_p7")
-
-st.caption("🚀 v9100.0 | Concrete Memory | Anti-Reset Data | Stable Architecture")
+st.caption("🚀 v9300.0 | Manual Save Mode | Anti-Reset | Heavy Data Support")
