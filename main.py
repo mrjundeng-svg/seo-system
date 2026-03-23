@@ -1,206 +1,180 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import time
+import datetime
 
-# 1. Cấu hình trang - Giao diện RỘNG
-st.set_page_config(layout="wide", page_title="HỆ THỐNG SEO LÁI HỘ V55.0")
-
-# --- CSS Tùy chỉnh ---
-# Ta có thể thêm một chút CSS tùy chỉnh để định dạng nút "Dừng khẩn cấp" màu đỏ
-# và các tag "DONE" trong bảng, nhưng để giữ cho ví dụ đơn giản và hoạt động trên
-# Streamlit tiêu chuẩn, ta sẽ tập trung vào bố cục và các thành phần cốt lõi.
-# Để tạo nút màu đỏ, ta sẽ sử dụng tham số `type="primary"` của st.button và một ít CSS
-# hoặc sử dụng HTML markdown tùy chỉnh cho nút này. Ta sẽ sử dụng một nút st.button đơn giản.
+# 1. CẤU HÌNH TRANG & SIÊU CSS (DARK & GOLD APP STYLE)
+st.set_page_config(page_title="Hệ thống SEO Lái Hộ", page_icon="🚕", layout="wide")
 
 st.markdown("""
-<style>
-/* Tùy chỉnh nút màu đỏ */
-.red-stop-btn button {
-    background-color: #f44336;
-    color: white;
+    <style>
+    /* ÉP TÔNG MÀU ĐEN SÂU (DARK MODE) */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    
+    .stApp { background-color: #000000 !important; }
+    
+    /* Chữ Vàng / Trắng cho nội dung */
+    .stMarkdown, label, p, span, h1, h2, h3, h4 { 
+        color: #ffffff !important; 
+        font-family: 'Inter', sans-serif !important; 
+    }
+    
+    /* Đẩy nội dung lên sát nóc */
+    .block-container { padding-top: 1rem !important; }
+    header { visibility: hidden; }
+
+    /* SIDEBAR ĐEN SANG TRỌNG */
+    [data-testid="stSidebar"] { 
+        background-color: #0a0a0a !important; 
+        border-right: 1px solid #333333 !important; 
+    }
+    
+    /* BẢNG DỮ LIỆU (DARK STYLE) */
+    [data-testid="stDataFrame"] { 
+        background-color: #1a1a1a !important; 
+        border: 1px solid #ffd700 !important; 
+    }
+    
+    /* NÚT BẤM MÀU VÀNG ĐỒNG (GOLD BUTTONS) */
+    .stButton>button {
+        width: 100%; border-radius: 12px; font-weight: 700; height: 3.5em;
+        background-color: #ffd700 !important; /* MÀU VÀNG GOLD */
+        color: #000000 !important;
+        border: none !important;
+        text-transform: uppercase;
+        transition: 0.3s;
+    }
+    .stButton>button:hover { 
+        background-color: #ffcc00 !important; 
+        box-shadow: 0 4px 15px rgba(255, 215, 0, 0.4);
+        transform: translateY(-2px);
+    }
+    
+    /* NÚT XUẤT FILE / ĐỒNG BỘ (MÀU XÁM ĐẬM) */
+    .stDownloadButton>button {
+        background-color: #333333 !important;
+        color: #ffffff !important;
+        border-radius: 12px;
+        border: 1px solid #ffd700 !important;
+    }
+
+    /* KHUNG THÔNG BÁO / LOG */
+    .log-card { 
+        background-color: #111111; border-radius: 12px; padding: 15px; 
+        border: 1px solid #333333; color: #ffd700 !important;
+    }
+    
+    /* TÙY CHỈNH TABLE EDITOR */
+    [data-testid="stDataFrame"] div[role="gridcell"] { color: white !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# 2. KHỞI TẠO DỮ LIỆU (13 DÒNG CONFIG)
+MENU_MAP = {
+    "Bảng điều khiển": "config",
+    "Quản lý Backlink": "backlink",
+    "Hệ thống Website": "website",
+    "Kho hình ảnh": "image",
+    "Từ điển Spin": "spin",
+    "Phủ sóng vùng": "local",
+    "Báo cáo cuối": "report"
 }
-</style>
-""", unsafe_allow_html=True)
 
+def init_session():
+    for label, key_suffix in MENU_MAP.items():
+        key = f"df_{key_suffix}"
+        if key not in st.session_state:
+            if key_suffix == "config":
+                cols = ["DANH MỤC CẤU HÌNH", "GIÁ TRỊ THIẾT LẬP"]
+                data = [
+                    ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
+                    ["SERPAPI_KEY", "380c97c05d054e4633fa1333115cba7a26fcb50dcec0e915d10dc122b82fe17e"],
+                    ["SENDER_EMAIL", "jundeng.po@gmail.com"],
+                    ["SENDER_PASSWORD", "vddy misk nhbu vtsm"],
+                    ["RECEIVER_EMAIL", "jundeng.po@gmail.com"],
+                    ["TARGET_URL", "https://laiho.vn/"],
+                    ["Danh sách Keyword", "thuê tài xế lái hộ, đưa người say..."],
+                    ["Website đối thủ", "lmd.vn, butl.vn, saycar.vn"],
+                    ["Mục tiêu bài viết", "Tư vấn dịch vụ, chốt sale, an toàn"],
+                    ["Số lượng bài/ngày", "10"],
+                    ["Độ dài bài viết", "1000 - 1200 chữ"],
+                    ["Mật độ Link", "3 - 5 link/bài"],
+                    ["FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"]
+                ]
+                st.session_state[key] = pd.DataFrame(data, columns=cols)
+            elif key_suffix == "backlink":
+                st.session_state[key] = pd.DataFrame([["lái xe hộ", "https://laiho.vn", 0]] * 15, columns=["Từ khóa", "Link đích", "Đã dùng"])
+            else:
+                st.session_state[key] = pd.DataFrame(columns=["Cột 1", "Cột 2", "Cột 3"])
 
-# --- 2. THANH ĐIỀU HƯỚNG BÊN TRÁI (SIDEBAR) ---
+init_session()
+
+# 3. SIDEBAR (BLACK & GOLD)
 with st.sidebar:
-    st.markdown("## 🏢 ĐƠN VỊ LÁI HỘ")
-    # Sử dụng st.selectbox hoặc các component tương tự để mô phỏng menu
-    # Tuy nhiên, st.sidebar.radio hoặc st.sidebar.button sẽ tốt hơn để tạo menu.
-    # Trong ví dụ này, ta sẽ sử dụng st.sidebar.button và st.sidebar.expanders để mô phỏng.
+    st.markdown("<h2 style='color: #ffd700 !important;'>🚕 SEO LÁI HỘ</h2>", unsafe_allow_html=True)
+    st.markdown("---")
+    choice = st.radio("MENU", list(MENU_MAP.keys()), label_visibility="collapsed")
+    st.markdown("---")
+    if st.button("🚪 THOÁT"):
+        st.session_state['logged_in'] = False
+        st.rerun()
 
-    menu_options = [
-        {"icon": "🏠", "label": "Tổng quan", "submenu": []},
-        {"icon": "🗺️", "label": "Phủ sóng vùng", "submenu": ["Phủ sóng 1", "Dịch vụ lái hộ tphcm", "Phủ sóng 3"]},
-        {"icon": "⚙️", "label": "Data Config", "submenu": []},
-        {"icon": "📁", "label": "Data Image", "submenu": []},
-        {"icon": "💬", "label": "Từ điển spin", "submenu": []},
-        {"icon": "👥", "label": "Backlink Master", "submenu": []},
-        {"icon": "📊", "label": "SEO Report", "submenu": []},
-        {"icon": "📍", "label": "Local Map", "submenu": []},
-        {"icon": "➕", "label": "Cài đặt khác", "submenu": []},
-    ]
+# 4. KHU VỰC CHÍNH
+st.markdown(f"<h3 style='color: #ffd700 !important;'>📍 {choice}</h3>", unsafe_allow_html=True)
+current_key = f"df_{MENU_MAP[choice]}"
 
-    for item in menu_options:
-        # Sử dụng icon và label
-        header_text = f"{item['icon']} {item['label']}"
-        if item['submenu']:
-            with st.expander(header_text, expanded=False):
-                for sub in item['submenu']:
-                    # Highlight item active "Dịch vụ lái hộ tphcm"
-                    if sub == "Dịch vụ lái hộ tphcm":
-                        st.markdown(f"**- {sub}**")
-                    else:
-                        st.markdown(f"- {sub}")
-        else:
-            if st.button(header_text, use_container_width=True):
-                # Placeholder for menu action
-                pass
-
-
-# --- 3. TIÊU ĐỀ CHÍNH ---
-st.markdown("<h1 style='text-align: left; color: black; font-weight: bold;'>HỆ THỐNG SEO LÁI HỘ V55.0 - [ PHỤC VỤ THEO NGÀY ]</h1>", unsafe_allow_html=True)
-st.markdown("Hẹn giờ (Lập lịch Robot chạy tự động theo Quota của Mr. JunDeng)")
-
-# Dòng người dùng ở trên cùng bên phải
-# User area simulation in columns
-col1, col2, col3, col4, col5 = st.columns([6, 1, 1, 1, 1])
-with col1: pass
-with col2: st.markdown("JunDeng [ Admin ]")
-with col3: st.button("⚙️", help="Cài đặt")
-with col4: st.button("P", help="Trang cá nhân") # Placeholder for user avatar
-with col5: st.button("🚪", help="Đăng xuất")
-
-
-# --- 4. BỐ CỤC CHÍNH ---
-# Sử dụng 2 cột: Một cột lớn cho Bảng và Điều khiển, Một cột nhỏ cho Chart
-main_col, chart_col = st.columns([3, 1], gap="small")
-
-
-# --- 5. ĐIỀU KHIỂN CHIẾN DỊCH ---
-with main_col:
-    st.markdown("### Điều khiển chiến dịch:")
-    c1, c2, c3, c4 = st.columns(4, gap="small")
-
+if choice == "Bảng điều khiển":
+    # THANH CÔNG CỤ (STYLE HIỆN ĐẠI)
+    c1, c2, c3, c4 = st.columns([1, 1.2, 0.8, 2])
+    csv = st.session_state[current_key].to_csv(index=False).encode('utf-8-sig')
+    
     with c1:
-        # Nút THÊM BÀI ĐĂNG NGAY (placeholder for high visibility)
-        st.button("+ THÊM BÀI ĐĂNG NGAY", use_container_width=True)
+        st.download_button("📤 XUẤT CSV", data=csv, file_name=f"{choice}.csv", use_container_width=True)
     with c2:
-        # Nút DỪNG KHẨN CẤP (màu đỏ - placeholder)
-        st.markdown('<div class="red-stop-btn">', unsafe_allow_html=True)
-        st.button("DỪNG KHẨN CẤP (STOP CAMPAIGN)", use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        up = st.file_uploader("NHẬP FILE CSV", type=["csv"], label_visibility="collapsed")
     with c3:
-        st.button("Tải Report về (Export CSV)", use_container_width=True)
-    with c4:
-        st.button("Lập lịch (Robot hoạt động theo Quota)", use_container_width=True)
+        if st.button("🔄 SYNC"):
+            if up: st.session_state[current_key] = pd.read_csv(up); st.rerun()
 
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- 6. BẢNG DỮ LIỆU ---
-    # Heading cho bảng với thống kê
-    table_head_col1, table_head_col2, table_head_col3 = st.columns([3, 1, 1])
-    with table_head_col1:
-        st.markdown("### Sắp tới: [ **10 Bài** ] - Đã xong: [ **254 Bài** ]")
-    with table_head_col2:
-        # Mock hiển thị số dòng
-        st.selectbox("Hiển thị:", options=[10, 20, 50, 100], index=0)
-    with table_head_col3:
-        pass # Placeholder for pagination logic space
+    # CHIA CỘT: CONFIG VÀ ĐIỀU KHIỂN
+    col_table, col_run = st.columns([1.8, 1])
+    
+    with col_table:
+        st.markdown("<p style='color: #ffd700;'>⚙️ CẤU HÌNH HỆ THỐNG (13 DÒNG)</p>", unsafe_allow_html=True)
+        # SHOW FULL 13 DÒNG
+        st.session_state[current_key] = st.data_editor(
+            st.session_state[current_key], 
+            use_container_width=True, 
+            num_rows="fixed",
+            height=520 
+        )
+    
+    with col_run:
+        st.markdown("<p style='color: #ffd700;'>🚀 ĐIỀU KHIỂN ROBOT</p>", unsafe_allow_html=True)
+        with st.container():
+            st.write("Vận hành v55.0 Stable:")
+            if st.button("🔥 CHẠY CHIẾN DỊCH NGAY"):
+                log_placeholder = st.empty()
+                progress = st.progress(0)
+                for i in range(1, 11):
+                    time.sleep(0.3)
+                    progress.progress(i * 10)
+                    log_placeholder.markdown(f"<div class='log-card'>[LOG] {datetime.datetime.now().strftime('%H:%M:%S')} - Đang viết bài {i}/10...</div>", unsafe_allow_html=True)
+                st.success("✅ HOÀN THÀNH!")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("📅 LẬP LỊCH ĐĂNG"):
+                st.toast("Đang quét hàng đợi...")
 
-    # Tạo mock DataFrame cho bảng
-    data = {
-        "Website": ["Blog Lái Hộ 1", "Blog Lái Hộ 2", "Blog Lái Hộ 3"],
-        "Nền tảng": ["Blogger", "Wordpress", "Wordpress"],
-        "URL / ID": ["blog-lai-ho-1.blogspot.com", "blog-lai-ho-2.wordpress.com", "laiho.vn/id3"],
-        "Ngày đăng bài": ["2026-03-23", "2026-03-23", "2026-03-23"],
-        "Từ khoá 1": ["lái xe hộ", "dịch vụ lái xe tphcm", "lái xe khi say"],
-        "Từ khoá 2": ["lái hộ tphcm", "tài xế lái hộ", "thuê tài xế lái xe"],
-        "Tiêu đề bài viết": ["Dịch vụ lái xe hộ uy tín tại TPHCM", "Tài xế lái xe khi say rượu - Phục vụ 24/7", "Thuê tài xế lái xe hộ theo ngày - Mr. JunDeng"],
-        "File ID Drive": ["1vA8y0H...", "1xZ9y8Q...", "1bC5y2V..."],
-        "Thời gian hẹn giờ": ["08:30", "10:15", "14:45"],
-        "Trạng thái": ["DONE", "DONE", "PENDING"] # Placeholder for colored DONE labels
-    }
-    df = pd.DataFrame(data)
-
-    # Hiển thị bảng
-    # Sử dụng st.dataframe để có thể tương tác (sort, v.v.)
-    # Lưu ý: Các icon và tags DONE có thể cần markdown tùy chỉnh nếu dùng st.table, nhưng để
-    # script này hoạt động trên Streamlit tiêu chuẩn và giữ tính năng tương tác, st.dataframe là tốt nhất.
-    # Cell styling like tags is limited in standard st.dataframe.
-    st.dataframe(df, use_container_width=True)
-
-    # Mock Pagination
-    pagination_col1, pagination_col2 = st.columns([1, 4])
-    with pagination_col1:
-        st.markdown("<p style='text-align: left; color: gray;'>Tổng số: [ **264 Bài** ]</p>", unsafe_allow_html=True)
-    with pagination_col2:
-        # Pagination buttons simulation
-        p_c1, p_c2, p_c3, p_c4, p_c5, p_c6 = st.columns(6, gap="small")
-        with p_c1: st.button("Trước", key="prev", use_container_width=True)
-        with p_c2: st.button("1", key="p1", use_container_width=True)
-        with p_c3: st.button("2", key="p2", use_container_width=True)
-        with p_c4: st.button("3", key="p3", use_container_width=True)
-        with p_c5: st.button("...", key="pdot", use_container_width=True)
-        with p_c6: st.button("Tiếp", key="next", use_container_width=True)
-
-
-# --- 7. BỐ CỤC PHẢI (CHART) ---
-with chart_col:
-    st.markdown("### Index Google trong 30 Ngày")
-    st.markdown("**Tỷ lệ Index (30 ngày gần nhất)**")
-
-    # Mock dữ liệu Chart
-    chart_data = {
-        "Trạng thái Index": ["DONE Index", "PENDING Index", "FAILED Index"],
-        "Số lượng": [254, 10, 5] # Mock counts
-    }
-    df_chart = pd.DataFrame(chart_data)
-
-    # Tính toán phần trăm (cho Plotly hover or labels)
-    total_index = df_chart["Số lượng"].sum()
-    df_chart["Phần trăm"] = (df_chart["Số lượng"] / total_index) * 100
-
-    # Tạo Pie chart sử dụng Plotly Express
-    # Tùy chỉnh màu sắc để khớp với ảnh
-    color_map = {
-        "DONE Index": "#4CAF50", # Green
-        "PENDING Index": "#2196F3", # Blue
-        "FAILED Index": "#F44336" # Red
-    }
-
-    fig = px.pie(
-        df_chart,
-        values="Số lượng",
-        names="Trạng thái Index",
-        color="Trạng thái Index",
-        color_discrete_map=color_map,
-        hole=0.5, # Tạo Chart Donut giống ảnh
-        # hover_data=["Phần trăm"], # Thêm phần trăm khi hover
+else:
+    # TAB DATA KHÁC (SHOW BẢNG 30 DÒNG)
+    st.session_state[current_key] = st.data_editor(
+        st.session_state[current_key],
+        use_container_width=True,
+        num_rows="dynamic",
+        height=1000 
     )
 
-    # Tùy chỉnh layout để ẩn legend mặc định (có thể tái tạo custom legend)
-    # hoặc giữ legend để trực quan. Trong ảnh, legend được hiển thị.
-    #fig.update_layout(showlegend=False)
-    # Hoặc tùy chỉnh legend
-    fig.update_layout(legend=dict(
-        orientation="v", # Vertical
-        yanchor="middle",
-        y=0.5,
-        xanchor="left",
-        x=1,
-    ))
-    # Hiển thị phần trăm và labels
-    fig.update_traces(textposition='inside', textinfo='percent')
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Custom Legend (nếu muốn ẩn legend Plotly mặc định và tạo cái khớp hơn)
-    # Legend in image is vertical list of items.
-    # The default Plotly legend is quite good. I'll stick with it for simplicity.
-    # For a *perfect* match, more CSS or custom HTML for legend would be needed.
-
-
-# --- 8. PHẦN CHÂN TRANG (FOOTER) ---
-# st.markdown("---")
-# st.markdown("<p style='text-align: center; color: gray;'>Hệ thống quản lý SEO Lái Hộ V55.0 - Bản quyền Mr. JunDeng</p>", unsafe_allow_html=True)
+st.caption("🚕 Hệ thống Quản trị SEO v140.0 | Gold Edition")
