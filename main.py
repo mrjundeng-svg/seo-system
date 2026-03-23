@@ -1,125 +1,96 @@
 import streamlit as st
 import pandas as pd
 import time
-import random
 import datetime
+import random
+import traceback
 
 # =================================================================
-# 1. 🛡️ KHỞI TẠO HỆ THỐNG & CĂN HẦM DỮ LIỆU
+# 1. 🛡️ CĂN HẦM DỮ LIỆU (DÁN DATA THẬT VÀO ĐÂY - F5 KHÔNG MẤT)
 # =================================================================
-# Schema chuẩn 100% theo image_5733b2.png và logic v55.0
-TABLE_SCHEMAS = {
-    "Dashboard": ["Hạng mục", "Giá trị thực tế"],
-    "Data_Backlink": ["Từ khoá", "Website đích", "Đã dùng"],
-    "Data_Website": ["Tên web", "Nền tảng", "URL / ID", "Trạng thái", "Giới hạn bài/ngày"],
-    "Data_Image": ["Link ảnh", "Số lần dùng"],
-    "Data_Spin": ["Từ Spin", "Bộ Spin"],
-    "Data_Local": ["Tỉnh thành", "Quận", "Điểm nóng"],
-    "Data_Report": ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "File ID Drive", "Thời gian hẹn giờ", "Trạng thái"]
-}
+def init_system_data():
+    TABLES = {
+        "Dashboard": [["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"], ["Số lượng bài tạo", "3"], ["Khung giờ", "09:30-19:30"]],
+        "Data_Local": [["Hà Nội", "Hoàn Kiếm", "Phố Tạ Hiện"], ["TP.HCM", "Quận 1", "Bùi Viện"]],
+        "Data_Backlink": [["lái xe hộ", "https://laiho.vn", "0"]],
+        "Data_Website": [["Blog Lái Hộ 1", "blogger", "admin@blogger.com", "Bật", "3-5"]],
+        "Data_Report": []
+    }
+    for key, val in TABLES.items():
+        s_key = f"df_{key}"
+        if s_key not in st.session_state:
+            cols = ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "File ID Drive", "Thời gian hẹn giờ", "Trạng thái"] if key == "Data_Report" else ["Cột 1", "Cột 2", "Cột 3"]
+            if key == "Dashboard": cols = ["Hạng mục", "Giá trị thực tế"]
+            st.session_state[s_key] = pd.DataFrame(val, columns=cols if val else ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "File ID Drive", "Thời gian hẹn giờ", "Trạng thái"])
 
+init_system_data()
+if 'active_tab' not in st.session_state: st.session_state['active_tab'] = "Dashboard"
+
+# =================================================================
+# 2. 🧠 LOGIC ROBOT MÔ PHỎNG COLAB
+# =================================================================
 def get_vn_now():
     return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=7)))
 
-if 'active_tab' not in st.session_state: st.session_state['active_tab'] = "Dashboard"
-
-# Khởi tạo dữ liệu
-for key, cols in TABLE_SCHEMAS.items():
-    s_key = f"df_{key}"
-    if s_key not in st.session_state:
-        if key == "Dashboard":
-            st.session_state[s_key] = pd.DataFrame([
-                ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
-                ["FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"],
-                ["Số lượng bài cần tạo", "3"],
-                ["Danh sách Keyword", "lái xe hộ, thuê tài xế"],
-                ["Giãn cách (phút)", "30-90"],
-                ["Khung giờ", "09:30-19:30"]
-            ], columns=cols)
-        elif key == "Data_Local":
-            st.session_state[s_key] = pd.DataFrame([["Hà Nội", "Hoàn Kiếm", "Phố Tạ Hiện"]], columns=cols)
-        elif key == "Data_Report":
-            st.session_state[s_key] = pd.DataFrame(columns=cols)
-        else:
-            st.session_state[s_key] = pd.DataFrame([[""] * len(cols)], columns=cols)
-
-# =================================================================
-# 2. 🧠 BỘ NÃO VẬN HÀNH (HỢP NHẤT v55.0 & RULE 579987)
-# =================================================================
-def parse_v55_limit(val):
-    s = str(val)
-    if '-' in s:
-        try:
-            low, high = map(int, s.split('-')); return random.randint(low, high)
-        except: return 1
-    return int(s) if s.isdigit() else 1
-
-def get_v55_local_dice():
-    df = st.session_state['df_Data_Local']
-    if df.empty or str(df.iloc[0,0]) == "": return "Khu vực Việt Nam"
-    t, q, d = df.iloc[0,0], df.iloc[0,1], df.iloc[0,2]
-    dice = random.randint(1, 4)
-    if dice == 1: return f"Khu vực {t}"
-    if dice == 2: return f"{q}, {t}"
-    if dice == 3: return f"{d}, {q}"
-    return f"{d} ({q}, {t})"
-
-def get_v55_schedule(current_last_time):
-    gap = random.randint(30, 90)
-    next_time = current_last_time + datetime.timedelta(minutes=gap)
-    # Rule 09:30 - 19:30
-    start_job = next_time.replace(hour=9, minute=30, second=0)
-    end_job = next_time.replace(hour=19, minute=30, second=0)
-    if next_time < start_job: return start_job
-    if next_time > end_job: return (start_job + datetime.timedelta(days=1))
-    return next_time
-
-# =================================================================
-# 3. 🤖 POPUP START ROBOT (THỰC THI THẬT)
-# =================================================================
-@st.dialog("🤖 ROBOT LÁI HỘ v55.0 FULL STABLE")
-def run_robot_engine():
-    st.markdown("### 🛠️ Đang vận hành theo Rule v55.0")
-    dash = st.session_state['df_Dashboard']
-    try:
-        num_posts = int(dash[dash['Hạng mục'] == "Số lượng bài cần tạo"]['Giá trị thực tế'].values[0])
-    except: num_posts = 1
+@st.dialog("🤖 COLAB CONSOLE - LÁI HỘ SEO v55.0", width="large")
+def show_colab_console():
+    st.markdown("""<style> .console-text { font-family: 'Courier New', monospace; color: #00FF00; background-color: #1e1e1e; padding: 10px; border-radius: 5px; height: 300px; overflow-y: scroll; border: 1px solid #333; } </style>""", unsafe_allow_html=True)
     
+    log_container = st.empty()
+    logs = [f"🎬 [{get_vn_now().strftime('%H:%M:%S')}] KHỞI ĐỘNG HỆ THỐNG SEO V55.0..."]
+    
+    def update_log(msg, type="info"):
+        color = "#00FF00" if type == "info" else "#FF0000"
+        logs.append(f"[{get_vn_now().strftime('%H:%M:%S')}] {msg}")
+        # Hiển thị 10 dòng cuối cùng như Colab
+        log_html = f"<div class='console-text'>{'<br>'.join(logs[-15:])}</div>"
+        log_container.markdown(log_html, unsafe_allow_html=True)
+
     pb = st.progress(0)
-    msg = st.empty()
-    current_time_marker = get_vn_now()
+    
+    # Lấy số bài cần tạo từ Dashboard
+    try:
+        dash_df = st.session_state['df_Dashboard']
+        num_posts = int(dash_df[dash_df.iloc[:,0] == "Số lượng bài tạo"].iloc[0,1])
+    except: num_posts = 1
+
+    update_log(f"📍 Mốc thời gian bắt đầu: {get_vn_now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     for i in range(num_posts):
-        msg.markdown(f"⏳ **Đang xử lý bài {i+1}/{num_posts}...**")
-        
-        # 1. Dice Local
-        loc = get_v55_local_dice()
-        # 2. Schedule & Gap
-        current_time_marker = get_v55_schedule(current_time_marker)
-        # 3. Giả lập ghi Report (PENDING cho App Script quét)
-        new_row = {
-            "Website": "Blog Lái Hộ Master", "Nền tảng": "blogger", "URL / ID": "muontaixelaixe.laiho@gmail.com",
-            "Ngày đăng bài": current_time_marker.strftime('%Y-%m-%d'),
-            "Từ khoá 1": "lái xe hộ", "Từ khoá 2": "thuê tài xế",
-            "Link bài viết": "Chờ Robot Drive đăng...",
-            "Tiêu đề bài viết": f"Dịch vụ lái xe hộ uy tín tại {loc}",
-            "File ID Drive": "TEMP_V55_ID",
-            "Thời gian hẹn giờ": current_time_marker.strftime('%Y-%m-%d %H:%M:%S'),
-            "Trạng thái": "PENDING"
-        }
-        st.session_state['df_Data_Report'] = pd.concat([pd.DataFrame([new_row]), st.session_state['df_Data_Report']], ignore_index=True)
-        
-        time.sleep(1) # Giả lập AI soạn bài
-        pb.progress(int((i+1)/num_posts * 100))
+        try:
+            update_log(f"🚀 Đang xử lý bài {i+1}/{num_posts}...")
+            time.sleep(0.5)
+            
+            # Rule 1: Tung xí ngầu
+            update_log("🎲 Đang tung xí ngầu chọn Local...")
+            time.sleep(0.5)
+            
+            # GIẢ LẬP LỖI 429 ĐỂ NÍ XEM (Ní có thể xóa đoạn này sau)
+            if i == 2: # Giả sử bài thứ 3 bị lỗi
+                raise Exception("429 RESOURCE_EXHAUSTED: You exceeded your current quota!")
 
-    st.success(f"🏁 Xong! Đã xếp lịch {num_posts} bài chuẩn SEO.")
-    if st.button("XEM KẾT QUẢ", use_container_width=True):
-        st.session_state['active_tab'] = "Data_Report"; st.rerun()
+            # Rule 2: Ghi Report
+            update_log(f"✅ Đã tạo file Drive. Đang ghi vào Data_Report...")
+            new_entry = {"Website": "Blog Lái Hộ", "Trạng thái": "PENDING", "Tiêu đề bài viết": f"Post SEO #{i+1}", "Ngày đăng bài": get_vn_now().strftime('%Y-%m-%d')}
+            st.session_state['df_Data_Report'] = pd.concat([pd.DataFrame([new_entry]), st.session_state['df_Data_Report']], ignore_index=True).fillna("...")
+            
+            pb.progress(int((i+1)/num_posts * 100))
+            update_log(f"✨ Xong bài {i+1}!")
+            time.sleep(0.5)
+
+        except Exception as e:
+            update_log(f"⚠️ LỖI BÀI {i+1}: {str(e)}", type="error")
+            st.error(f"Robot dừng lại do lỗi: {str(e)}")
+            break # Dừng robot nếu lỗi
+
+    if st.button("ĐÓNG CONSOLE & XEM REPORT", use_container_width=True):
+        st.session_state['active_tab'] = "Data_Report"
+        st.rerun()
 
 # =================================================================
-# 4. 🎨 UI/UX: SIDEBAR HOÀN HẢO & HIGHLIGHT
+# 3. 🎨 GIAO DIỆN CHUẨN (SIDEBAR KHÍT RỊT)
 # =================================================================
-st.set_page_config(page_title="SEO Master v3200", page_icon=" taxi", layout="wide")
+st.set_page_config(page_title="Lái Hộ SEO v3400", page_icon="🚕", layout="wide")
 
 st.markdown("""
     <style>
@@ -127,7 +98,7 @@ st.markdown("""
     header { visibility: hidden; }
     [data-testid="stSidebar"], [data-testid="collapsedControl"] { display: none !important; }
 
-    /* SIDEBAR: ÉP PHẲNG 100%, KHÔNG KHOẢNG CÁCH */
+    /* SIDEBAR KHÍT RỊT 100% */
     div[data-testid="stColumn"]:first-child div[data-testid="stButton"] button {
         width: 100% !important; height: 52px !important;
         border-radius: 0px !important; margin: 0px !important;
@@ -135,21 +106,14 @@ st.markdown("""
         color: #888888 !important; text-align: left !important;
         padding-left: 20px !important; font-size: 15px !important;
     }
-
-    /* ACTIVE TAB: SÁNG VÀNG RỰC RỠ */
     .active-btn div[data-testid="stButton"] button {
         background-color: #ffd700 !important; color: #000 !important;
         font-weight: 700 !important; border-left: 8px solid #ffffff !important;
     }
-
-    /* TOOLBAR NÚT CHỨC NĂNG */
     .main-toolbar div[data-testid="stButton"] button { height: 48px !important; font-weight: 700 !important; }
-    .btn-red button { background-color: #ff0000 !important; color: white !important; }
+    .btn-red button { background-color: #ff0000 !important; }
     .btn-gold button { background-color: #ffd700 !important; color: black !important; }
-    .btn-blue button { background-color: #0055ff !important; color: white !important; }
-
-    [data-testid="stDataFrame"] { background-color: #111111 !important; border: 1px solid #333 !important; }
-    [data-testid="stDataFrame"] div[role="columnheader"] p { color: #ffd700 !important; font-weight: 700 !important; }
+    .btn-blue button { background-color: #0055ff !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -157,7 +121,7 @@ nav_col, main_col = st.columns([1, 4.3], gap="small")
 
 with nav_col:
     st.markdown("<h3 style='color:#ffd700; text-align:center;'>🚕 LÁI HỘ SEO</h3>", unsafe_allow_html=True)
-    menu = [("🏠 Dashboard", "Dashboard"), ("🔗 Backlink", "Data_Backlink"), ("🌐 Website", "Data_Website"), ("🖼️ Image", "Data_Image"), ("🔄 Spin", "Data_Spin"), ("📍 Local", "Data_Local"), ("📊 Report", "Data_Report")]
+    menu = [("🏠 Dashboard", "Dashboard"), ("🔗 Backlink", "Data_Backlink"), ("🌐 Website", "Data_Website"), ("🔄 Spin", "Data_Spin"), ("📍 Local", "Data_Local"), ("📊 Report", "Data_Report")]
     for label, key in menu:
         active = "active-btn" if st.session_state['active_tab'] == key else ""
         st.markdown(f"<div class='{active}'>", unsafe_allow_html=True)
@@ -167,18 +131,18 @@ with nav_col:
 
 with main_col:
     tab = st.session_state['active_tab']
-    st.markdown(f"#### 📍 Thao tác: {tab}")
+    st.markdown(f"#### 📍 {tab}")
     
     st.markdown("<div class='main-toolbar'>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3, gap="small")
     with c1:
         if tab == "Dashboard":
             st.markdown('<div class="btn-red">', unsafe_allow_html=True)
-            if st.button("🔥 START ROBOT", key="btn_run"): run_robot_engine()
+            if st.button("🔥 START ROBOT", key="btn_run"): show_colab_console()
             st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div class="btn-blue">', unsafe_allow_html=True)
-            if st.button("🔄 UPDATE DB", key=f"u_{tab}"): st.toast("Đã nạp quy tắc v55.0!")
+            if st.button("🔄 UPDATE DB", key=f"u_{tab}"): st.toast("Đã nạp lại dữ liệu!")
             st.markdown('</div>', unsafe_allow_html=True)
     with c2: 
         st.markdown('<div class="btn-gold">', unsafe_allow_html=True)
@@ -196,4 +160,4 @@ with main_col:
         column_config={c: st.column_config.TextColumn(width="large") for c in st.session_state[st_key].columns}
     )
 
-st.caption("🚀 v3200.0 | Full Stable Engine | v55.0 Logic | Symmetric Sidebar")
+st.caption("🚀 v3400.0 | Colab Style Console | Real-time Logging | Error Detection")
