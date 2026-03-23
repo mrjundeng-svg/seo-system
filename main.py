@@ -3,68 +3,76 @@ import pandas as pd
 import time
 import datetime
 
-# 1. CẤU HÌNH TRANG & CSS "BLACK - WHITE - RED"
-st.set_page_config(page_title="SEO Lái Hộ - Admin", page_icon="⚙️", layout="wide")
+# 1. CẤU HÌNH TRANG & CSS "SIÊU TƯƠNG PHẢN"
+st.set_page_config(page_title="SEO Lái Hộ - High Contrast", page_icon="⚙️", layout="wide")
 
 st.markdown("""
     <style>
-    /* 1. TỔNG THỂ TRẮNG TINH KHÔI */
-    @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&display=swap');
+    /* 1. NỀN TRẮNG VÀ FONT CHỮ LẬP TRÌNH */
+    @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap');
     
     .stApp { background-color: #FFFFFF !important; }
     
-    /* Chữ đen toàn hệ thống */
-    * { color: #000000 !important; font-family: 'Roboto Mono', monospace !important; }
+    /* Chữ đen cho nội dung (không áp dụng cho button) */
+    .stMarkdown, .stSubheader, label, p, span { 
+        color: #000000 !important; 
+        font-family: 'Roboto Mono', monospace !important; 
+    }
     
-    /* Đẩy nội dung lên sát nóc */
     .block-container { padding-top: 1rem !important; }
     header { visibility: hidden; }
 
-    /* 2. KHUNG MÀU ĐEN (BORDERS) */
+    /* 2. KHUNG VIỀN ĐEN DÀY (SẮC NÉT) */
     [data-testid="stSidebar"] { 
         background-color: #FFFFFF !important; 
-        border-right: 2px solid #000000 !important; 
+        border-right: 3px solid #000000 !important; 
     }
     
-    /* Khung bảng và các ô dữ liệu */
-    [data-testid="stDataFrame"], div[data-testid="stTable"] { 
+    [data-testid="stDataFrame"], div[data-testid="stTable"], .stDataEditor { 
         border: 2px solid #000000 !important; 
-        border-radius: 0px !important; 
     }
     
-    /* Các khung bao quanh (Card) */
     div[data-testid="stExpander"], .st-emotion-cache-12w0qpk {
         background-color: #FFFFFF !important;
         border: 2px solid #000000 !important;
         border-radius: 0px !important;
     }
 
-    /* 3. NÚT BẤM MÀU ĐỎ (RED BUTTONS) */
+    /* 3. NÚT BẤM MÀU ĐỎ - CHỮ TRẮNG (DỄ NHÌN) */
     .stButton>button {
         width: 100%; border-radius: 0px; font-weight: 700; height: 3em;
-        transition: all 0.2s; 
         border: 2px solid #000000 !important; 
         background-color: #FF0000 !important; 
-        color: #FFFFFF !important;
+        color: #FFFFFF !important; /* ÉP CHỮ TRẮNG TRÊN NỀN ĐỎ */
         text-transform: uppercase;
     }
     .stButton>button:hover { 
         background-color: #CC0000 !important; 
         box-shadow: 4px 4px 0px #000000;
+        color: #FFFFFF !important;
     }
     
-    /* Nút xuất file/đồng bộ (Nếu muốn khác biệt có thể để nền trắng viền đen) */
+    /* 4. NÚT XUẤT FILE - MÀU ĐEN - CHỮ TRẮNG */
     .stDownloadButton>button {
         background-color: #000000 !important;
+        color: #FFFFFF !important; /* ÉP CHỮ TRẮNG TRÊN NỀN ĐEN */
+        border-radius: 0px;
+        font-weight: 700;
+        border: 2px solid #000000 !important;
+        text-transform: uppercase;
+    }
+    .stDownloadButton>button:hover {
+        background-color: #333333 !important;
         color: #FFFFFF !important;
     }
 
-    /* 4. TÙY CHỈNH INPUT */
-    input { border: 2px solid #000000 !important; border-radius: 0px !important; }
+    /* 5. INPUT & DATA EDITOR (CHỮ ĐEN NỀN TRẮNG) */
+    input { border: 2px solid #000000 !important; color: #000000 !important; }
+    [data-testid="stDataFrame"] * { color: #000000 !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. KHỞI TẠO DỮ LIỆU CHUẨN (13 DÒNG CONFIG)
+# 2. KHỞI TẠO DỮ LIỆU
 MENU_MAP = {
     "BẢNG ĐIỀU KHIỂN": "config",
     "DATA BACKLINK": "backlink",
@@ -80,7 +88,7 @@ def init_session():
         key = f"df_{key_suffix}"
         if key not in st.session_state:
             if key_suffix == "config":
-                cols = ["DANH MỤC", "GIÁ TRỊ"]
+                cols = ["HẠNG MỤC", "GIÁ TRỊ THIẾT LẬP"]
                 data = [
                     ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
                     ["SERPAPI_KEY", "380c97c05d054e4633fa1333115cba7a26fcb50dcec0e915d10dc122b82fe17e"],
@@ -90,7 +98,7 @@ def init_session():
                     ["TARGET_URL", "https://laiho.vn/"],
                     ["KEYWORD", "thuê tài xế lái hộ, đưa người say..."],
                     ["ĐỐI THỦ", "lmd.vn, butl.vn, saycar.vn"],
-                    ["MỤC TIÊU", "Bài viết tư vấn, chốt sale dịch vụ"],
+                    ["MỤC TIÊU", "Bài viết tư vấn, giới thiệu dịch vụ"],
                     ["SỐ LƯỢNG BÀI", "10"],
                     ["ĐỘ DÀI BÀI", "1000 - 1200 chữ"],
                     ["MẬT ĐỘ LINK", "3 - 5"],
@@ -106,7 +114,7 @@ init_session()
 
 # 3. SIDEBAR
 with st.sidebar:
-    st.markdown("## ⚙️ HỆ THỐNG SEO")
+    st.markdown("### 🏢 SEO CONTROL")
     st.markdown("---")
     choice = st.radio("MENU", list(MENU_MAP.keys()), label_visibility="collapsed")
     st.markdown("---")
@@ -115,26 +123,28 @@ with st.sidebar:
         st.rerun()
 
 # 4. KHU VỰC CHÍNH
-st.markdown(f"### 📍 {choice}")
+st.markdown(f"#### 📍 {choice}")
 current_key = f"df_{MENU_MAP[choice]}"
 
 if choice == "BẢNG ĐIỀU KHIỂN":
     # THANH CÔNG CỤ
-    c1, c2, c3, c4 = st.columns([1, 1.2, 1, 2])
+    c1, c2, c3, c4 = st.columns([1, 1.2, 0.8, 2])
     csv = st.session_state[current_key].to_csv(index=False).encode('utf-8-sig')
-    c1.download_button("📤 XUẤT CSV", data=csv, file_name=f"{choice}.csv", use_container_width=True)
-    up = c2.file_uploader("NHẬP FILE", type=["csv"], label_visibility="collapsed")
-    if c3.button("🔄 ĐỒNG BỘ"):
-        if up: st.session_state[current_key] = pd.read_csv(up); st.rerun()
+    
+    with c1:
+        st.download_button("📤 XUẤT CSV", data=csv, file_name=f"{choice}.csv", use_container_width=True)
+    with c2:
+        up = st.file_uploader("NHẬP FILE", type=["csv"], label_visibility="collapsed")
+    with c3:
+        if st.button("🔄 SYNC"):
+            if up: st.session_state[current_key] = pd.read_csv(up); st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # CHIA CỘT: CONFIG VÀ CONTROL
     col_table, col_run = st.columns([1.8, 1])
     
     with col_table:
         st.markdown("**⚙️ CẤU HÌNH HỆ THỐNG (13 DÒNG)**")
-        # SHOW FULL 13 DÒNG KHÔNG CẦN CUỘN
         st.session_state[current_key] = st.data_editor(
             st.session_state[current_key], 
             use_container_width=True, 
@@ -147,13 +157,12 @@ if choice == "BẢNG ĐIỀU KHIỂN":
         with st.container():
             st.write("Vận hành v55.0:")
             if st.button("🔥 CHẠY CHIẾN DỊCH"):
-                with st.spinner('ĐANG THỰC THI...'):
-                    time.sleep(2)
-                st.success("✅ HOÀN THÀNH!")
+                with st.spinner('ĐANG CHẠY...'): time.sleep(1)
+                st.success("✅ XONG!")
             
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("📅 LẬP LỊCH ĐĂNG"):
-                st.toast("ĐANG QUÉT LỊCH HẸN...")
+                st.toast("ĐANG QUÉT LỊCH...")
 
 else:
     # TAB DATA KHÁC
@@ -164,4 +173,4 @@ else:
         height=1000 
     )
 
-st.caption("🚀 SEO AUTOMATION v120.0 | BLACK & RED EDITION")
+st.caption("🚀 SEO AUTOMATION v130.0 | HIGH CONTRAST EDITION")
