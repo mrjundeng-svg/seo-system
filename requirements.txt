@@ -1,1 +1,8 @@
 streamlit
+pandas
+gspread
+google-auth
+google-genai
+requests
+python-docx
+google-api-python-client
