@@ -121,7 +121,7 @@ else:
             with st.container():
                 c1, c2, c3 = st.columns([1, 1, 1])
                 csv = st.session_state[current_key].to_csv(index=False).encode('utf-8-sig')
-                c1.download_button("📥 Xuất file", data=csv, file_name=f"{choice}.csv", use_container_width=True)
+                c1.download_button("📤 Xuất file", data=csv, file_name=f"{choice}.csv", use_container_width=True)
                 up = c2.file_uploader("Nạp file", type=["csv"], label_visibility="collapsed")
                 if c3.button("🔄 Đồng bộ"):
                     if up: st.session_state[current_key] = pd.read_csv(up); st.rerun()
