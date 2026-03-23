@@ -1,78 +1,60 @@
 import streamlit as st
 import pandas as pd
-import time
+import os
 
 # 1. CẤU HÌNH TRANG
-st.set_page_config(page_title="SEO Lái Hộ - v370.0 Master", page_icon="🚕", layout="wide")
+st.set_page_config(page_title="SEO Lái Hộ v390.0", page_icon="🚕", layout="wide")
 
+# --- CSS: BLACK & GOLD - SIDEBAR CỐ ĐỊNH ---
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
     .stApp { background-color: #000000 !important; }
     header { visibility: hidden; }
-    .block-container { padding-top: 1rem !important; }
     [data-testid="stSidebar"], [data-testid="collapsedControl"] { display: none !important; }
-
-    /* SIDEBAR CỐ ĐỊNH */
-    .nav-col { border-right: 1px solid #333333; height: 100vh; padding-right: 15px; }
     .gold-text { color: #ffd700 !important; font-weight: 700; font-size: 22px; }
-    
-    /* NÚT MENU */
-    .stButton>button {
-        width: 100% !important; border-radius: 4px !important; font-weight: 600 !important;
-        background-color: transparent !important; border: 1px solid transparent !important;
-        text-align: left !important; padding: 12px !important; margin-bottom: 2px !important;
-    }
-    .stButton>button:hover { border: 1px solid #ffd700 !important; color: #ffd700 !important; background-color: #111111 !important; }
     .active-nav button { background-color: #1a1a1a !important; border-left: 5px solid #ffd700 !important; color: #ffd700 !important; }
-
-    /* NÚT START & EXCEL */
-    .btn-red button { background-color: #ff0000 !important; color: white !important; font-weight: 700 !important; height: 3.5em !important; text-transform: uppercase; border: none !important; }
-    .btn-gold button { background-color: #ffd700 !important; color: black !important; font-weight: 700 !important; height: 2.8em !important; font-size: 13px !important; font-weight: 700 !important; }
-
-    /* TIÊU ĐỀ CỘT VÀNG GOLD */
-    [data-testid="stDataFrame"] div[role="columnheader"] p { color: #ffd700 !important; font-weight: 700 !important; font-size: 14px !important; }
-    [data-testid="stDataFrame"] { background-color: #111111 !important; border: 1px solid #444 !important; }
+    .stButton>button { width: 100% !important; text-align: left !important; background: transparent; border: none; padding: 10px; }
+    .stButton>button:hover { color: #ffd700 !important; border: 1px solid #ffd700 !important; }
+    [data-testid="stDataFrame"] { background-color: #111111 !important; }
+    [data-testid="stDataFrame"] div[role="columnheader"] p { color: #ffd700 !important; font-weight: 700 !important; }
     * { color: #ffffff !important; font-family: 'Inter', sans-serif !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. KHỞI TẠO DỮ LIỆU CHÍNH XÁC THEO TỪNG BẢNG
-if 'active_tab' not in st.session_state: st.session_state['active_tab'] = "Dashboard"
+# =================================================================
+# 2. LOGIC BỘ NHỚ "BẤT TỬ" (SAVE & LOAD)
+# =================================================================
+TABLE_COLS = {
+    "config": ["Hạng mục", "Giá trị thực tế"],
+    "backlink": ["Từ khoá", "Website đích", "Đã dùng"],
+    "website": ["Tên web", "Nền tảng", "URL / ID", "Tài khoản (WP)", "Mật khẩu App", "Trạng thái", "Giới hạn bài/ngày"],
+    "image": ["Link ảnh", "Đã dùng"],
+    "spin": ["Từ Spin", "Bộ Spin"],
+    "local": ["Tỉnh thành", "Quận", "Cung đường"],
+    "report": ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "File ID Drive", "Thời gian hẹn giờ", "Trạng thái"]
+}
 
-def init_master_data():
-    # 13 Dòng cấu hình Dashboard
-    if 'df_config' not in st.session_state:
-        st.session_state['df_config'] = pd.DataFrame([
-            ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
-            ["SENDER_EMAIL", "jundeng.po@gmail.com"],
-            ["TARGET_URL", "https://laiho.vn/"],
-            ["FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"],
-            ["Số lượng bài/ngày", "10"],
-            ["Độ dài bài viết", "1000 - 1200"],
-            ["Mật độ Backlink", "3 - 5"],
-            ["Trạng thái Robot", "Sẵn sàng"]
-        ] + [["...", ""]] * 5, columns=["Hạng mục", "Giá trị thực tế"])
+def load_data(key):
+    filename = f"db_{key}.csv"
+    if os.path.exists(filename):
+        return pd.read_csv(filename)
+    return pd.DataFrame(columns=TABLE_COLS[key])
 
-    # ĐỊNH NGHĨA CHÍNH XÁC CỘT CHO TỪNG BẢNG (KHÔNG CÒN CỘT 1, 2, 3 NỮA)
-    sheets_definition = {
-        "Data_Backlink": ["Từ khoá", "Website đích", "Đã dùng"],
-        "Data_Website": ["Tên web", "Nền tảng", "URL / ID", "Tài khoản (WP)", "Mật khẩu App", "Trạng thái", "Giới hạn bài/ngày"],
-        "Data_Image": ["Link ảnh", "Đã dùng"],
-        "Data_Spin": ["Từ Spin", "Bộ Spin"],
-        "Data_Local": ["Tỉnh thành", "Quận", "Cung đường"],
-        "Data_Report": ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "File ID Drive", "Thời gian hẹn giờ", "Trạng thái"]
-    }
-    
-    for tab_name, columns in sheets_definition.items():
-        df_key = f"df_{tab_name.lower().replace('data_', '')}"
-        if df_key not in st.session_state:
-            # Tạo sẵn 1 dòng trống để giữ form cho đẹp
-            st.session_state[df_key] = pd.DataFrame([{c: "" for c in columns}], columns=columns)
+def save_data(key, df):
+    filename = f"db_{key}.csv"
+    df.to_csv(filename, index=False)
 
-init_master_data()
+# KHỞI TẠO DỮ LIỆU TỪ FILE (NẾU CÓ)
+if 'tab' not in st.session_state: st.session_state['tab'] = "Dashboard"
 
-# 3. GIAO DIỆN 2 CỘT CỐ ĐỊNH
+for k in TABLE_COLS.keys():
+    state_key = f"df_{k}"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = load_data(k)
+
+# =================================================================
+# 3. GIAO DIỆN CHÍNH
+# =================================================================
 nav_col, main_col = st.columns([1, 4.2], gap="large")
 
 with nav_col:
@@ -80,49 +62,49 @@ with nav_col:
     st.markdown("---")
     menu = ["Dashboard", "Data_Backlink", "Data_Website", "Data_Image", "Data_Spin", "Data_Local", "Data_Report"]
     for m in menu:
-        is_active = st.session_state['active_tab'] == m
-        style = "active-nav" if is_active else ""
+        style = "active-nav" if st.session_state['tab'] == m else ""
         st.markdown(f"<div class='{style}'>", unsafe_allow_html=True)
         if st.button(f"▪️ {m}", key=f"nav_{m}"):
-            st.session_state['active_tab'] = m
+            st.session_state['tab'] = m
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
-# 4. KHU VỰC CHÍNH (CỘT PHẢI)
 with main_col:
-    active = st.session_state['active_tab']
-    st.markdown(f"### 📍 {active}")
-
-    # Toolbar
-    c1, c2, c3, _ = st.columns([1, 1, 1, 2.5])
-    if active == "Dashboard":
-        with c1: st.markdown('<div class="btn-red">', unsafe_allow_html=True); st.button("🔥 START", use_container_width=True); st.markdown('</div>', unsafe_allow_html=True)
-    else:
-        with c1: st.markdown('<div class="btn-gold">', unsafe_allow_html=True); st.button("📤 XUẤT EXCEL", key=f"ex_{active}", use_container_width=True); st.markdown('</div>', unsafe_allow_html=True)
+    tab = st.session_state['tab']
+    st.markdown(f"### 📍 {tab}")
     
-    with c2: st.markdown('<div class="btn-gold">', unsafe_allow_html=True); st.button("📥 NHẬP EXCEL", key=f"im_{active}", use_container_width=True); st.markdown('</div>', unsafe_allow_html=True)
-    with c3: st.markdown('<div class="btn-gold">', unsafe_allow_html=True); st.button("🔄 ĐỒNG BỘ", key=f"sy_{active}", use_container_width=True); st.markdown('</div>', unsafe_allow_html=True)
+    # Nút bấm trung tâm
+    c1, c2, c3, _ = st.columns([1, 1, 1, 2])
+    with c1: 
+        if st.button("💾 LƯU TOÀN BỘ", use_container_width=True):
+            for k in TABLE_COLS.keys():
+                save_data(k, st.session_state[f"df_{k}"])
+            st.toast("Đã lưu dữ liệu vào hệ thống!")
+    with c2: st.button("📤 XUẤT EXCEL", use_container_width=True)
+    with c3: st.button("📥 NHẬP EXCEL", use_container_width=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # LẤY DATA KEY CHÍNH XÁC
-    if active == "Dashboard":
-        df_key = "df_config"
-    else:
-        df_key = f"df_{active.lower().replace('data_', '')}"
+    # LẤY BẢNG THEO TAB
+    db_key = tab.lower().replace('data_', '')
+    state_key = f"df_{db_key}"
     
-    st.markdown(f"<p style='color:#ffd700; font-weight:700;'>HỆ THỐNG DỮ LIỆU: {active.upper()}</p>", unsafe_allow_html=True)
-    
-    # HIỂN THỊ BẢNG - KHÔNG CÒN CỘT INDEX (hide_index=True)
-    if active == "Data_Report":
-        st.dataframe(st.session_state[df_key], use_container_width=True, height=750, hide_index=True)
+    st.markdown(f"<p style='color:#ffd700; font-weight:700;'>BẢNG DỮ LIỆU: {tab.upper()}</p>", unsafe_allow_html=True)
+
+    # HIỂN THỊ BẢNG VỚI TỰ ĐỘNG XUỐNG DÒNG (WRAP TEXT)
+    if tab == "Data_Report":
+        st.dataframe(st.session_state[state_key], use_container_width=True, height=750, hide_index=True)
     else:
-        st.session_state[df_key] = st.data_editor(
-            st.session_state[df_key], 
+        # data_editor tự động lưu vào session_state khi Ní chỉnh sửa
+        edited_df = st.data_editor(
+            st.session_state[state_key], 
             use_container_width=True, 
             num_rows="dynamic", 
             height=700,
-            hide_index=True 
+            hide_index=True,
+            column_config={c: st.column_config.TextColumn(width="large") for c in TABLE_COLS[db_key]}
         )
+        # Cập nhật session_state ngay lập tức
+        st.session_state[state_key] = edited_df
 
-st.caption("🚀 SEO Automation Lái Hộ v370.0 | Perfect Columns & Bug-Free")
+st.caption("🚀 SEO Automation Lái Hộ v390.0 | Data Persistence Edition")
