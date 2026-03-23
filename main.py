@@ -3,66 +3,55 @@ import pandas as pd
 import time
 import random
 import datetime
-import json
 
-# 1. CẤU HÌNH TRANG & CSS LUXURY (PREMIUM SAAS UI)
-st.set_page_config(page_title="SEO Lái Hộ v60.0 - Global Control", page_icon="💎", layout="wide")
+# 1. CẤU HÌNH TRANG & CSS "CLEAN SAAS" (TRẮNG - XÁM - NAVY)
+st.set_page_config(page_title="SEO Lái Hộ v60.0 - Control Center", page_icon="📈", layout="wide")
 
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #fcfcfd; }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #fcfcfd; }
+    
+    /* ĐẨY NỘI DUNG LÊN TRÊN CÙNG (BỎ KHOẢNG TRẮNG ĐẦU TRANG) */
+    .block-container { padding-top: 1rem !important; padding-bottom: 0rem !important; }
     
     /* ÉP BẢNG NỞ RỘNG TỐI ĐA - SHOW 30 DÒNG */
     [data-testid="stDataFrame"] { width: 100% !important; }
     [data-testid="stDataFrame"] > div { height: auto !important; max-height: none !important; }
-    div[data-testid="stDataFrame"] iframe { height: 1200px !important; }
+    div[data-testid="stDataFrame"] iframe { height: 1000px !important; }
 
-    /* Sidebar thiết kế đẳng cấp */
+    /* Sidebar thiết kế tối giản */
     [data-testid="stSidebar"] { background-color: #0f172a; border-right: 1px solid #e2e8f0; }
-    [data-testid="stSidebar"] .stRadio > label { color: #f8fafc !important; font-weight: 600; }
     
-    /* Thiết kế Card trắng bo góc cao */
+    /* Card thiết kế trắng tinh tế */
     .st-emotion-cache-12w0qpk { 
-        border-radius: 20px; border: 1px solid #f1f5f9; 
-        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05); 
-        background: white; padding: 30px; 
+        border-radius: 12px; border: 1px solid #f1f5f9; 
+        box-shadow: 0 1px 3px rgba(0,0,0,0.02); 
+        background: white; padding: 20px; 
     }
     
-    /* Nút bấm thiết kế mới */
+    /* Nút bấm thiết kế gọn gàng */
     .stButton>button {
-        width: 100%; border-radius: 12px; font-weight: 700; height: 3.8em;
-        transition: all 0.4s; border: none; color: white; text-transform: uppercase; letter-spacing: 1px;
+        width: 100%; border-radius: 8px; font-weight: 600; height: 3.2em;
+        transition: all 0.2s; border: none; color: white;
     }
-    .btn-run button { background: linear-gradient(135deg, #00b4d8 0%, #0077b6 100%) !important; }
-    .btn-schedule button { background: linear-gradient(135deg, #6366f1 0%, #4338ca 100%) !important; }
+    .btn-run button { background: #2563eb !important; } /* Blue Primary */
+    .btn-schedule button { background: #10b981 !important; } /* Green Success */
     
     /* Status Log style */
-    .log-box { background: #1e293b; color: #38bdf8; padding: 15px; border-radius: 10px; font-family: 'Courier New', monospace; font-size: 13px; }
+    .log-box { background: #111827; color: #10b981; padding: 12px; border-radius: 6px; font-family: 'Consolas', monospace; font-size: 12px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. LOGIC XỬ LÝ THỜI GIAN V55.0 (CỐT LÕI HỆ THỐNG)
-def get_vn_now():
-    return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=7)))
-
-def parse_limit(limit_str):
-    if '-' in str(limit_str):
-        try:
-            low, high = map(int, limit_str.split('-'))
-            return random.randint(low, high)
-        except: return 1
-    return int(limit_str) if str(limit_str).isdigit() else 1
-
-# 3. KHỞI TẠO DỮ LIỆU CHUẨN (KHÔNG THIẾU 1 CỘT NÀO)
+# 2. KHỞI TẠO SESSION STATE (NẠP ĐỦ 13 DÒNG CONFIG)
 MENU_MAP = {
-    "💎 Dashboard & Run": "config",
-    "🔗 Backlink Master": "backlink",
-    "🌐 Website Satellite": "website",
-    "🖼️ Image Gallery": "image",
-    "✍️ Spin Dictionary": "spin",
-    "📍 Local Coverage": "local",
-    "📊 Final Report": "report"
+    "Dashboard": "config",
+    "Backlink Master": "backlink",
+    "Website Satellite": "website",
+    "Image Gallery": "image",
+    "Spin Dictionary": "spin",
+    "Local Coverage": "local",
+    "Final Report": "report"
 }
 
 def init_all_data():
@@ -70,103 +59,109 @@ def init_all_data():
         key = f"df_{key_suffix}"
         if key not in st.session_state:
             if key_suffix == "config":
+                # NẠP ĐẦY ĐỦ 13 DÒNG THEO ẢNH image_3bd66d.jpg
                 cols = ["Cột A (Nội dung)", "Cột B (Dữ liệu)"]
-                data = [["GEMINI_API_KEY", ""], ["SERPAPI_KEY", ""], ["SENDER_EMAIL", "jundeng.po@gmail.com"], ["SENDER_PASSWORD", ""], ["RECEIVER_EMAIL", "jundeng.po@gmail.com"], ["Danh sách Keyword bài viết", "thuê tài xế lái hộ, lái xe hộ..."], ["TARGET_URL", "https://laiho.vn/"], ["Website đối thủ", "lmd.vn, butl.vn"], ["Mục tiêu bài viết", "Tư vấn"], ["Số lượng bài cần tạo", "10"], ["Thiết lập số lượng chữ", "1000-1200"], ["Số lượng backlink/bài", "3-5"], ["FOLDER_DRIVE_ID", "1STdk4mpDP..."]]
+                data = [
+                    ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
+                    ["SERPAPI_KEY", "380c97c05d054e4633fa1333115cba7a26fcb50dcec0e915d10dc122b82fe17e"],
+                    ["SENDER_EMAIL", "jundeng.po@gmail.com"],
+                    ["SENDER_PASSWORD", "vddy misk nhbu vtsm"],
+                    ["RECEIVER_EMAIL", "jundeng.po@gmail.com"],
+                    ["TARGET_URL", "https://laiho.vn/"],
+                    ["Danh sách Keyword bài viết", "thuê tài xế lái hộ, đưa người say, uống bia rượu không tự lái xe..."],
+                    ["Website đối thủ", "lmd.vn, butl.vn, thuelai.app, saycar.vn"],
+                    ["Mục tiêu bài viết", "bài viết dạng tư vấn và giới thiệu, chốt sale dịch vụ, cảnh báo an toàn"],
+                    ["Số lượng bài cần tạo", "10"],
+                    ["Thiết lập số lượng chữ", "1000 - 1200"],
+                    ["Số lượng backlink/bài", "3 - 5"],
+                    ["FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"]
+                ]
                 st.session_state[key] = pd.DataFrame(data, columns=cols)
             elif key_suffix == "backlink":
-                cols = ["DatDat", "Cột B (Danh sách URL Đích)", "Cột C (Số lần đã dùng)"]
-                st.session_state[key] = pd.DataFrame([["lái xe hộ", "https://laiho.vn", 0]] * 20, columns=cols)
+                st.session_state[key] = pd.DataFrame([["lái xe hộ", "https://laiho.vn", 0]] * 15, columns=["Từ khóa", "URL Đích", "Đã dùng"])
             elif key_suffix == "report":
-                cols = ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "File ID Drive", "Thời gian hẹn giờ", "Trạng thái"]
+                cols = ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài", "Tiêu đề", "File ID", "Hẹn giờ", "Trạng thái"]
                 st.session_state[key] = pd.DataFrame(columns=cols)
             else:
                 st.session_state[key] = pd.DataFrame(columns=["Cột 1", "Cột 2", "Cột 3"])
 
 init_all_data()
 
-# 4. GIAO DIỆN CHÍNH
+# 3. GIAO DIỆN CHÍNH
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
+
 if not st.session_state['logged_in']:
     with st.columns([1,1.2,1])[1]:
-        st.markdown("<h2 style='text-align: center; color: #1e293b;'>💎 SEO PLATFORM PRO</h2>", unsafe_allow_html=True)
-        with st.container(border=True):
-            u = st.text_input("Username", value="admin")
-            p = st.text_input("Password", type="password", value="123")
-            if st.button("XÁC THỰC TRUY CẬP"):
-                if u == "admin" and p == "123":
-                    st.session_state['logged_in'] = True
-                    st.rerun()
+        st.markdown("<h2 style='text-align: center;'>🔐 SEO SYSTEM</h2>", unsafe_allow_html=True)
+        u = st.text_input("Username", value="admin")
+        p = st.text_input("Password", type="password", value="123")
+        if st.button("LOGIN"):
+            if u == "admin" and p == "123":
+                st.session_state['logged_in'] = True
+                st.rerun()
 else:
     # SIDEBAR
     with st.sidebar:
-        st.markdown("<h2 style='color: white;'>💎 CONTROL CENTER</h2>", unsafe_allow_html=True)
+        st.markdown("<h3 style='color: white;'>🏢 SEO PANEL</h3>", unsafe_allow_html=True)
+        choice = st.radio("QUẢN TRỊ:", list(MENU_MAP.keys()), label_visibility="collapsed")
         st.markdown("---")
-        choice = st.radio("HỆ THỐNG MENU:", list(MENU_MAP.keys()))
-        st.markdown("---")
-        if st.button("🚪 Đăng xuất"):
+        if st.button("🚪 Logout"):
             st.session_state['logged_in'] = False
             st.rerun()
 
-    st.title(f"📍 {choice}")
+    # 4. KHU VỰC LÀM VIỆC CHÍNH (ĐẨY LÊN TRÊN)
+    st.subheader(f"📍 {choice}")
     current_key = f"df_{MENU_MAP[choice]}"
 
-    # Tool Card: Import / Export (Sạch sẽ)
-    with st.container(border=True):
-        c1, c2, c3 = st.columns([1, 1.5, 1])
-        with c1:
-            csv = st.session_state[current_key].to_csv(index=False).encode('utf-8-sig')
-            st.download_button(f"📤 Export CSV", data=csv, file_name=f"{choice}.csv", use_container_width=True)
-        with c2:
-            up = st.file_uploader("Upload Data", type=["csv"], label_visibility="collapsed")
-        with c3:
-            if st.button("📥 SYNC DATA"):
-                if up: st.session_state[current_key] = pd.read_csv(up); st.rerun()
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # 5. CHI TIẾT VẬN HÀNH (LOGIC v55.0)
-    if "Dashboard" in choice:
-        col_main, col_run = st.columns([2, 1])
-        
-        with col_main:
-            st.subheader("⚙️ System Configuration")
-            st.session_state[current_key] = st.data_editor(st.session_state[current_key], use_container_width=True, height=550)
-        
-        with col_run:
-            st.subheader("🚀 Campaign Control")
+    if choice == "Dashboard":
+        # KHUNG CÔNG CỤ (IMPORT/EXPORT)
+        col_tools, col_empty = st.columns([2, 2])
+        with col_tools:
             with st.container(border=True):
-                st.write("Cài đặt chiến dịch:")
+                c1, c2, c3 = st.columns([1, 1.5, 1])
+                csv = st.session_state[current_key].to_csv(index=False).encode('utf-8-sig')
+                c1.download_button("📤 Export", data=csv, file_name=f"{choice}.csv", use_container_width=True)
+                up = c2.file_uploader("Upload", type=["csv"], label_visibility="collapsed")
+                if c3.button("🔄 Sync"):
+                    if up: st.session_state[current_key] = pd.read_csv(up); st.rerun()
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # CHIA CỘT: CONFIG TABLE VÀ CAMPAIGN CONTROL
+        col_table, col_control = st.columns([2, 1])
+        
+        with col_table:
+            st.markdown("##### ⚙️ System Configuration")
+            # HIỂN THỊ ĐỦ 13 DÒNG, KHÔNG SCROLL NỘI BỘ
+            st.session_state[current_key] = st.data_editor(
+                st.session_state[current_key], 
+                use_container_width=True, 
+                num_rows="fixed",
+                height=530 # Vừa đủ cho 13 dòng + header
+            )
+        
+        with col_control:
+            st.markdown("##### 🚀 Campaign Control")
+            with st.container(border=True):
+                st.write("Cài đặt vận hành:")
                 st.markdown("<div class='btn-run'>", unsafe_allow_html=True)
                 if st.button("🔥 RUN SEO CAMPAIGN"):
-                    log_placeholder = st.empty()
+                    log_area = st.empty()
                     progress = st.progress(0)
-                    
-                    # LOGIC v55.0 Simulation
-                    vn_now = get_vn_now()
                     for i in range(1, 11):
-                        time.sleep(0.5)
+                        time.sleep(0.4)
                         progress.progress(i * 10)
-                        msg = f"""
-                        🎬 [SYSTEM] Đang khởi động... bài {i}/10
-                        📍 Keyword: '{random.choice(['lái xe hộ', 'thuê tài xế'])}'
-                        🤖 AI Gemini 2.5: Đang viết 1000 chữ...
-                        🔗 SEO: Đã chèn 3 backlink & 1 ảnh.
-                        📅 Hẹn giờ: { (vn_now + datetime.timedelta(minutes=i*45)).strftime('%H:%M') }
-                        ✅ Trạng thái: SẴN SÀNG
-                        """
-                        log_placeholder.markdown(f"<div class='log-box'>{msg}</div>", unsafe_allow_html=True)
-                    st.success("✅ Đã lập lịch thành công 10 bài viết!")
+                        log_area.markdown(f"<div class='log-box'>[LOG] {datetime.datetime.now().strftime('%H:%M:%S')} - Đang xử lý bài viết {i}/10...<br>[LOG] Đang gọi Gemini AI viết bài chuẩn SEO...</div>", unsafe_allow_html=True)
+                    st.success("✅ Chiến dịch hoàn tất!")
                 st.markdown("</div>", unsafe_allow_html=True)
                 
                 st.markdown("<div class='btn-schedule' style='margin-top:10px;'>", unsafe_allow_html=True)
                 if st.button("📅 SCHEDULE ROBOT"):
-                    st.toast("Robot đang quét bảng Report...", icon="🔍")
-                    time.sleep(1)
-                    st.info("🤖 Hệ thống đã đưa 10 bài viết vào hàng đợi đăng tự động.")
+                    st.toast("Đang lập lịch đăng bài theo Quota...", icon="🔍")
                 st.markdown("</div>", unsafe_allow_html=True)
 
     else:
-        # HIỂN THỊ BẢNG TABLE FULL (Show 30 dòng)
+        # CÁC TAB DATA KHÁC (SHOW TABLE FULL)
         st.subheader(f"📊 {choice} Database")
         st.session_state[current_key] = st.data_editor(
             st.session_state[current_key],
@@ -175,4 +170,4 @@ else:
             height=1000 
         )
 
-    st.caption("🚀 Version 60.0 Stable | © 2026 SEO Automation System")
+    st.caption("🚀 Version 60.0 Stable | Build: 2026.03.23")
