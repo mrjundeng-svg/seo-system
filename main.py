@@ -16,10 +16,21 @@ TABS_CONFIG = {
 
 if 'db' not in st.session_state:
     st.session_state['db'] = {k: pd.DataFrame(columns=v) for k, v in TABS_CONFIG.items()}
+    # Dữ liệu Ní setup sẵn tui giữ nguyên nhé
     st.session_state['db']['Dashboard'] = pd.DataFrame([
-        ["GOOGLE_SHEET_ID", "1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw"],
         ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
-        ["Số lượng bài cần tạo", "3"]
+        ["SERPAPI_KEY", "380c97c05d054e4633fa1333115cba7a26fcb50dcec0e915d10dc122b82fe17e"],
+        ["SENDER_EMAIL", "jundeng.po@gmail.com"],
+        ["SENDER_PASSWORD", "vddy misk nhbu vtsm"],
+        ["RECEIVER_EMAIL", "jundeng.po@gmail.com"],
+        ["Danh sách Keyword bài viết", "thuê tài xế lái hộ, đưa người say..."],
+        ["TARGET_URL", "https://laiho.vn/"],
+        ["Website đối thủ", "lmd.vn, butl.vn..."],
+        ["Mục tiêu bài viết", "Bài viết dạng tư vấn..."],
+        ["Số lượng bài cần tạo", "10"],
+        ["Thiết lập số lượng chữ", "900 - 1200"],
+        ["Số lượng backlink/bài", "3 - 4"],
+        ["FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"]
     ], columns=["Hạng mục", "Giá trị thực tế"])
 
 st.markdown("<h2 style='color:#ffd700;'>🚕 LÁI HỘ SEO MASTER</h2>", unsafe_allow_html=True)
@@ -35,26 +46,25 @@ for i, (name, cols) in enumerate(TABS_CONFIG.items()):
                 parsed_data = []
                 for line in raw_data.strip().split('\n'):
                     if not line.strip(): continue
-                    
-                    # TUYỆT CHIÊU: Cắt bằng Tab hoặc từ 2 khoảng trắng trở lên, và vứt bỏ các ô rác
                     row = [x.strip() for x in re.split(r'\t|\s{2,}', line) if x.strip()]
-                    
-                    # Tự động canh lề: Thiếu cột thì bù trống, dư cột thì cắt bỏ
-                    if len(row) > len(cols): 
-                        row = row[:len(cols)]
-                    elif len(row) < len(cols): 
-                        row.extend([''] * (len(cols) - len(row)))
-                        
+                    if len(row) > len(cols): row = row[:len(cols)]
+                    elif len(row) < len(cols): row.extend([''] * (len(cols) - len(row)))
                     parsed_data.append(row)
-                
-                # Ghi đè vào bảng và chạy lại
                 st.session_state['db'][name] = pd.DataFrame(parsed_data, columns=cols)
                 st.rerun()
 
         # --- TOOLBAR & BẢNG ---
-        c1, c2, c3 = st.columns([1, 1, 4])
-        with c1: st.button("☁️ LƯU CLOUD", key=f"up_{name}", use_container_width=True)
-        with c2: st.button("🔄 RESTORE", key=f"res_{name}", use_container_width=True)
+        c1, c2, c3, c4 = st.columns([1, 1, 1.5, 3])
+        with c1: 
+            st.button("☁️ LƯU CLOUD", key=f"up_{name}", use_container_width=True)
+        with c2: 
+            st.button("🔄 RESTORE", key=f"res_{name}", use_container_width=True)
+        with c3:
+            # TRẢ LẠI NÚT START ROBOT Ở ĐÂY NÈ NÍ
+            if name == "Dashboard":
+                if st.button("🔥 START ROBOT", key="run_robot", type="primary", use_container_width=True):
+                    st.toast("Đang khởi động Robot SEO...", icon="🚀")
+                    # Chỗ này sau này Ní nhúng code chạy AI vào nha
 
         st.session_state['db'][name] = st.data_editor(
             st.session_state['db'][name],
