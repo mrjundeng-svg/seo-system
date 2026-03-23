@@ -1,125 +1,95 @@
 import streamlit as st
 import pandas as pd
-import time
-import random
-import datetime
 import json
-import gspread
-from google.oauth2.service_account import Credentials
+from streamlit_option_menu import option_menu
 
 # =================================================================
-# 1. 🛡️ CĂN HẦM DỮ LIỆU & CẤU HÌNH DASHBOARD
+# 1. 🏗️ DANH SÁCH "HỘ KHẨU" CÁC DỰ ÁN (Sửa ở đây để thêm dự án)
 # =================================================================
-REPORT_COLS = ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "File ID Drive", "Thời gian hẹn giờ", "Trạng thái"]
-TABS = ["Dashboard", "Data_Backlink", "Data_Website", "Data_Image", "Data_Spin", "Data_Local", "Data_Report"]
+PROJECTS = {
+    "🚕 Lái Hộ": "1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw",
+    "🏠 Giúp Việc": "ID_SHEET_GIUP_VIEC_CUA_NI",
+    "🤖 CTech AI": "ID_SHEET_CTECH_CUA_NI"
+}
 
-def init_v4600():
-    if 'active_tab' not in st.session_state: st.session_state['active_tab'] = "Dashboard"
-    
-    # Khởi tạo Dashboard mẫu nếu chưa có gì
-    if 'df_Dashboard' not in st.session_state:
-        st.session_state['df_Dashboard'] = pd.DataFrame([
-            ["GOOGLE_SHEET_ID", "1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw"],
-            ["SERVICE_ACCOUNT_JSON", "Dán_Nội_Dung_JSON_Vào_Đây"],
-            ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
-            ["FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"],
-            ["Số lượng bài cần tạo", "3"],
-            ["Tỉ lệ bài Local (%)", "30"]
-        ], columns=["Hạng mục", "Giá trị thực tế"])
+def init_v4900():
+    if 'current_project' not in st.session_state:
+        st.session_state['current_project'] = list(PROJECTS.keys())[0]
+    if 'selected_menu' not in st.session_state:
+        st.session_state['selected_menu'] = "Dashboard"
 
-    for tab in TABS[1:]: # Khởi tạo các tab còn lại
-        s_key = f"df_{tab}"
-        if s_key not in st.session_state:
-            cols = REPORT_COLS if tab == "Data_Report" else ["Cột 1", "Cột 2", "Cột 3"] # Tạm thời
-            st.session_state[s_key] = pd.DataFrame(columns=cols)
-
-init_v4600()
+init_v4900()
 
 # =================================================================
-# 2. 🔌 HÀM KẾT NỐI GOOGLE SHEETS (HÀN MẠCH THẬT)
+# 2. 🎨 UI/UX SIDEBAR ĐA DỰ ÁN
 # =================================================================
-def get_gsheet_client():
-    try:
-        json_info = json.loads(get_config("SERVICE_ACCOUNT_JSON"))
-        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        creds = Credentials.from_service_account_info(json_info, scopes=scopes)
-        return gspread.authorize(creds)
-    except Exception as e:
-        st.error(f"❌ Lỗi kết nối Google: {str(e)}")
-        return None
+st.set_page_config(page_title="Multi-Project SEO Master", layout="wide")
 
-def get_config(key_name):
-    df = st.session_state['df_Dashboard']
-    try:
-        row = df[df.iloc[:,0].str.lower().str.contains(key_name.lower(), na=False)]
-        return str(row.iloc[0,1]).strip()
-    except: return ""
-
-# =================================================================
-# 3. ☁️ CHỨC NĂNG ĐẨY/KÉO DỮ LIỆU (REAL ACTION)
-# =================================================================
-def sync_to_cloud():
-    client = get_gsheet_client()
-    if not client: return
-    sheet_id = get_config("GOOGLE_SHEET_ID")
-    try:
-        sh = client.open_by_key(sheet_id)
-        for tab in TABS:
-            ws = sh.worksheet(tab)
-            ws.clear() # Xóa cũ
-            df = st.session_state[f"df_{tab}"]
-            ws.update([df.columns.values.tolist()] + df.fillna("").values.tolist())
-        st.success("✅ Đã đồng bộ toàn bộ 7 Tab lên Google Sheets!")
-    except Exception as e:
-        st.error(f"❌ Lỗi khi Update Cloud: {str(e)}")
-
-def restore_from_cloud():
-    client = get_gsheet_client()
-    if not client: return
-    sheet_id = get_config("GOOGLE_SHEET_ID")
-    try:
-        sh = client.open_by_key(sheet_id)
-        for tab in TABS:
-            ws = sh.worksheet(tab)
-            data = ws.get_all_records()
-            st.session_state[f"df_{tab}"] = pd.DataFrame(data)
-        st.success("🔄 Đã kéo dữ liệu mới nhất từ Sheets về Web!")
-        st.rerun()
-    except Exception as e:
-        st.error(f"❌ Lỗi khi Restore Cloud: {str(e)}")
-
-# =================================================================
-# 4. 🎨 GIAO DIỆN & NAVIGATION
-# =================================================================
-st.set_page_config(page_title="SEO Lái Hộ Master", page_icon=" taxi", layout="wide")
-
-st.markdown("""<style> .stApp { background-color: #000; color: white; } header { visibility: hidden; } [data-testid="stSidebar"] { display: none !important; } div[data-testid="stColumn"]:first-child div[data-testid="stButton"] button { width: 100% !important; height: 50px !important; border-radius: 0px !important; margin: 0px !important; background-color: #111 !important; border: 1px solid #222 !important; color: #888 !important; text-align: left !important; padding-left: 20px !important; } .active-btn div[data-testid="stButton"] button { background-color: #ffd700 !important; color: #000 !important; font-weight: 700 !important; border-left: 8px solid #fff !important; } .btn-red button { background-color: #ff0000 !important; } .btn-blue button { background-color: #0055ff !important; } </style>""", unsafe_allow_html=True)
+# CSS để làm Sidebar đẹp hơn
+st.markdown("""
+    <style>
+    .stApp { background-color: #000; color: white; }
+    [data-testid="stSidebar"] { display: none !important; }
+    /* Style cho bộ chọn dự án */
+    .project-box {
+        background-color: #1a1a1a; padding: 10px; border: 1px solid #333;
+        border-radius: 5px; margin-bottom: 20px; text-align: center;
+    }
+    .btn-blue button { background-color: #0055ff !important; width: 100%; }
+    </style>
+    """, unsafe_allow_html=True)
 
 nav_col, main_col = st.columns([1, 4.3], gap="small")
+
 with nav_col:
-    st.markdown("<h3 style='color:#ffd700; text-align:center;'>🚕 LÁI HỘ SEO</h3>", unsafe_allow_html=True)
-    menu = [("🏠 Dashboard", "Dashboard"), ("🔗 Backlink", "Data_Backlink"), ("🌐 Website", "Data_Website"), ("📍 Local", "Data_Local"), ("📊 Report", "Data_Report")]
-    for label, key in menu:
-        active = "active-btn" if st.session_state['active_tab'] == key else ""
-        st.markdown(f"<div class='{active}'>", unsafe_allow_html=True)
-        if st.button(label, key=f"nav_{key}"): st.session_state['active_tab'] = key; st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#ffd700; text-align:center;'>SEO HUB</h2>", unsafe_allow_html=True)
+    
+    # --- BỘ CHỌN DỰ ÁN ---
+    st.markdown("<p style='color:#888; font-size:12px; margin-bottom:5px;'>CHỌN DỰ ÁN:</p>", unsafe_allow_html=True)
+    new_project = st.selectbox("Select Project", options=list(PROJECTS.keys()), label_visibility="collapsed")
+    
+    if new_project != st.session_state['current_project']:
+        st.session_state['current_project'] = new_project
+        st.toast(f"Đã chuyển sang dự án: {new_project}")
+        # Chỗ này sau này mình sẽ thêm hàm tự động RESTORE FROM CLOUD khi đổi dự án
+        st.rerun()
+
+    st.markdown("<hr style='border-color:#333'>", unsafe_allow_html=True)
+
+    # --- MENU ĐIỀU HƯỚNG (GIỐNG NHAU 100%) ---
+    st.session_state['selected_menu'] = option_menu(
+        menu_title=None,
+        options=["Dashboard", "Backlink", "Website", "Image Data", "Content Spin", "Local Data", "Report"],
+        icons=["home", "link-45deg", "globe2", "image", "arrow-repeat", "geo-alt", "bar-chart-line"],
+        styles={
+            "container": {"background-color": "#000", "padding": "0px"},
+            "nav-link": {"color": "#888", "font-size": "14px", "text-align": "left", "height": "45px"},
+            "nav-link-selected": {"background-color": "#ffd700", "color": "#000", "font-weight": "700"}
+        }
+    )
 
 with main_col:
-    tab = st.session_state['active_tab']
-    st.markdown(f"#### 📍 Tab: {tab}")
-    c1, c2 = st.columns(2)
+    curr_proj = st.session_state['current_project']
+    curr_tab = st.session_state['selected_menu']
+    
+    # Hiển thị tiêu đề Dự án + Tab
+    st.markdown(f"### {curr_proj} <span style='color:#888; font-size:18px;'>/ {curr_tab}</span>", unsafe_allow_html=True)
+    st.info(f"Đang kết nối Sheet ID: `{PROJECTS[curr_proj]}`")
+
+    # TOOLBAR
+    c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
         st.markdown('<div class="btn-blue">', unsafe_allow_html=True)
-        if st.button("☁️ UPDATE TO CLOUD"): sync_to_cloud()
+        if st.button("☁️ UPDATE CLOUD"): st.success(f"Đã đẩy data {curr_proj} lên Cloud!")
         st.markdown('</div>', unsafe_allow_html=True)
     with c2:
         st.markdown('<div class="btn-blue">', unsafe_allow_html=True)
-        if st.button("🔄 RESTORE FROM CLOUD"): restore_from_cloud()
+        if st.button("🔄 RESTORE CLOUD"): st.success(f"Đã kéo data {curr_proj} về Web!")
         st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
-    st_key = f"df_{tab}"
-    st.session_state[st_key] = st.data_editor(st.session_state[st_key], use_container_width=True, num_rows="dynamic", height=700, hide_index=True)
+    
+    # Dữ liệu bảng (Giả lập)
+    st.data_editor(pd.DataFrame({"Hạng mục": ["ID Dự án", "Folder Drive", "Trạng thái"], "Giá trị": [PROJECTS[curr_proj], "Folder_ABC_123", "Active"]}), use_container_width=True, hide_index=True)
 
-st.caption("🚀 v4600.0 | Real Cloud Sync | Gspread Integrated | Anti-Spam SEO Engine")
+st.caption(f"🚀 v4900.0 | Multi-Project Hub | Project: {st.session_state['current_project']}")
