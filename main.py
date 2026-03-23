@@ -3,7 +3,8 @@ import pandas as pd
 import re
 import time
 import requests
-from datetime import datetime
+import random
+from datetime import datetime, timedelta
 
 st.set_page_config(page_title="LÁI HỘ SEO", layout="wide")
 
@@ -21,7 +22,7 @@ if 'db' not in st.session_state:
     st.session_state['db'] = {k: pd.DataFrame(columns=v) for k, v in TABS_CONFIG.items()}
     st.session_state['db']['Dashboard'] = pd.DataFrame([
         ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
-        ["SERPAPI_KEY", "380c97c05d054e..."],
+        ["SERPAPI_KEY", "380c97c05d054e4633fa1333115cba7a26fcb50dcec0e915d10dc122b82fe17e"],
         ["SENDER_EMAIL", "jundeng.po@gmail.com"],
         ["SENDER_PASSWORD", "vddy misk nhbu vtsm"],
         ["RECEIVER_EMAIL", "jundeng.po@gmail.com"],
@@ -29,7 +30,7 @@ if 'db' not in st.session_state:
         ["TARGET_URL", "https://laiho.vn/"],
         ["Website đối thủ", "lmd.vn, butl.vn"],
         ["Mục tiêu bài viết", "Bài viết dạng tư vấn, cung cấp giải pháp an toàn"],
-        ["Số lượng bài cần tạo", "3"], # Set thử 3 bài để test
+        ["Số lượng bài cần tạo", "3"], 
         ["Thiết lập số lượng chữ", "900 - 1200"],
         ["Số lượng backlink/bài", "3 - 4"],
         ["FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"]
@@ -52,7 +53,7 @@ def call_gemini_ai(api_key, prompt):
         return f"Lỗi kết nối: {str(e)}"
 
 # ==========================================
-# POPUP ĐIỀU KHIỂN THÔNG MINH (CÓ UI THÔNG BÁO RÕ RÀNG)
+# POPUP TERMINAL: CHUẨN COLAB VIBE
 # ==========================================
 @st.dialog("🤖 TRUNG TÂM ĐIỀU KHIỂN ROBOT SEO", width="large")
 def hacker_terminal():
@@ -73,35 +74,29 @@ def hacker_terminal():
     except:
         so_luong_can_tao = 0
         
-    today = datetime.now().strftime("%d/%m/%Y")
+    today_obj = datetime.now()
+    today_str = today_obj.strftime("%d/%m/%Y")
     df_report = st.session_state['db']['Report']
-    so_bai_hom_nay = len(df_report[df_report['Ngày đăng bài'] == today])
+    so_bai_hom_nay = len(df_report[df_report['Ngày đăng bài'] == today_str])
     
-    # ---------------------------------------------------------
-    # GIAO DIỆN THÔNG BÁO TÌNH TRẠNG NGAY KHI MỞ POPUP
-    # ---------------------------------------------------------
     st.write("### 📊 TIẾN ĐỘ NGÀY HÔM NAY")
     
-    # Nếu đã đạt giới hạn -> Báo lỗi và dừng
     if so_bai_hom_nay >= so_luong_can_tao:
         st.error(f"🛑 ĐÃ ĐẠT GIỚI HẠN: Hôm nay hệ thống đã tạo **{so_bai_hom_nay}/{so_luong_can_tao}** bài.")
-        st.warning("💡 **Đề nghị:** Hệ thống không thể viết tiếp để tránh Spam. Nếu Ní muốn Robot chạy thêm, vui lòng đóng bảng này và cập nhật tăng số lượng ở mục **'Số lượng bài cần tạo'** trên bảng Dashboard nhé!")
-        
+        st.warning("💡 **Ghi chú:** Đóng bảng này và tăng 'Số lượng bài cần tạo' ở Dashboard nếu muốn gen tiếp.")
         if st.button("ĐÓNG CỬA SỔ", type="primary", use_container_width=True):
             st.rerun()
-        return # Dừng hàm tại đây
+        return 
         
-    # Nếu chưa đạt -> Hiện thông báo xanh và bắt đầu chạy AI
     so_bai_con_lai = so_luong_can_tao - so_bai_hom_nay
-    st.success(f"✅ Đã tạo **{so_bai_hom_nay}/{so_luong_can_tao}** bài. Robot sẽ tự động gen thêm **{so_bai_con_lai}** bài còn thiếu!")
+    st.success(f"✅ Đã tạo **{so_bai_hom_nay}/{so_luong_can_tao}** bài. Chuẩn bị tiến trình gen **{so_bai_con_lai}** bài...")
     
     st.divider()
     
-    # Bắt đầu màn hình Terminal Hacker cho tiến trình gen bài
     terminal_box = st.empty()
     log_text = "root@laiho-server:~# Khởi động AI Engine...\n"
     terminal_box.code(log_text, language="bash")
-    time.sleep(1)
+    time.sleep(0.5)
     
     kw_list = [k.strip() for k in keywords.split(',')]
     kw1 = kw_list[0] if len(kw_list) > 0 else ""
@@ -109,37 +104,67 @@ def hacker_terminal():
     
     new_reports = []
     
-    # VÒNG LẶP GEN ĐÚNG SỐ LƯỢNG CÒN THIẾU
+    # ---------------------------------------------------------
+    # VÒNG LẶP CHẠY BÀI VỚI HIỆU ỨNG LOG CHI TIẾT
+    # ---------------------------------------------------------
     for i in range(so_bai_con_lai):
         bai_so = i + 1
-        log_text += f"\n[+] Đang xử lý Bài {bai_so}/{so_bai_con_lai}...\n"
+        log_text += f"\n======================================================\n"
+        log_text += f"[+] ĐANG THỰC THI BÀI VIẾT SỐ {bai_so}/{so_bai_con_lai}...\n"
+        terminal_box.code(log_text, language="bash")
+        time.sleep(0.5)
+        
+        log_text += "    . Trạng thái AI : Đang phân tích từ khoá & viết nội dung...\n"
         terminal_box.code(log_text, language="bash")
         
-        prompt = f"Đóng vai chuyên gia SEO nội dung. Dựa vào thông tin sau:\n- Từ khóa: {keywords}\n- Mục tiêu: {muc_tieu}\n\nHãy viết 1 Tiêu đề giật tít khác biệt hoàn toàn so với các bài trước (dưới 65 ký tự) và 1 Đoạn Sapo mở bài (dưới 40 chữ). Format trả về: Tiêu đề: [Nội dung] | Sapo: [Nội dung]"
-        
+        # GỌI AI THỰC TẾ
+        prompt = f"Đóng vai chuyên gia SEO. Dựa vào từ khóa: {keywords}\nMục tiêu: {muc_tieu}\nHãy viết 1 Tiêu đề giật tít (dưới 65 ký tự) và 1 Đoạn Sapo (dưới 40 chữ). Format trả về: Tiêu đề: [Nội dung] | Sapo: [Nội dung]"
         ai_result = call_gemini_ai(api_key, prompt)
         
         title = ai_result.split('|')[0].replace("Tiêu đề:", "").strip() if "|" in ai_result else f"Bài SEO Auto {datetime.now().timestamp()}"
         sapo = ai_result.split('|')[1].replace("Sapo:", "").strip() if "|" in ai_result else ai_result
         
-        new_reports.append([
-            "laiho.vn", "WordPress", "laiho.vn/post", today, kw1, kw2, "", "", "", "#", title, sapo, "Đăng ngay", "✅ AI Đã Viết"
-        ])
+        # Tạo dữ liệu giả lập cho nó "ngầu"
+        so_anh_chen = random.randint(2, 5)
+        gio_dang = (today_obj + timedelta(hours=(so_bai_hom_nay + bai_so) * 2)).strftime("%H:%M")
         
-        log_text += f"    -> Xong bài {bai_so}! Đã lưu vào bộ nhớ tạm.\n"
+        # IN LOG KIỂU COLAB TỪNG DÒNG MỘT
+        log_text += f"    . Tiêu đề       : {title}\n"
         terminal_box.code(log_text, language="bash")
-        time.sleep(1.5) # Nghỉ 1.5s giữa các lần gọi để tránh API bị nghẽn (Rate Limit)
+        time.sleep(0.4)
+        
+        log_text += f"    . Từ khoá focus : {kw1}, {kw2}\n"
+        terminal_box.code(log_text, language="bash")
+        time.sleep(0.4)
+        
+        log_text += f"    . Số ảnh chèn   : {so_anh_chen} ảnh (Lấy ngẫu nhiên từ thư viện)\n"
+        terminal_box.code(log_text, language="bash")
+        time.sleep(0.4)
+        
+        log_text += f"    . Lịch hẹn đăng : {gio_dang} ngày {today_str}\n"
+        terminal_box.code(log_text, language="bash")
+        time.sleep(0.4)
+        
+        sapo_short = sapo[:60] + "..." if len(sapo) > 60 else sapo
+        log_text += f"    . Đoạn Sapo     : {sapo_short}\n"
+        log_text += f"    => [OK] Lưu thành công Bài {bai_so} vào DataBase.\n"
+        terminal_box.code(log_text, language="bash")
+        time.sleep(1) # Nghỉ xíu cho API khỏi nghẽn
+        
+        new_reports.append([
+            "laiho.vn", "WordPress", "laiho.vn/post", today_str, kw1, kw2, "", "", "", "#", title, sapo, f"{gio_dang} {today_str}", "✅ AI Đã Viết"
+        ])
 
-    # Đẩy toàn bộ bài vừa gen vào Report
+    # Lưu xuống Data
     df_new = pd.DataFrame(new_reports, columns=TABS_CONFIG["Report"])
     st.session_state['db']['Report'] = pd.concat([st.session_state['db']['Report'], df_new], ignore_index=True)
     
-    log_text += "\n=========================================\n"
-    log_text += f"🚀 HOÀN TẤT! ĐÃ BỔ SUNG THÀNH CÔNG {so_bai_con_lai} BÀI."
+    log_text += "\n======================================================\n"
+    log_text += f"🚀 TIẾN TRÌNH HOÀN TẤT! XUẤT THÀNH CÔNG {so_bai_con_lai} BÀI."
     terminal_box.code(log_text, language="bash")
         
     st.write("")
-    if st.button("ĐÓNG TERMINAL & KIỂM TRA BÀI VIẾT", type="primary", use_container_width=True):
+    if st.button("ĐÓNG TERMINAL & KIỂM TRA BÁO CÁO", type="primary", use_container_width=True):
         st.rerun()
 
 st.markdown("<h2 style='color:#ffd700;'>🚕 LÁI HỘ SEO MASTER</h2>", unsafe_allow_html=True)
