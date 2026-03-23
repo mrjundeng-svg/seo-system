@@ -2,122 +2,131 @@ import streamlit as st
 import pandas as pd
 import io
 
-# 1. CẤU HÌNH GIAO DIỆN & STYLE
-st.set_page_config(page_title="Hệ thống SEO Lái Hộ - Admin", layout="wide")
+# 1. CẤU HÌNH GIAO DIỆN CHUYÊN NGHIỆP
+st.set_page_config(page_title="Hệ thống SEO Lái Hộ - Pro Admin", layout="wide")
 
-# CSS để bảng hiển thị full và giao diện chuyên nghiệp
+# CSS để làm bảng hiển thị full, nút bấm đẹp và giao diện sạch sẽ
 st.markdown("""
     <style>
     .stDataFrame div[data-testid="stTable"] { width: 100%; }
-    .main { background-color: #f5f7f9; }
-    div[data-testid="stExpander"] { background-color: white; border-radius: 10px; border: 1px solid #e6e9ef; }
-    .stButton>button { border-radius: 5px; height: 3em; font-weight: bold; }
+    .main { background-color: #f0f2f6; }
+    .stButton>button { border-radius: 8px; height: 3em; background-color: #007bff; color: white; font-weight: bold; }
+    div[data-testid="stExpander"] { border: 1px solid #d1d5db; border-radius: 10px; background-color: white; }
+    /* Ép bảng không hiện scroll bar nội bộ */
+    div[data-testid="stDataFrame"] > div { height: auto !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. KHỞI TẠO SESSION STATE (LƯU DỮ LIỆU TẠM THỜI)
-def init_df(key, columns, data=None):
-    if key not in st.session_state:
-        if data:
-            st.session_state[key] = pd.DataFrame(data)
-        else:
-            st.session_state[key] = pd.DataFrame(columns=columns)
+# 2. KHỞI TẠO DỮ LIỆU (SESSION STATE) - Khắc phục lỗi KeyError
+def init_all_data():
+    # Danh sách menu chuẩn theo ảnh của bạn
+    menu_list = ["Config", "Data_Backlink", "Data_Website", "Data_Image", "Data_Spin", "Data_Local", "Data_Report"]
+    
+    for m in menu_list:
+        key = f"df_{m}"
+        if key not in st.session_state:
+            # Khởi tạo cấu trúc cột chính xác theo từng ảnh
+            if m == "Config":
+                cols = ["Cột A (Nội dung - Fix cứng)", "Cột B (Dữ liệu - Bạn điền vào đây)"]
+                data = [
+                    ["GEMINI_API_KEY", ""], ["SERPAPI_KEY", ""], ["SENDER_EMAIL", "jundeng.po@gmail.com"],
+                    ["SENDER_PASSWORD", ""], ["RECEIVER_EMAIL", "jundeng.po@gmail.com"],
+                    ["Danh sách Keyword bài viết", "thuê tài xế lái hộ, đưa người say..."],
+                    ["TARGET_URL", "https://laiho.vn/"], ["Website đối thủ", "lmd.vn, butl.vn"],
+                    ["Mục tiêu bài viết", "bài viết tư vấn..."], ["Số lượng bài cần tạo", "10"],
+                    ["Thiết lập số lượng chữ", "900 - 1200"], ["Số lượng backlink/bài", "3 - 4"],
+                    ["FOLDER_DRIVE_ID", ""]
+                ]
+                st.session_state[key] = pd.DataFrame(data, columns=cols)
+            
+            elif m == "Data_Backlink":
+                cols = ["DatDat", "Cột B (Danh sách URL Đích - cách nhau bằng dấu phẩy)", "Cột C (Số lần đã dùng)"]
+                st.session_state[key] = pd.DataFrame([["lái xe hộ", "https://laiho.vn", 0]], columns=cols)
+                
+            elif m == "Data_Website":
+                cols = ["c", "Nền tảng", "URL / ID", "Tài khoản (Chỉ WP)", "Mật khẩu ứng dụng (Chỉ WP)", "Trạng thái", "Giới hạn bài/ngày"]
+                st.session_state[key] = pd.DataFrame([["Blog Lái Hộ 1", "Blogger", "muontaixelaxe.laiho1@...", "", "", "Bật", "1 - 2"]], columns=cols)
+                
+            elif m == "Data_Image":
+                cols = ["Link Ảnh (URL)", "Số lần dùng"]
+                st.session_state[key] = pd.DataFrame([["https://i.postimg.cc/...", 3]], columns=cols)
+                
+            elif m == "Data_Spin":
+                cols = ["Từ khóa gốc", "Từ đồng nghĩa (Cách nhau bằng dấu phẩy)"]
+                st.session_state[key] = pd.DataFrame([["chúng tôi", "tụi mình, bên mình..."]], columns=cols)
+                
+            elif m == "Data_Local":
+                cols = ["Tỉnh/Thành phố", "Quận/Huyện", "Địa điểm/Tuyến đường"]
+                st.session_state[key] = pd.DataFrame([["Tp Hồ Chí Minh", "Quận 1", "Bùi Viện"]], columns=cols)
+                
+            elif m == "Data_Report":
+                cols = ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "File ID Drive", "Thời gian hẹn giờ", "Trạng thái"]
+                st.session_state[key] = pd.DataFrame(columns=cols)
 
-# Khởi tạo từng bảng theo đúng ảnh bạn gửi
-init_df('df_config', ["Hạng mục", "Giá trị"], [
-    {"Hạng mục": "GEMINI_API_KEY", "Giá trị": ""},
-    {"Hạng mục": "SERPAPI_KEY", "Giá trị": ""},
-    {"Hạng mục": "SENDER_EMAIL", "Giá trị": "jundeng.po@gmail.com"},
-    {"Hạng mục": "SENDER_PASSWORD", "Giá trị": ""},
-    {"Hạng mục": "RECEIVER_EMAIL", "Giá trị": "jundeng.po@gmail.com"},
-    {"Hạng mục": "Danh sách Keyword bài viết", "Giá trị": "thuê tài xế lái hộ, đưa người say về nhà..."},
-    {"Hạng mục": "TARGET_URL", "Giá trị": "https://laiho.vn/"},
-    {"Hạng mục": "Website đối thủ", "Giá trị": "lmd.vn, butl.vn"},
-    {"Hạng mục": "Mục tiêu bài viết", "Giá trị": "bài viết tư vấn, hướng dẫn..."},
-    {"Hạng mục": "Số lượng bài cần tạo", "Giá trị": "10"},
-    {"Hạng mục": "Thiết lập số lượng chữ", "Giá trị": "900 - 1200"},
-    {"Hạng mục": "Số lượng backlink/bài", "Giá trị": "3 - 4"},
-    {"Hạng mục": "FOLDER_DRIVE_ID", "Giá trị": ""}
-])
-
-init_df('df_backlink', ["DatDat (Từ khóa)", "Cột B (Danh sách URL Đích)", "Cột C (Số lần đã dùng)"], [
-    {"DatDat (Từ khóa)": "lái xe hộ", "Cột B (Danh sách URL Đích)": "https://laiho.vn", "Cột C (Số lần đã dùng)": 0},
-    {"DatDat (Từ khóa)": "dịch vụ lái xe hộ", "Cột B (Danh sách URL Đích)": "https://laiho.vn", "Cột C (Số lần đã dùng)": 4}
-])
-
-init_df('df_website', ["ID", "Nền tảng", "URL / ID", "Tài khoản (Chỉ WP)", "Mật khẩu ứng dụng (Chỉ WP)", "Trạng thái", "Giới hạn bài/ngày"], [
-    {"ID": "Blog Lái Hộ 1", "Nền tảng": "Blogger", "URL / ID": "muontaixelaxe.laiho1@...", "Trạng thái": "Bật", "Giới hạn bài/ngày": "1 - 2"}
-])
-
-init_df('df_image', ["Link Ảnh (URL)", "Số lần đã dùng"], [
-    {"Link Ảnh (URL)": "https://i.postimg.cc/abc", "Số lần đã dùng": 3}
-])
-
-init_df('df_spin', ["Từ khóa gốc", "Từ đồng nghĩa (Cách nhau bằng dấu phẩy)"], [
-    {"Từ khóa gốc": "chúng tôi", "Từ đồng nghĩa (Cách nhau bằng dấu phẩy)": "tụi mình, bên mình, phía chúng tôi"}
-])
-
-init_df('df_local', ["Tỉnh/Thành phố", "Quận/Huyện", "Địa điểm/Tuyến đường"], [
-    {"Tỉnh/Thành phố": "Tp Hồ Chí Minh", "Quận/Huyện": "Quận 1", "Địa điểm/Tuyến đường": "Bùi Viện"}
-])
-
-init_df('df_report', ["Website", "Nền tảng", "Ngày đăng bài", "Từ khoá 1", "Link bài viết", "Trạng thái"], [
-    {"Website": "Blog Lái Hộ 1", "Nền tảng": "Blogger", "Ngày đăng bài": "2026-03-23", "Từ khoá 1": "thuê tài xế", "Trạng thái": "DONE"}
-])
+init_all_data()
 
 # 3. HÀM XỬ LÝ FILE
-def get_csv_download(df):
+def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8-sig')
 
-# 4. GIAO DIỆN CHÍNH
+# 4. KIỂM TRA ĐĂNG NHẬP
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
 if not st.session_state['logged_in']:
-    st.title("🔐 Đăng nhập Hệ thống SEO Lái Hộ")
-    with st.form("login"):
+    st.title("🔐 Hệ thống Quản trị SEO Lái Hộ")
+    with st.container(border=True):
         u = st.text_input("Username")
         p = st.text_input("Password", type="password")
-        if st.form_submit_button("Vào hệ thống"):
+        if st.button("Đăng nhập Hệ thống"):
             if u == "admin" and p == "123":
                 st.session_state['logged_in'] = True
                 st.rerun()
-            else: st.error("Sai tài khoản!")
+            else: st.error("Thông tin không chính xác!")
 else:
     # SIDEBAR
     with st.sidebar:
-        st.header("🎮 MENU SEO")
-        menu = st.radio("Chọn danh mục dữ liệu:", ["Config", "Data_Backlink", "Data_Website", "Data_Image", "Data_Spin", "Data_Local", "Data_Report"])
+        st.header("🎮 ĐIỀU HÀNH SEO")
+        menu = st.radio("Chọn danh mục:", ["Config", "Data_Backlink", "Data_Website", "Data_Image", "Data_Spin", "Data_Local", "Data_Report"])
         st.markdown("---")
         if st.button("🚪 Đăng xuất"):
             st.session_state['logged_in'] = False
             st.rerun()
 
-    # KHÔNG GIAN LÀM VIỆC
+    # NỘI DUNG CHÍNH
     st.title(f"📍 Quản lý {menu}")
     
-    # Khu vực Import/Export
-    with st.expander("🛠️ Công cụ File (Nhập/Xuất Excel-CSV)"):
+    # Khu vực Công cụ File
+    with st.expander("📥 Công cụ Import/Export (Nhập & Xuất File)"):
         c1, c2 = st.columns(2)
         with c1:
-            st.download_button(f"📥 Tải {menu} về máy", get_csv_download(st.session_state[f'df_{menu.lower()}']), f"{menu}.csv", "text/csv")
+            st.write("📤 Xuất dữ liệu")
+            st.download_button(
+                label=f"Tải file {menu}.csv về máy",
+                data=convert_df_to_csv(st.session_state[f"df_{menu}"]),
+                file_name=f"{menu}_export.csv",
+                mime='text/csv'
+            )
         with c2:
-            up = st.file_uploader(f"📤 Đẩy file {menu} lên", type="csv")
-            if up:
-                st.session_state[f'df_{menu.lower()}'] = pd.read_csv(up)
-                st.success("Đã cập nhật dữ liệu từ file!")
+            st.write("📥 Nhập dữ liệu")
+            uploaded_file = st.file_uploader(f"Chọn file CSV cho {menu}", type=["csv"])
+            if st.button("Nạp dữ liệu ngay"):
+                if uploaded_file:
+                    st.session_state[f"df_{menu}"] = pd.read_csv(uploaded_file)
+                    st.success("Đã nạp dữ liệu thành công!")
+                else: st.warning("Vui lòng chọn file!")
 
     st.markdown("---")
 
-    # HIỂN THỊ BẢNG DỮ LIỆU THEO TỪNG TAB (Check đúng từng cột trong ảnh)
-    key = f'df_{menu.lower()}'
+    # HIỂN THỊ BẢNG (height=2000 để đảm bảo hiển thị full, không bị roll)
+    st.subheader(f"📊 Bảng dữ liệu: {menu}")
+    key = f"df_{menu}"
     
-    # Thiết lập chiều cao bảng lớn (height=1000) để hiện full không cần scroll nội bộ
     st.session_state[key] = st.data_editor(
         st.session_state[key],
         use_container_width=True,
-        num_rows="dynamic", # Cho phép thêm hàng mới bằng nút (+)
-        height=1000 
+        num_rows="dynamic",
+        height=1000 # Tự động giãn nở cực rộng
     )
 
-    st.info("💡 Bạn có thể copy từ Excel rồi dán trực tiếp vào bảng trên hoặc ngược lại.")
+    st.success(f"💡 Hệ thống đã sẵn sàng cho mục {menu}. Bạn có thể gõ trực tiếp hoặc dán từ Excel vào.")
