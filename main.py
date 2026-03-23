@@ -19,10 +19,9 @@ TABS_CONFIG = {
 
 if 'db' not in st.session_state:
     st.session_state['db'] = {k: pd.DataFrame(columns=v) for k, v in TABS_CONFIG.items()}
-    # TRẢ LẠI BẢNG DASHBOARD CHUẨN 100% THỰC TẾ CỦA NÍ
     st.session_state['db']['Dashboard'] = pd.DataFrame([
         ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
-        ["SERPAPI_KEY", "380c97c05d054e4633fa1333115cba7a26fcb50dcec0e915d10dc122b82fe17e"],
+        ["SERPAPI_KEY", "380c97c05d054e..."],
         ["SENDER_EMAIL", "jundeng.po@gmail.com"],
         ["SENDER_PASSWORD", "vddy misk nhbu vtsm"],
         ["RECEIVER_EMAIL", "jundeng.po@gmail.com"],
@@ -30,7 +29,7 @@ if 'db' not in st.session_state:
         ["TARGET_URL", "https://laiho.vn/"],
         ["Website đối thủ", "lmd.vn, butl.vn"],
         ["Mục tiêu bài viết", "Bài viết dạng tư vấn, cung cấp giải pháp an toàn"],
-        ["Số lượng bài cần tạo", "1"],
+        ["Số lượng bài cần tạo", "3"], # Set thử 3 bài để test
         ["Thiết lập số lượng chữ", "900 - 1200"],
         ["Số lượng backlink/bài", "3 - 4"],
         ["FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"]
@@ -41,7 +40,7 @@ def call_gemini_ai(api_key, prompt):
     headers = {'Content-Type': 'application/json'}
     data = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 250}
+        "generationConfig": {"temperature": 0.8, "maxOutputTokens": 250}
     }
     try:
         response = requests.post(url, headers=headers, json=data)
@@ -52,15 +51,13 @@ def call_gemini_ai(api_key, prompt):
     except Exception as e:
         return f"Lỗi kết nối: {str(e)}"
 
-@st.dialog("💀 HỆ THỐNG AI ĐANG SÁNG TẠO NỘI DUNG...", width="large")
+# ==========================================
+# POPUP ĐIỀU KHIỂN THÔNG MINH (CÓ UI THÔNG BÁO RÕ RÀNG)
+# ==========================================
+@st.dialog("🤖 TRUNG TÂM ĐIỀU KHIỂN ROBOT SEO", width="large")
 def hacker_terminal():
-    terminal_box = st.empty()
-    log_text = "root@laiho-server:~# Khởi động AI Engine...\n"
-    terminal_box.code(log_text, language="bash")
-    
     df_dash = st.session_state['db']['Dashboard']
     
-    # HÀM BỐC DỮ LIỆU CHUẨN TỪ BẢNG
     def get_val(key_name):
         try:
             return df_dash.loc[df_dash['Hạng mục'] == key_name, 'Giá trị thực tế'].values[0]
@@ -71,48 +68,79 @@ def hacker_terminal():
     keywords = get_val('Danh sách Keyword bài viết')
     muc_tieu = get_val('Mục tiêu bài viết')
     
-    log_text += f"[+] Keywords nạp vào: {keywords}\n"
-    log_text += f"[+] Mục tiêu bài: {muc_tieu}\n"
-    log_text += "[+] Đang kết nối máy chủ Google Gemini...\n"
+    try:
+        so_luong_can_tao = int(get_val('Số lượng bài cần tạo'))
+    except:
+        so_luong_can_tao = 0
+        
+    today = datetime.now().strftime("%d/%m/%Y")
+    df_report = st.session_state['db']['Report']
+    so_bai_hom_nay = len(df_report[df_report['Ngày đăng bài'] == today])
+    
+    # ---------------------------------------------------------
+    # GIAO DIỆN THÔNG BÁO TÌNH TRẠNG NGAY KHI MỞ POPUP
+    # ---------------------------------------------------------
+    st.write("### 📊 TIẾN ĐỘ NGÀY HÔM NAY")
+    
+    # Nếu đã đạt giới hạn -> Báo lỗi và dừng
+    if so_bai_hom_nay >= so_luong_can_tao:
+        st.error(f"🛑 ĐÃ ĐẠT GIỚI HẠN: Hôm nay hệ thống đã tạo **{so_bai_hom_nay}/{so_luong_can_tao}** bài.")
+        st.warning("💡 **Đề nghị:** Hệ thống không thể viết tiếp để tránh Spam. Nếu Ní muốn Robot chạy thêm, vui lòng đóng bảng này và cập nhật tăng số lượng ở mục **'Số lượng bài cần tạo'** trên bảng Dashboard nhé!")
+        
+        if st.button("ĐÓNG CỬA SỔ", type="primary", use_container_width=True):
+            st.rerun()
+        return # Dừng hàm tại đây
+        
+    # Nếu chưa đạt -> Hiện thông báo xanh và bắt đầu chạy AI
+    so_bai_con_lai = so_luong_can_tao - so_bai_hom_nay
+    st.success(f"✅ Đã tạo **{so_bai_hom_nay}/{so_luong_can_tao}** bài. Robot sẽ tự động gen thêm **{so_bai_con_lai}** bài còn thiếu!")
+    
+    st.divider()
+    
+    # Bắt đầu màn hình Terminal Hacker cho tiến trình gen bài
+    terminal_box = st.empty()
+    log_text = "root@laiho-server:~# Khởi động AI Engine...\n"
     terminal_box.code(log_text, language="bash")
     time.sleep(1)
     
-    # PROMPT AI BÁM SÁT THỰC TẾ
-    prompt = f"Đóng vai chuyên gia SEO nội dung. Dựa vào thông tin sau:\n- Từ khóa: {keywords}\n- Mục tiêu: {muc_tieu}\n\nHãy viết 1 Tiêu đề giật tít (dưới 65 ký tự) và 1 Đoạn Sapo mở bài (dưới 40 chữ). Format trả về: Tiêu đề: [Nội dung] | Sapo: [Nội dung]"
-    
-    log_text += "[!] AI đang phân tích dữ liệu và viết bài...\n"
-    terminal_box.code(log_text, language="bash")
-    
-    ai_result = call_gemini_ai(api_key, prompt)
-    
-    log_text += f"\n[OK] KẾT QUẢ TỪ AI:\n{ai_result}\n\n"
-    log_text += "[+] Đang xuất file vào tab Report...\n"
-    terminal_box.code(log_text, language="bash")
-    
-    title = ai_result.split('|')[0].replace("Tiêu đề:", "").strip() if "|" in ai_result else "Lỗi bóc tách tiêu đề"
-    sapo = ai_result.split('|')[1].replace("Sapo:", "").strip() if "|" in ai_result else ai_result
-    
-    today = datetime.now().strftime("%d/%m/%Y")
-    
-    # Tách từ khoá 1, 2 từ chuỗi keywords Ní nhập
     kw_list = [k.strip() for k in keywords.split(',')]
     kw1 = kw_list[0] if len(kw_list) > 0 else ""
     kw2 = kw_list[1] if len(kw_list) > 1 else ""
     
-    new_report = pd.DataFrame([
-        ["laiho.vn", "WordPress", "laiho.vn/post", today, kw1, kw2, "", "", "", "#", title, sapo, "Đăng ngay", "✅ AI Đã Viết"]
-    ], columns=TABS_CONFIG["Report"])
+    new_reports = []
     
-    st.session_state['db']['Report'] = pd.concat([st.session_state['db']['Report'], new_report], ignore_index=True)
+    # VÒNG LẶP GEN ĐÚNG SỐ LƯỢNG CÒN THIẾU
+    for i in range(so_bai_con_lai):
+        bai_so = i + 1
+        log_text += f"\n[+] Đang xử lý Bài {bai_so}/{so_bai_con_lai}...\n"
+        terminal_box.code(log_text, language="bash")
+        
+        prompt = f"Đóng vai chuyên gia SEO nội dung. Dựa vào thông tin sau:\n- Từ khóa: {keywords}\n- Mục tiêu: {muc_tieu}\n\nHãy viết 1 Tiêu đề giật tít khác biệt hoàn toàn so với các bài trước (dưới 65 ký tự) và 1 Đoạn Sapo mở bài (dưới 40 chữ). Format trả về: Tiêu đề: [Nội dung] | Sapo: [Nội dung]"
+        
+        ai_result = call_gemini_ai(api_key, prompt)
+        
+        title = ai_result.split('|')[0].replace("Tiêu đề:", "").strip() if "|" in ai_result else f"Bài SEO Auto {datetime.now().timestamp()}"
+        sapo = ai_result.split('|')[1].replace("Sapo:", "").strip() if "|" in ai_result else ai_result
+        
+        new_reports.append([
+            "laiho.vn", "WordPress", "laiho.vn/post", today, kw1, kw2, "", "", "", "#", title, sapo, "Đăng ngay", "✅ AI Đã Viết"
+        ])
+        
+        log_text += f"    -> Xong bài {bai_so}! Đã lưu vào bộ nhớ tạm.\n"
+        terminal_box.code(log_text, language="bash")
+        time.sleep(1.5) # Nghỉ 1.5s giữa các lần gọi để tránh API bị nghẽn (Rate Limit)
+
+    # Đẩy toàn bộ bài vừa gen vào Report
+    df_new = pd.DataFrame(new_reports, columns=TABS_CONFIG["Report"])
+    st.session_state['db']['Report'] = pd.concat([st.session_state['db']['Report'], df_new], ignore_index=True)
     
-    log_text += "=========================================\n"
-    log_text += "🚀 HOÀN TẤT LUỒNG AI! XEM BÁO CÁO NHÉ."
+    log_text += "\n=========================================\n"
+    log_text += f"🚀 HOÀN TẤT! ĐÃ BỔ SUNG THÀNH CÔNG {so_bai_con_lai} BÀI."
     terminal_box.code(log_text, language="bash")
         
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("ĐÓNG TERMINAL & KIỂM TRA BÀI VIẾT", type="primary", use_container_width=True):
-            st.rerun()
+    st.write("")
+    if st.button("ĐÓNG TERMINAL & KIỂM TRA BÀI VIẾT", type="primary", use_container_width=True):
+        st.rerun()
 
 st.markdown("<h2 style='color:#ffd700;'>🚕 LÁI HỘ SEO MASTER</h2>", unsafe_allow_html=True)
 tabs = st.tabs(list(TABS_CONFIG.keys()))
