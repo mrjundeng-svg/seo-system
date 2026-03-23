@@ -28,34 +28,30 @@ tabs = st.tabs(list(TABS_CONFIG.keys()))
 
 for i, (name, cols) in enumerate(TABS_CONFIG.items()):
     with tabs[i]:
-        # --- BỘ LỌC NHẬP LIỆU THÔNG MINH ---
-        with st.expander(f"📥 NHẬP LIỆU NHANH {name} (Dán từ Excel vào đây)"):
-            raw_data = st.text_area("Dán nội dung:", key=f"txt_{name}", height=150)
+        # --- BỘ LỌC ÉP KHUÔN THÔNG MINH ---
+        with st.expander(f"📥 NHẬP LIỆU NHANH {name}"):
+            raw_data = st.text_area("Dán nội dung vào đây:", key=f"txt_{name}", height=150)
             if st.button("🔥 ĐỔ VÀO BẢNG", key=f"load_{name}") and raw_data:
                 parsed_data = []
-                # Duyệt từng dòng Ní dán vào
                 for line in raw_data.strip().split('\n'):
                     if not line.strip(): continue
                     
-                    # Cố gắng cắt bằng Tab trước. Nếu không có Tab thì cắt bằng 2 khoảng trắng trở lên
-                    row = line.split('\t')
-                    if len(row) == 1:
-                        row = re.split(r'\s{2,}', line.strip())
+                    # TUYỆT CHIÊU: Cắt bằng Tab hoặc từ 2 khoảng trắng trở lên, và vứt bỏ các ô rác
+                    row = [x.strip() for x in re.split(r'\t|\s{2,}', line) if x.strip()]
                     
-                    # TỰ ĐỘNG CÂN BẰNG CỘT (Đỉnh cao là đây)
-                    # Thiếu cột thì tự thêm ô trống, dư cột thì tự cắt bỏ
+                    # Tự động canh lề: Thiếu cột thì bù trống, dư cột thì cắt bỏ
                     if len(row) > len(cols): 
                         row = row[:len(cols)]
                     elif len(row) < len(cols): 
                         row.extend([''] * (len(cols) - len(row)))
-                    
+                        
                     parsed_data.append(row)
                 
                 # Ghi đè vào bảng và chạy lại
                 st.session_state['db'][name] = pd.DataFrame(parsed_data, columns=cols)
                 st.rerun()
 
-        # --- GIAO DIỆN BẢNG VÀ NÚT ---
+        # --- TOOLBAR & BẢNG ---
         c1, c2, c3 = st.columns([1, 1, 4])
         with c1: st.button("☁️ LƯU CLOUD", key=f"up_{name}", use_container_width=True)
         with c2: st.button("🔄 RESTORE", key=f"res_{name}", use_container_width=True)
@@ -64,7 +60,7 @@ for i, (name, cols) in enumerate(TABS_CONFIG.items()):
             st.session_state['db'][name],
             use_container_width=True,
             num_rows="dynamic",
-            height=600,
+            height=500,
             hide_index=True,
             key=f"edit_{name}"
         )
