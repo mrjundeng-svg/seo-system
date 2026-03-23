@@ -1,66 +1,53 @@
 import streamlit as st
 import pandas as pd
 
-# 1. TEMPLATE CHUẨN LÁI HỘ (PHỤC HỒI 100%)
+# 1. THIẾT LẬP TRANG (PHẢI ĐỂ ĐẦU TIÊN)
+st.set_page_config(page_title="LAI HO SYSTEM", layout="wide")
+
+# 2. KHỞI TẠO TEMPLATE
 REPORT_COLS = ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "File ID Drive", "Thời gian hẹn giờ", "Trạng thái"]
-TABS_CONFIG = {
-    "Dashboard": ["Hạng mục", "Giá trị thực tế"],
-    "Backlink": ["Từ khoá", "Website đích", "Đã dùng"],
-    "Website": ["Tên web", "Nền tảng", "URL / ID", "Trạng thái", "Giới hạn bài/ngày"],
-    "Image": ["Link ảnh", "Số lần dùng"],
-    "Spin": ["Từ Spin", "Bộ Spin"],
-    "Local": ["Tỉnh thành", "Quận", "Điểm nóng"],
-    "Report": REPORT_COLS
-}
+TABS = ["Dashboard", "Backlink", "Website", "Image", "Spin", "Local", "Report"]
 
-# 2. KHỞI TẠO HỆ THỐNG
-st.set_page_config(page_title="LÁI HỘ SEO SYSTEM", layout="wide")
-
-# Khởi tạo data một lần duy nhất
-for tab, cols in TABS_CONFIG.items():
-    if f"df_{tab}" not in st.session_state:
-        if tab == "Dashboard":
-            st.session_state[f"df_{tab}"] = pd.DataFrame([
+# Khởi tạo Session State (Dùng try-except để đảm bảo an toàn)
+for t in TABS:
+    key = f"df_{t}"
+    if key not in st.session_state:
+        if t == "Dashboard":
+            st.session_state[key] = pd.DataFrame([
                 ["GOOGLE_SHEET_ID", "1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw"],
                 ["SERVICE_ACCOUNT_JSON", ""],
-                ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"],
-                ["FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"],
-                ["Số lượng bài cần tạo", "3"]
-            ], columns=cols)
+                ["GEMINI_API_KEY", "AlzAsyD-tq8Eksdpb0QW2af6imjTydyhORzbtP8"]
+            ], columns=["Hạng mục", "Giá trị thực tế"])
+        elif t == "Report":
+            st.session_state[key] = pd.DataFrame(columns=REPORT_COLS)
         else:
-            st.session_state[f"df_{tab}"] = pd.DataFrame(columns=cols)
+            st.session_state[key] = pd.DataFrame(columns=["Cột 1", "Cột 2", "Cột 3"])
 
-# 3. GIAO DIỆN SIDEBAR (DÙNG SELECTBOX GỐC - CHỐNG LOOP)
-with st.sidebar:
-    st.header("🚕 LÁI HỘ MASTER")
-    # Dùng selectbox cho cực kỳ ổn định, không bao giờ gây xoay vòng
-    tab_selection = st.selectbox("DANH MỤC QUẢN LÝ", list(TABS_CONFIG.keys()))
-    st.divider()
-    st.info("Version: 6000.0 (Stable Mode)")
+# 3. SIDEBAR GIAO DIỆN (DÙNG SELECTBOX CHO ỔN ĐỊNH)
+st.sidebar.title("🚕 LÁI HỘ SEO")
+st.sidebar.markdown("---")
+choice = st.sidebar.selectbox("CHỌN MỤC QUẢN LÝ:", TABS)
 
-# 4. KHU VỰC HIỂN THỊ
-st.subheader(f"📍 Phân mục: {tab_selection}")
+# 4. KHU VỰC HIỂN THỊ CHÍNH
+st.title(f"📍 {choice}")
 
-col1, col2, _ = st.columns([1, 1, 3])
-with col1:
-    if st.button("☁️ CẬP NHẬT CLOUD", use_container_width=True):
-        st.toast("Đang đồng bộ dữ liệu...")
-with col2:
-    if st.button("🔄 TẢI TỪ CLOUD", use_container_width=True):
-        st.toast("Đang tải dữ liệu mới...")
+# Toolbar tối giản
+c1, c2, _ = st.columns([1, 1, 3])
+with c1:
+    st.button("☁️ CẬP NHẬT", use_container_width=True)
+with c2:
+    st.button("🔄 TẢI VỀ", use_container_width=True)
 
-st.divider()
+st.markdown("---")
 
-# RENDER BẢNG EDITOR
-data_key = f"df_{tab_selection}"
-st.session_state[data_key] = st.data_editor(
+# HIỂN THỊ BẢNG
+data_key = f"df_{choice}"
+st.data_editor(
     st.session_state[data_key],
     use_container_width=True,
     num_rows="dynamic",
-    height=600,
-    hide_index=True,
-    column_config={
-        "Giá trị thực tế": st.column_config.TextColumn(width="large"),
-        "Bộ Spin": st.column_config.TextColumn(width="large")
-    }
+    height=550,
+    hide_index=True
 )
+
+st.caption("🚀 Version 6100.0 | Emergency Stable Build")
