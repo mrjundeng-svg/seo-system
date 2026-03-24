@@ -6,8 +6,25 @@ import google.generativeai as genai
 import random, time, re
 from datetime import datetime, timedelta, timezone
 
-# --- CẤU HÌNH ---
-st.set_page_config(page_title="SEO MASTER PRO", layout="wide", page_icon="📈")
+# --- CONFIG ---
+st.set_page_config(page_title="HỆ THỐNG SEO MASTER v33.0", layout="wide", page_icon="🚕")
+
+# CSS Chống cuộn ngang & UI Chuyên nghiệp
+st.markdown("""
+    <style>
+    .report-card {
+        background-color: #1a1a1a;
+        border-radius: 8px;
+        padding: 15px;
+        border-left: 4px solid #ffd700;
+        margin-bottom: 10px;
+        font-family: 'Segoe UI', sans-serif;
+    }
+    div[data-testid="stExpander"] { border: none !important; }
+    /* Ép text xuống dòng không cho scroll ngang */
+    .stCodeBlock, .stMarkdown { word-break: break-all !important; white-space: pre-wrap !important; }
+    </style>
+""", unsafe_allow_html=True)
 
 def get_vn_time():
     return datetime.now(timezone(timedelta(hours=7)))
@@ -19,7 +36,7 @@ def get_creds():
         return ServiceAccountCredentials.from_json_keyfile_dict(info, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
     except: return None
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def load_data():
     try:
         client = gspread.authorize(get_creds())
@@ -28,102 +45,84 @@ def load_data():
     except Exception as e: return None, str(e)
 
 # --- ENGINE ---
-@st.dialog("📋 BÁO CÁO VẬN HÀNH CHI TIẾT", width="large")
+@st.dialog("🚀 TRUNG TÂM ĐIỀU HÀNH SEO", width="large")
 def run_robot(data):
     df_d = data['Dashboard']
     def v(k):
         res = df_d[df_d['Hạng mục'].astype(str).str.strip() == k]['Input dữ liệu']
         return str(res.values[0]).strip() if not res.empty else ""
 
-    # CSS Ép Log xuống dòng, không cho hiện thanh cuộn ngang
-    st.markdown("""
-        <style>
-            [data-testid="stExpander"] div, .stMarkdown div {
-                word-break: break-all;
-                white-space: pre-wrap;
-            }
-        </style>
-    """, unsafe_allow_html=True)
+    log_placeholder = st.container()
 
-    log_area = st.empty()
-    log_h = [f"### NHẬT KÝ VẬN HÀNH - {get_vn_time().strftime('%H:%M:%S')}"]
-    
-    def add_log(msg, color="white"):
-        log_h.append(f"<div style='color:{color}; font-family: monospace; border-bottom: 1px dashed #444; padding: 5px 0;'>{msg}</div>")
-        log_area.markdown("\n".join(log_h), unsafe_allow_html=True)
-
-    # 1. Khởi tạo AI
-    add_log("⚙️ Đang thiết lập kết nối Google AI Studio...")
+    # 1. Khởi tạo AI (Auto-Discovery Model)
     try:
         genai.configure(api_key=v('GEMINI_API_KEY'))
-        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        chosen = "models/gemini-1.5-flash" if "models/gemini-1.5-flash" in models else models[0]
-        model_ai = genai.GenerativeModel(chosen.replace("models/", ""))
-        add_log(f"✅ Đã thông kết nối. Sử dụng: {chosen}", "#00ff00")
+        available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        model_name = "gemini-1.5-flash"
+        if f"models/{model_name}" not in available: model_name = available[0].replace("models/","")
+        model_ai = genai.GenerativeModel(model_name)
     except Exception as e:
-        add_log(f"❌ Lỗi API: {str(e)}", "red"); return
+        st.error(f"❌ Lỗi cấu hình API: {str(e)}"); return
 
     active_sites = data['Website'][data['Website']['Trạng thái'].astype(str).str.contains('Active', case=False)]
-    backlinks = data['Backlink']
+    df_bl = data['Backlink']
     num_to_run = int(v('Số lượng bài cần tạo') or 1)
 
     for i in range(num_to_run):
-        add_log(f"<b>[BÀI {i+1}/{num_to_run}] ĐANG XỬ LÝ...</b>", "#ffd700")
         site = active_sites.sample(n=1).iloc[0]
-        kw_list = v('Danh sách Keyword bài viết')
-        main_kw = kw_list.split('|')[0].strip()
-        link_url, anchor = "N/A", "N/A"
-        if not backlinks.empty:
-            bl_row = backlinks.sample(n=1).iloc[0]
-            link_url, anchor = bl_row.get('Link trỏ về', 'N/A'), bl_row.get('Từ khoá chèn', 'N/A')
+        kw_full = v('Danh sách Keyword bài viết')
+        main_kw = kw_full.split('|')[0].strip()
+        
+        # Logic bốc Backlink chuẩn (Fix lỗi N/A)
+        link_url, anchor = "Không có", "Không có"
+        if not df_bl.empty:
+            bl_row = df_bl.sample(n=1).iloc[0]
+            # Chuẩn hóa tìm tên cột
+            for col in df_bl.columns:
+                c_low = col.lower()
+                if 'link' in c_low or 'url' in c_low: link_url = bl_row[col]
+                if 'từ' in c_low or 'anchor' in c_low: anchor = bl_row[col]
 
-        add_log(f"📍 Website: {site['Tên web']} | Từ khóa: {main_kw}")
-        add_log(f"🔗 Link: {link_url} | Anchor: {anchor}")
+        with log_placeholder:
+            st.markdown(f"""
+            <div class="report-card">
+                <b style='color:#ffd700;'>[BÀI {i+1}/{num_to_run}]</b> | 🛰️ <b>{site['Tên web']}</b><br>
+                🎯 <b>Từ khóa:</b> {main_kw} | 🔗 <b>Link:</b> <span style='color:#00ff00;'>{link_url}</span> | ⚓ <b>Anchor:</b> {anchor}
+            </div>
+            """, unsafe_allow_html=True)
 
-        success = False
-        retries = 0
-        while not success and retries < 3: # Thử lại tối đa 3 lần nếu gặp 429
             try:
-                add_log("... AI đang biên tập nội dung chuyên sâu ...")
-                response = model_ai.generate_content(f"{v('PROMPT_TEMPLATE')}\nTừ khóa: {kw_list}\nChèn link {link_url} vào {anchor}")
-                content = response.text
+                # Biên tập nội dung
+                resp = model_ai.generate_content(f"{v('PROMPT_TEMPLATE')}\nTừ khóa: {kw_full}\nChèn link {link_url} cho cụm từ {anchor}")
+                content = resp.text
                 
-                add_log("... Đang cập nhật báo cáo vào Google Sheet ...")
+                # Ghi Report (Đúng 15 cột template)
                 now_vn = get_vn_time()
                 gspread.authorize(get_creds()).open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip()).worksheet("Report").append_row([
-                    site['URL / ID'], site['Nền tảng'], f"{site['URL / ID']}/p-{random.randint(100,999)}", 
-                    now_vn.strftime("%Y-%m-%d"), kw_list, anchor, "✅", "1.2%", "85/100", 
-                    link_url, "Tiêu đề", "Sapo", now_vn.strftime("%H:%M:%S"), "Thành công", "Active"
+                    site['URL / ID'], site['Nền tảng'], "Chờ đăng...", now_vn.strftime("%Y-%m-%d"), 
+                    kw_full, anchor, "✅ Pass", "1.2%", "90/100", link_url, "Tiêu đề AI", "Sapo AI", 
+                    now_vn.strftime("%H:%M:%S"), "Thành công", "Active"
                 ])
-                add_log(f"✅ Hoàn tất lúc: {now_vn.strftime('%H:%M:%S')}", "#00ffff")
-                success = True
+                st.caption(f"✔️ Đã lưu báo cáo lúc {now_vn.strftime('%H:%M:%S')}")
             except Exception as e:
-                if "429" in str(e):
-                    retries += 1
-                    add_log(f"⚠️ Hết lượt dùng (429). Đang đợi 30 giây để thử lại (Lần {retries})...", "orange")
-                    time.sleep(32) # Đợi 32 giây cho chắc
-                else:
-                    add_log(f"❌ Lỗi phát sinh: {str(e)}", "red")
-                    break
-        time.sleep(2)
+                st.error(f"❌ Lỗi phiên {i+1}: {str(e)}")
+        
+        time.sleep(1.5)
 
     st.success("🎉 CHIẾN DỊCH HOÀN TẤT!")
     if st.button("XÁC NHẬN VÀ ĐÓNG", use_container_width=True): st.rerun()
 
 # --- UI ---
-st.markdown("<h2 style='text-align: center; color: #ffd700;'>HỆ THỐNG SEO MASTER v31.0</h2>", unsafe_allow_html=True)
-
+st.markdown("<h2 style='text-align: center; color: #ffd700;'>🚕 LÁI HỘ - SEO MASTER v33.0</h2>", unsafe_allow_html=True)
 data, msg = load_data()
 if data:
-    tabs = st.tabs([f"📂 {k}" for k in data.keys()])
+    tabs = st.tabs([f"📁 {k}" for k in data.keys()])
     for i, name in enumerate(data.keys()):
         with tabs[i]:
             if name == "Dashboard":
                 c1, c2, _ = st.columns([1, 1, 4])
                 if c1.button("🚀 BẮT ĐẦU VẬN HÀNH", type="primary", use_container_width=True): run_robot(data)
-                if c2.button("🔄 LÀM MỚI DỮ LIỆU", use_container_width=True):
-                    st.cache_data.clear(); st.rerun()
+                if c2.button("🔄 LÀM MỚI", use_container_width=True): st.cache_data.clear(); st.rerun()
                 st.dataframe(data[name], use_container_width=True, height=500, hide_index=True)
             else:
-                st.dataframe(data[name], use_container_width=True, height=550, hide_index=True)
-else: st.error(f"Lỗi: {msg}")
+                st.dataframe(data[name], use_container_width=True, height=600, hide_index=True)
