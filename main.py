@@ -5,31 +5,22 @@ from oauth2client.service_account import ServiceAccountCredentials
 import requests, random, time
 from datetime import datetime
 
-# --- CẤU HÌNH ---
+# --- CONFIG ---
 st.set_page_config(page_title="LÁI HỘ MASTER", layout="wide", page_icon="🚕")
 
 def get_creds():
     try:
         info = dict(st.secrets["service_account"])
         info["private_key"] = info["private_key"].replace("\\n", "\n").strip()
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        return ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
-    except Exception as e:
-        st.error(f"❌ Lỗi Secrets: {str(e)}")
-        return None
+        return ServiceAccountCredentials.from_json_keyfile_dict(info, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
+    except: return None
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def load_data():
     try:
-        creds = get_creds()
-        if not creds: return None, "Lỗi xác thực"
-        client = gspread.authorize(creds)
+        client = gspread.authorize(get_creds())
         sh = client.open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip())
-        data = {}
-        for t in ["Dashboard", "Website", "Backlink", "Report", "Image", "Spin", "Local"]:
-            try: data[t] = pd.DataFrame(sh.worksheet(t).get_all_records())
-            except: data[t] = pd.DataFrame()
-        return data, "✅ Kết nối thành công"
+        return {t: pd.DataFrame(sh.worksheet(t).get_all_records()) for t in ["Dashboard", "Website", "Backlink", "Report", "Image", "Spin", "Local"]}, "✅ OK"
     except Exception as e: return None, str(e)
 
 def call_ai(key, model, prompt):
@@ -41,79 +32,63 @@ def call_ai(key, model, prompt):
 
 def update_report(row):
     try:
-        creds = get_creds()
-        client = gspread.authorize(creds)
+        client = gspread.authorize(get_creds())
         sh = client.open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip())
         sh.worksheet("Report").append_row(row)
     except: pass
 
-# --- ĐỘNG CƠ ROBOT v14.1 ---
-@st.dialog("🤖 ROBOT ĐANG VẬN HÀNH", width="large")
+@st.dialog("🤖 ROBOT VẬN HÀNH", width="large")
 def run_robot(data):
-    df = data['Dashboard']
-    def v(k): 
-        try: return str(df.loc[df['Hạng mục'] == k, 'Giá trị thực tế'].values[0])
-        except: return ""
+    df_d = data['Dashboard']
+    def v(k): return str(df_d.loc[df_d['Hạng mục'] == k, 'Giá trị thực tế'].values[0])
     
-    # Kiểm tra Website Active trước khi chạy
+    # Lọc Website Active
     active_sites = data['Website'][data['Website']['Trạng thái'] == 'Active']
     if active_sites.empty:
-        st.error("❌ Không tìm thấy Website nào có trạng thái 'Active' trong Google Sheet!")
-        st.info("Ní hãy vào Tab Website, điền URL và gõ 'Active' vào cột Trạng thái nhé.")
-        return
+        st.error("❌ Không tìm thấy website nào 'Active'!"); return
 
-    api_key = v('GEMINI_API_KEY')
-    models = [m.strip() for m in v('MODEL_VERSION').split(',')]
-    num_posts = int(v('Số lượng bài cần tạo') or 1)
-    ratio = float(v('LOCAL_RATIO') or 0.2)
+    term = st.empty(); log = f"root@{v('PROJECT_NAME').lower()}:~# Vít ga...\n"
     
-    term = st.empty()
-    progress_bar = st.progress(0)
-    log = f"root@{v('PROJECT_NAME').lower()}:~# Vít ga...\n"
-    
-    for i in range(num_posts):
+    for i in range(int(v('Số lượng bài cần tạo') or 1)):
         site = active_sites.sample(n=1).iloc[0]
-        model = random.choice(models)
+        model = random.choice([m.strip() for m in v('MODEL_VERSION').split(',')])
         
+        # 📍 Local SEO Logic
         loc_str = ""
-        if random.random() < ratio and not data['Local'].empty:
+        if random.random() < float(v('LOCAL_RATIO') or 0.2) and not data['Local'].empty:
             l = data['Local'].sample(n=1).iloc[0]
-            loc_str = f"📍 Địa phương: {l['Cung đường']}, {l['Quận']}, {l['Tỉnh thành']}."
+            loc_str = f"📍 Địa điểm: {l['Cung đường']}, {l['Quận']}, {l['Tỉnh thành']}."
         
-        log += f"[+] Đang gen bài {i+1}/{num_posts}: {site['Tên web']}\n"
-        term.code(log, language="bash")
-
-        # Draft -> Humanize
-        p1 = f"{v('PROMPT_TEMPLATE')}\nKeywords: {v('Danh sách Keyword bài viết')}\n{loc_str}"
-        content = call_ai(api_key, model, p1)
+        log += f"[+] Bài {i+1}: {site['Tên web']}\n"; term.code(log, language="bash")
         
+        # Gen Content
+        content = call_ai(v('GEMINI_API_KEY'), model, f"{v('PROMPT_TEMPLATE')}\nKeywords: {v('Danh sách Keyword bài viết')}\n{loc_str}")
         if v('SPIN_MODE') == "ON" and not data['Spin'].empty:
-            rules = data['Spin'].to_string(index=False)
-            p2 = f"{v('AI_HUMANIZER_PROMPT')}\nRules: {rules}\nContent: {content}"
-            content = call_ai(api_key, "gemini-1.5-flash", p2)
+            content = call_ai(v('GEMINI_API_KEY'), "gemini-1.5-flash", f"{v('AI_HUMANIZER_PROMPT')}\nRules: {data['Spin'].to_string(index=False)}\nContent: {content}")
 
-        # Lưu kết quả
-        pub_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-        update_report([site['URL / ID'], site['Nền tảng'], site['URL / ID']+"/post", pub_time, "", "", "", "", "", site['Website đích'], "Tiêu đề AI", "Sapo AI", pub_time, "✅ Thành công", "85"])
+        # 📝 Ghi Report - Đã khớp với tên cột của sếp
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        update_report([
+            site['URL / ID'], 
+            site['Nền tảng'], 
+            f"{site['URL / ID']}/post", 
+            now, "", "", "", "", "", 
+            site['các website đích'], # Khớp với image_e559de.png
+            "Tiêu đề", "Sapo", now, "✅ Thành công", "85"
+        ])
         
-        log += "  .. Done!\n"
-        term.code(log, language="bash")
-        progress_bar.progress((i + 1) / num_posts)
+        log += "  .. Xong! Đã lưu kết quả.\n"; term.code(log, language="bash")
         time.sleep(1)
-
     st.success("🎉 CHIẾN DỊCH HOÀN TẤT!")
 
 # --- UI ---
-st.markdown("<h1 style='color:#ffd700;'>🚕 LÁI HỘ MASTER v14.1</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='color:#ffd700;'>🚕 LÁI HỘ MASTER v14.3</h1>", unsafe_allow_html=True)
 data, msg = load_data()
-
 if data:
     tabs = st.tabs(list(data.keys()))
     for i, name in enumerate(data.keys()):
         with tabs[i]:
             if name == "Dashboard":
-                if st.button("🚀 KÍCH HOẠT VÍT GA", type="primary", use_container_width=True):
-                    run_robot(data)
-            st.dataframe(data[name], use_container_width=True, height=450, hide_index=True)
-else:
-    st.error(f"❌ {msg}")
+                if st.button("🚀 KÍCH HOẠT VÍT GA", type="primary", use_container_width=True): run_robot(data)
+            st.dataframe(data[name], use_container_width=True, height=400, hide_index=True)
+else: st.error(f"Lỗi kết nối: {msg}")
