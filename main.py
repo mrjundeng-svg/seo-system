@@ -41,7 +41,7 @@ def run_robot(data_dict):
     try:
         genai.configure(api_key=v('GEMINI_API_KEY'))
         # Giải pháp: Gọi tên model trực tiếp, không dùng biến trung gian hay tiền tố
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
     except Exception as e:
         st.error(f"Lỗi khởi tạo AI: {e}"); return
 
