@@ -41,31 +41,30 @@ def update_report(row):
 def run_robot(data):
     df_d = data['Dashboard']
     
-    # --- HÀM LẤY GIÁ TRỊ AN TOÀN ---
+    # --- FIX: Đọc cột 'Input dữ liệu' theo hình image_e560e5.png ---
     def v(k):
         try:
-            # Tìm trong cột 'Hạng mục' (không phân biệt hoa thường)
-            res = df_d[df_d['Hạng mục'].str.strip() == k]['Giá trị thực tế']
+            res = df_d[df_d['Hạng mục'].str.strip() == k]['Input dữ liệu']
             if not res.empty: return str(res.values[0]).strip()
             return ""
         except: return ""
 
-    # Kiểm tra các key bắt buộc
     if not v('GEMINI_API_KEY'):
-        st.error("❌ Thiếu 'GEMINI_API_KEY' trong Tab Dashboard!"); return
+        st.error("❌ Không tìm thấy giá trị GEMINI_API_KEY. Ní kiểm tra lại cột 'Input dữ liệu' nhé!"); return
     
     active_sites = data['Website'][data['Website']['Trạng thái'] == 'Active']
     if active_sites.empty:
-        st.error("❌ Không tìm thấy website nào 'Active' trong Tab Website!"); return
+        st.error("❌ Không có website nào 'Active'!"); return
 
-    term = st.empty(); log = f"root@{v('PROJECT_NAME').lower() or 'bot'}:~# Đang chuẩn bị...\n"
+    term = st.empty(); log = f"root@{v('PROJECT_NAME').lower() or 'bot'}:~# Đang vít ga...\n"
     
     num_to_gen = v('Số lượng bài cần tạo')
     num_to_gen = int(num_to_gen) if num_to_gen.isdigit() else 1
 
     for i in range(num_to_gen):
         site = active_sites.sample(n=1).iloc[0]
-        model = random.choice([m.strip() for m in v('MODEL_VERSION').split(',') if m.strip()])
+        model_v = v('MODEL_VERSION') or "gemini-1.5-flash"
+        model = random.choice([m.strip() for m in model_v.split(',') if m.strip()])
         
         log += f"[+] Đang gen bài {i+1}: {site['Tên web']}\n"; term.code(log, language="bash")
         
@@ -78,13 +77,15 @@ def run_robot(data):
             loc_str = f"📍 Địa điểm: {l['Cung đường']}, {l['Quận']}, {l['Tỉnh thành']}."
         
         # Gen Content
-        content = call_ai(v('GEMINI_API_KEY'), model, f"{v('PROMPT_TEMPLATE')}\nKeywords: {v('Danh sách Keyword bài viết')}\n{loc_str}")
+        prompt = f"{v('PROMPT_TEMPLATE')}\nKeywords: {v('Danh sách Keyword bài viết')}\n{loc_str}"
+        content = call_ai(v('GEMINI_API_KEY'), model, prompt)
         
         if v('SPIN_MODE') == "ON" and not data['Spin'].empty:
-            log += "  .. Đang lách AI Detection...\n"; term.code(log, language="bash")
-            content = call_ai(v('GEMINI_API_KEY'), "gemini-1.5-flash", f"{v('AI_HUMANIZER_PROMPT')}\nRules: {data['Spin'].to_string(index=False)}\nContent: {content}")
+            log += "  .. Đang chạy Spin lọc AI Detection...\n"; term.code(log, language="bash")
+            rules = data['Spin'].to_string(index=False)
+            content = call_ai(v('GEMINI_API_KEY'), "gemini-1.5-flash", f"{v('AI_HUMANIZER_PROMPT')}\nRules: {rules}\nContent: {content}")
 
-        # Ghi Report (Dùng tên cột thực tế 'các website đích')
+        # Ghi Report (Dùng cột 'các website đích' theo image_e559de.png)
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         update_report([
             site['URL / ID'], site['Nền tảng'], f"{site['URL / ID']}/post", 
@@ -93,12 +94,12 @@ def run_robot(data):
             "Tiêu đề", "Sapo", now, "✅ Thành công", "85"
         ])
         
-        log += "  .. Xong! Đã lưu kết quả vào Report.\n"; term.code(log, language="bash")
+        log += "  .. Xong! Check Tab Report nhé.\n"; term.code(log, language="bash")
         time.sleep(1)
     st.success("🎉 CHIẾN DỊCH HOÀN TẤT!")
 
 # --- UI ---
-st.markdown("<h1 style='color:#ffd700;'>🚕 LÁI HỘ MASTER v14.4</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='color:#ffd700;'>🚕 LÁI HỘ MASTER v14.5</h1>", unsafe_allow_html=True)
 data, msg = load_data()
 if data:
     tabs = st.tabs(list(data.keys()))
