@@ -8,11 +8,11 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="LÁI HỘ SEO", layout="wide")
 
-# CẬP NHẬT TABS_CONFIG: THÊM CỘT "Điểm SEO" VÀO CUỐI BẢNG REPORT
+# CẬP NHẬT CẤU TRÚC 2 TAB THEO YÊU CẦU NÍ
 TABS_CONFIG = {
     "Dashboard": ["Hạng mục", "Giá trị thực tế"],
-    "Backlink": ["Từ khoá", "Website đích", "Đã dùng"],
-    "Website": ["Tên web", "Nền tảng", "URL / ID", "Trạng thái", "Giới hạn bài/ngày"],
+    "Backlink": ["Từ khoá", "Đã dùng"], # Bỏ Website đích
+    "Website": ["Tên web", "Nền tảng", "URL / ID", "Website đích", "Trạng thái", "Giới hạn bài/ngày"], # Thêm Website đích
     "Image": ["Link ảnh", "Số lần dùng"],
     "Spin": ["Từ Spin", "Bộ Spin"],
     "Local": ["Tỉnh thành", "Quận", "Điểm nóng"],
@@ -30,7 +30,7 @@ if 'db' not in st.session_state:
         ["Danh sách Keyword bài viết", "thuê tài xế lái hộ, đưa người say về nhà, dịch vụ lái xe an toàn, gọi tài xế nhậu say, tìm người lái xe hộ, xe ôm công nghệ ban đêm"],
         ["TARGET_URL", "laiho.vn"],
         ["Website đối thủ", "lmd.vn, butl.vn"],
-        ["Mục tiêu bài viết", "Bài viết dạng tư vấn và giới thiệu. không có mang tính chất bán hàng hay quảng bá website. Người đọc là khách hàng cần tìm dịch vụ và mong muốn được tìm hiểu trước khi mua"],
+        ["Mục tiêu bài viết", "Cung cấp giải pháp an toàn giao thông"], 
         ["Số lượng bài cần tạo", "2"], 
         ["Thiết lập số lượng chữ", "900 - 1200"],
         ["Số lượng backlink/bài", "3 - 4"], 
@@ -39,51 +39,55 @@ if 'db' not in st.session_state:
         ["TELEGRAM_CHAT_ID", "Dán_ID_Vào_Đây"]
     ], columns=["Hạng mục", "Giá trị thực tế"])
     
+    # Data mẫu tab Backlink (Đã bỏ cột link)
     st.session_state['db']['Backlink'] = pd.DataFrame([
-        ["thuê tài xế", "laiho.vn/thue-tai-xe", "0"],
-        ["đưa người say về nhà", "laiho.vn/dua-nguoi-say", "0"],
-        ["đã uống bia rượu không tự lái xe", "laiho.vn/an-toan", "0"],
-        ["dịch vụ lái xe hộ", "laiho.vn/dich-vu", "0"]
+        ["thuê tài xế", "0"],
+        ["đưa người say về nhà", "0"],
+        ["đã uống bia rượu không tự lái xe", "0"],
+        ["dịch vụ lái xe hộ", "0"]
     ], columns=TABS_CONFIG["Backlink"])
 
-# ==========================================
-# THUẬT TOÁN MINI-YOAST SEO CHẤM ĐIỂM TỰ ĐỘNG
-# ==========================================
+    # Data mẫu tab Website (Có cột Website đích, cách nhau dấu phẩy)
+    st.session_state['db']['Website'] = pd.DataFrame([
+        ["Blog Lái Xe", "WordPress", "bloglaixe.wordpress.com", "laiho.vn, butl.vn", "Active", "3"],
+        ["Tin Tức An Toàn", "Blogspot", "antoangiaothong.blogspot.com", "laiho.vn", "Active", "5"]
+    ], columns=TABS_CONFIG["Website"])
+
 def calculate_seo_score(title, sapo, keywords):
     score = 0
     title_lower = title.lower()
     sapo_lower = sapo.lower()
     
-    # 1. Từ khóa trong Tiêu đề (35đ)
-    if any(kw.lower() in title_lower for kw in keywords if kw): score += 35
-    else: score += 15 # Khuyến khích vì AI có thể dùng từ đồng nghĩa
+    valid_kws = [kw.strip().lower() for kw in keywords if kw.strip()]
+    if not valid_kws: return 0
+    
+    if any(kw in title_lower for kw in valid_kws): score += 30
+    if any(title_lower.find(kw) == 0 for kw in valid_kws): score += 10
         
-    # 2. Chiều dài Tiêu đề (15đ) - Chuẩn 40-70 ký tự
-    if 40 <= len(title) <= 70: score += 15
-    else: score += 5
+    title_len = len(title)
+    if 40 <= title_len <= 65: score += 20
+    elif 30 <= title_len <= 75: score += 10 
         
-    # 3. Từ khóa trong Sapo (35đ)
-    if any(kw.lower() in sapo_lower for kw in keywords if kw): score += 35
-    else: score += 15
+    if any(kw in sapo_lower for kw in valid_kws): score += 20
         
-    # 4. Độ dài Sapo (15đ)
-    if 100 <= len(sapo) <= 300: score += 15
-    else: score += 8
+    sapo_len = len(sapo)
+    if 120 <= sapo_len <= 160: score += 20
+    elif 90 <= sapo_len <= 180: score += 10
         
-    # 5. Cảm quan AI (Random +- 5đ để nhìn thực tế)
-    score += random.randint(-4, 5)
-    return min(100, max(0, score)) # Đảm bảo không vượt quá 100
+    return score 
 
 def call_gemini_ai(api_key, prompt):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     headers = {'Content-Type': 'application/json'}
-    data = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.8, "maxOutputTokens": 250}}
+    data = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.7, "maxOutputTokens": 300}}
     try:
         response = requests.post(url, headers=headers, json=data)
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-        else: return f"Lỗi API: {response.text}"
-    except Exception as e: return f"Lỗi kết nối: {str(e)}"
+        else:
+            return f"Lỗi API: {response.text}"
+    except Exception as e:
+        return f"Lỗi kết nối: {str(e)}"
 
 def send_telegram(bot_token, chat_id, message):
     bot_token = str(bot_token).strip()
@@ -103,14 +107,9 @@ def hacker_terminal():
             
     api_key = get_val('GEMINI_API_KEY')
     keywords = get_val('Danh sách Keyword bài viết')
-    muc_tieu = get_val('Mục tiêu bài viết')
     doi_thu = get_val('Website đối thủ').replace(',', ' |')
-    target_web = get_val('TARGET_URL')
     tele_token = get_val('TELEGRAM_BOT_TOKEN')
     tele_chat_id = get_val('TELEGRAM_CHAT_ID')
-    
-    muc_tieu_words = muc_tieu.split()
-    muc_tieu_short = " ".join(muc_tieu_words[:10]) + ("..." if len(muc_tieu_words) > 10 else "")
     
     try: so_luong_can_tao = int(get_val('Số lượng bài cần tạo'))
     except: so_luong_can_tao = 0
@@ -143,13 +142,36 @@ def hacker_terminal():
     
     kw_list = [k.strip() for k in keywords.split(',') if k.strip()]
     competitor_kws = ["giá rẻ", "uy tín", "ban đêm", "an toàn", "nhanh chóng", "chuyên nghiệp", "gọi là có"]
+    
     df_backlink = st.session_state['db']['Backlink']
+    df_website = st.session_state['db']['Website']
+    
+    hardcoded_style = "VĂN PHONG BẮT BUỘC: Bài viết mang tính tư vấn, giới thiệu, hướng dẫn, và chia sẻ thông tin hữu ích. TUYỆT ĐỐI KHÔNG đánh giá/nhắc đến đối thủ, KHÔNG viết kiểu bán hàng mớm khách, KHÔNG ép mua sản phẩm. Chỉ viết dưới dạng bài chia sẻ cộng đồng để thu hút người đọc một cách tự nhiên."
     
     new_reports = []
     
     for i in range(so_bai_con_lai):
         bai_so = i + 1
         
+        # 1. BỐC VỆ TINH VÀ TÌM MONEY SITE (Website đích)
+        if not df_website.empty:
+            random_site = df_website.sample(n=1).iloc[0]
+            satellite_name = random_site['Tên web']
+            satellite_url = random_site['URL / ID']
+            satellite_platform = random_site['Nền tảng']
+            
+            # Xử lý cắt chuỗi nếu có nhiều web đích cách nhau bằng dấu phẩy
+            target_webs_raw = str(random_site['Website đích'])
+            target_web_list = [w.strip() for w in target_webs_raw.split(',') if w.strip()]
+            target_web = random.choice(target_web_list) if target_web_list else get_val('TARGET_URL')
+        else:
+            # Fallback nếu tab Website trống
+            satellite_name = "Chưa cấu hình"
+            satellite_url = "Chưa cấu hình"
+            satellite_platform = "N/A"
+            target_web = get_val('TARGET_URL')
+
+        # 2. Bốc Keyword & Anchor Text
         so_luong_boc = random.randint(min_kw, max_kw)
         if len(kw_list) >= so_luong_boc:
             chosen_kws = random.sample(kw_list, so_luong_boc)
@@ -167,7 +189,19 @@ def hacker_terminal():
         else:
             anchor_text_str = "Chưa có data backlink |"
         
-        prompt = f"Đóng vai chuyên gia SEO. Dựa vào các từ khóa: {focus_kw_str}. \nMục tiêu: {muc_tieu}\nHãy viết 1 Tiêu đề giật tít (dưới 65 ký tự) và 1 Đoạn Sapo (dưới 40 chữ). \nTRẢ VỀ ĐÚNG FORMAT SAU:\nTiêu đề: [Ghi tiêu đề]\nSapo: [Ghi Sapo]"
+        # Gọi AI
+        prompt = f"""Đóng vai chuyên gia Content SEO chuẩn Yoast SEO.
+Từ khóa chính: {focus_kw_str}
+{hardcoded_style}
+
+NHIỆM VỤ: Viết 1 Tiêu đề SEO và 1 Sapo (Meta Description) tuân thủ TUYỆT ĐỐI các luật sau:
+1. Tiêu đề: ĐỘ DÀI TỪ 50 ĐẾN 60 KÝ TỰ. PHẢI chứa CHÍNH XÁC từ khóa chính.
+2. Sapo: ĐỘ DÀI TỪ 130 ĐẾN 150 KÝ TỰ. PHẢI chứa CHÍNH XÁC từ khóa chính. Nội dung tuân thủ đúng luật thép về văn phong ở trên.
+
+TRẢ VỀ ĐÚNG FORMAT SAU (Không giải thích thêm):
+Tiêu đề: [Ghi tiêu đề]
+Sapo: [Ghi Sapo]"""
+
         ai_result = call_gemini_ai(api_key, prompt)
         
         title_match = re.search(r'Tiêu đề:\s*(.*)', ai_result, re.IGNORECASE)
@@ -176,29 +210,34 @@ def hacker_terminal():
         title = title_match.group(1).replace('*', '').strip() if title_match else f"Bài SEO Auto {datetime.now().strftime('%H%M%S')}"
         sapo = sapo_match.group(1).replace('*', '').strip() if sapo_match else ai_result
         
-        # GỌI HÀM CHẤM ĐIỂM SEO Ở ĐÂY
         seo_score = calculate_seo_score(title, sapo, chosen_kws)
-        
+        if seo_score >= 80: danh_gia = "🟢 Tuyệt vời"
+        elif seo_score >= 60: danh_gia = "🟡 Khá"
+        else: danh_gia = "🔴 Cần cải thiện"
+
         gio_dang_full = (today_obj + timedelta(hours=(so_bai_hom_nay + bai_so) * 2)).strftime("%Y-%m-%d %H:%M")
         
+        # LOG IN RA MÀN HÌNH THEO CẤU TRÚC VỆ TINH
         log_text += f"[+] ĐANG THỰC THI BÀI VIẾT SỐ {bai_so}/{so_luong_can_tao}...\n"
+        log_text += f"  .. vệ tinh đăng: {satellite_url}\n"
         log_text += f"  .. tiêu đề: {title}\n"
         log_text += f"  .. từ khoá gen bài: {kw_tele_string}\n"
         log_text += f"  .. văn phong của: {doi_thu} |\n"
         log_text += f"  .. từ khoá đối thủ theo bài: {comp_kws_str}\n"
-        log_text += f"  .. loại văn viết: {muc_tieu_short}\n"
+        log_text += f"  .. loại văn viết: Cộng đồng, Hướng dẫn, Tư vấn\n" 
         log_text += f"  .. achor text: {anchor_text_str}\n"
         log_text += f"  .. web gắn backlink: {target_web} |\n"
-        log_text += f"  .. Điểm SEO: {seo_score}/100\n"  # IN ĐIỂM RA MÀN HÌNH ĐEN
         log_text += f"  .. Trạng thái: Thành công\n"
+        log_text += f"  .. Điểm SEO thực tế: {seo_score}/100 ({danh_gia})\n"
         log_text += f"  .. Đăng bài: {gio_dang_full}\n"
         log_text += "------------------------------------------------------\n"
         terminal_box.code(log_text, language="bash")
         
-        # GẮN ĐIỂM SEO VÀO TELEGRAM NOTI
+        # TELEGRAM BÁO CÁO RÕ RÀNG LUỒNG ĐI CỦA LINK
         msg_post = (
-            f"🚀 <b>[NOTI: ĐĂNG BÀI THÀNH CÔNG] {bai_so}/{so_luong_can_tao}</b>\n"
-            f"🌐 Website: {target_web}\n"
+            f"🚀 <b>[NOTI: ĐĂNG BÀI VỆ TINH] {bai_so}/{so_luong_can_tao}</b>\n"
+            f"🛰 Vệ tinh: {satellite_url}\n"
+            f"🎯 Bắn link về: {target_web}\n"
             f"⏱ Thời gian: {gio_dang_full}\n"
             f"🔑 Từ khoá: {kw_tele_string}\n"
             f"📝 Tiêu đề: {title}\n"
@@ -212,8 +251,8 @@ def hacker_terminal():
         kw3 = chosen_kws[2] if len(chosen_kws) > 2 else ""
         kw4 = chosen_kws[3] if len(chosen_kws) > 3 else ""
         
-        # THÊM ĐIỂM SEO VÀO CUỐI MẢNG REPORT
-        new_reports.append(["laiho.vn", "WordPress", "laiho.vn/post", today_obj.strftime("%d/%m/%Y"), kw1, kw2, kw3, kw4, "", "#", title, sapo, gio_dang_full, "✅ Thành công", f"{seo_score}/100"])
+        # LƯU VÀO REPORT: CỘT WEBSITE BÂY GIỜ LÀ VỆ TINH, CỘT NỀN TẢNG LÀ NỀN TẢNG CỦA VỆ TINH
+        new_reports.append([satellite_url, satellite_platform, satellite_url+"/post", today_obj.strftime("%d/%m/%Y"), kw1, kw2, kw3, kw4, "", target_web, title, sapo, gio_dang_full, "✅ Thành công", f"{seo_score}/100"])
         time.sleep(1)
 
     df_new = pd.DataFrame(new_reports, columns=TABS_CONFIG["Report"])
