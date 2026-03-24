@@ -29,7 +29,7 @@ def load_tab(name):
         return pd.DataFrame(vals[1:], columns=vals[0]).fillna('')
     except: return pd.DataFrame()
 
-# --- 2. ENGINE VẬN HÀNH ---
+# --- 2. ENGINE VẬN HÀNH (THÔNG LUỒNG + ÉP RULE) ---
 @st.dialog("⚙️ TRUNG TÂM VẬN HÀNH", width="large")
 def run_robot(data_dict):
     df_d = data_dict['Dashboard']
@@ -44,7 +44,7 @@ def run_robot(data_dict):
         st.error("Thiếu API Key trong Dashboard!")
         return
 
-    # Khởi tạo AI - Bộ quét model tự động chống 404
+    # Khởi tạo AI (Đã fix 404 triệt để)
     try:
         genai.configure(api_key=api_key)
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
@@ -62,7 +62,7 @@ def run_robot(data_dict):
         st.error(f"Lỗi cấu hình AI: {e}")
         return
 
-    # Lọc Website Active
+    # Lọc Website
     df_web = data_dict['Website']
     if df_web.empty:
         st.error("Tab Website trống!"); return
@@ -85,14 +85,27 @@ def run_robot(data_dict):
         with st.status(f"Đang xử lý bài {i+1}...", expanded=True):
             try:
                 kw = v('Danh sách Keyword bài viết')
-                prompt = f"Viết bài SEO. Từ khóa: {kw}. Chèn link {links[0]} vào từ {anchors[0]}. Prompt: {v('PROMPT_TEMPLATE')}."
+                
+                # --- LỚP BẢO VỆ 1: ÉP PROMPT CỰC GẮT ---
+                prompt = f"""[SYSTEM] BẠN LÀ CỖ MÁY TẠO BÀI VIẾT SEO. TUYỆT ĐỐI KHÔNG DÙNG VĂN GIAO TIẾP NHƯ "TUYỆT VỜI", "TÔI HIỂU", "DẠ", "VÂNG". BẮT ĐẦU NGAY BẰNG TIÊU ĐỀ BÀI VIẾT (H1).
+- Từ khóa chính: {kw}
+- Chèn link: {links[0]} vào cụm từ "{anchors[0]}".
+- Nội dung yêu cầu: {v('PROMPT_TEMPLATE')}"""
                 
                 resp = model.generate_content(prompt)
                 
-                clean_text = re.sub(r'^(Chào|Kính chào|Hello|Hi |Dạ |Vâng).*?\n', '', resp.text, flags=re.IGNORECASE).strip()
-                title = clean_text.split('\n')[0].replace('#', '').replace('*', '').strip()
+                # --- LỚP BẢO VỆ 2: BỘ LỌC CẮT CỔ CÂU CHÀO HỎI ---
+                lines = [l.strip() for l in resp.text.split('\n') if l.strip()]
+                ignore_words = ("chào", "kính chào", "hello", "hi", "dạ", "vâng", "tuyệt vời", "tôi hiểu", "ok", "đã hiểu", "dưới đây", "chắc chắn", "đây là", "như yêu cầu")
+                
+                # Vòng lặp: Nếu dòng đầu tiên bắt đầu bằng các từ cấm -> Cắt bỏ đi, xét dòng tiếp theo
+                while lines and any(lines[0].lower().startswith(w) for w in ignore_words):
+                    lines.pop(0)
+                
+                # Lấy dòng đầu tiên làm tiêu đề sau khi đã quét sạch rác
+                title = lines[0].replace('#', '').replace('*', '').strip() if lines else "Tiêu đề không xác định"
 
-                # Report 18 Cột (Đã fix lỗi len(site.iloc))
+                # Ghi Report
                 limit_img = site.iloc[9] if len(site) > 9 else "1"
                 report_row = [
                     site.iloc[0], site.iloc[1], now_str, "Chờ đăng", title, 
@@ -115,7 +128,7 @@ def run_robot(data_dict):
     st.success("Chiến dịch kết thúc!")
     if st.button("Xác nhận và Đóng"): st.rerun()
 
-# --- 3. GIAO DIỆN ---
+# --- 3. UI ---
 st.title("🚀 SEO MASTER - FULL STABLE")
 
 tab_names = ["Dashboard", "Website", "Backlink", "Image", "Spin", "Local", "Report"]
@@ -131,7 +144,6 @@ for i, name in enumerate(tab_names):
             if c1.button("🚀 BẮT ĐẦU VẬN HÀNH", type="primary"): run_robot(all_data)
             if c2.button("🔄 LÀM MỚI"): st.cache_data.clear(); st.rerun()
             
-            # Che Key/Token
             if not df.empty:
                 display_df = df.copy()
                 mask = display_df.iloc[:, 0].astype(str).str.contains('KEY|PASSWORD|TOKEN|API', case=False, na=False)
