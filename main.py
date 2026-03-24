@@ -29,7 +29,7 @@ def load_tab(name):
         return pd.DataFrame(vals[1:], columns=vals[0]).fillna('')
     except: return pd.DataFrame()
 
-# --- 2. ENGINE (TỰ ĐỘNG TÌM MODEL - CHỐNG 404) ---
+# --- 2. ENGINE VẬN HÀNH ---
 @st.dialog("⚙️ TRUNG TÂM VẬN HÀNH", width="large")
 def run_robot(data_dict):
     df_d = data_dict['Dashboard']
@@ -44,7 +44,7 @@ def run_robot(data_dict):
         st.error("Thiếu API Key trong Dashboard!")
         return
 
-    # Khởi tạo AI bằng cách lấy đúng tên do Google cấp
+    # Khởi tạo AI - Bộ quét model tự động chống 404
     try:
         genai.configure(api_key=api_key)
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
@@ -53,7 +53,6 @@ def run_robot(data_dict):
             st.error("API Key của bồ bị Google chặn hoặc không hỗ trợ tạo text!")
             return
             
-        # Ưu tiên lấy dòng flash, không có thì lấy dòng pro
         target_model = next((m for m in available_models if 'flash' in m), None)
         if not target_model:
             target_model = next((m for m in available_models if 'pro' in m), available_models[0])
@@ -63,7 +62,7 @@ def run_robot(data_dict):
         st.error(f"Lỗi cấu hình AI: {e}")
         return
 
-    # Lọc Website
+    # Lọc Website Active
     df_web = data_dict['Website']
     if df_web.empty:
         st.error("Tab Website trống!"); return
@@ -86,16 +85,15 @@ def run_robot(data_dict):
         with st.status(f"Đang xử lý bài {i+1}...", expanded=True):
             try:
                 kw = v('Danh sách Keyword bài viết')
-                prompt = f"Viết bài SEO. Từ khóa: {kw}. Chèn link {links[0]} vào từ {anchors[0]}. Prompt: {v('PROMPT_TEMPLATE')}. Yêu cầu: KHÔNG chào hỏi."
+                prompt = f"Viết bài SEO. Từ khóa: {kw}. Chèn link {links[0]} vào từ {anchors[0]}. Prompt: {v('PROMPT_TEMPLATE')}."
                 
                 resp = model.generate_content(prompt)
                 
-                # Cắt bỏ dòng chào hỏi dư thừa (nếu có)
                 clean_text = re.sub(r'^(Chào|Kính chào|Hello|Hi |Dạ |Vâng).*?\n', '', resp.text, flags=re.IGNORECASE).strip()
                 title = clean_text.split('\n')[0].replace('#', '').replace('*', '').strip()
 
-                # Report 18 Cột
-                limit_img = site.iloc[9] if len(site.iloc) > 9 else "1"
+                # Report 18 Cột (Đã fix lỗi len(site.iloc))
+                limit_img = site.iloc[9] if len(site) > 9 else "1"
                 report_row = [
                     site.iloc[0], site.iloc[1], now_str, "Chờ đăng", title, 
                     kw, limit_img,
@@ -117,7 +115,7 @@ def run_robot(data_dict):
     st.success("Chiến dịch kết thúc!")
     if st.button("Xác nhận và Đóng"): st.rerun()
 
-# --- 3. UI ---
+# --- 3. GIAO DIỆN ---
 st.title("🚀 SEO MASTER - FULL STABLE")
 
 tab_names = ["Dashboard", "Website", "Backlink", "Image", "Spin", "Local", "Report"]
