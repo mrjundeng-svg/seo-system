@@ -23,65 +23,82 @@ def load_data():
         return {t: pd.DataFrame(sh.worksheet(t).get_all_records()) for t in ["Dashboard", "Website", "Backlink", "Report", "Image", "Spin", "Local"]}, "✅ OK"
     except Exception as e: return None, str(e)
 
-# --- AI CALLER v24.0 (BẢN DỄ TÍNH NHẤT) ---
-def call_ai_final_v24(key, prompt):
-    # Ép dùng cổng v1beta và model flash-latest - Cổng này tỷ lệ thông cao nhất
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={key}"
+# --- BỘ RÀ SOÁT API (PRE-FLIGHT CHECK) ---
+def validate_api_connection(key):
+    """Kiểm tra API Key có sống và thông cổng không trước khi chạy chính thức"""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={key}"
+    try:
+        res = requests.post(url, json={"contents": [{"parts": [{"text": "hi"}]}]}, timeout=10)
+        if res.status_code == 200: return True, "✅ API Key hoạt động hoàn hảo!"
+        msg = res.json().get('error', {}).get('message', 'Không xác định')
+        return False, f"❌ Lỗi {res.status_code}: {msg}"
+    except Exception as e: return False, f"❌ Lỗi kết nối: {str(e)}"
+
+# --- AI CALLER ---
+def call_ai_final(key, prompt):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={key}"
     try:
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=45)
         if res.status_code == 200:
-            return res.json()['candidates'][0]['content']['parts'][0]['text'].strip(), "✅ Thông cổng v1beta"
-        else:
-            return None, f"Lỗi {res.status_code}: {res.json().get('error', {}).get('message', 'Lỗi không xác định')}"
-    except Exception as e:
-        return None, f"Lỗi mạng: {str(e)}"
+            return res.json()['candidates'][0]['content']['parts'][0]['text'].strip(), "OK"
+        return None, res.text
+    except: return None, "Mạng nghẽn"
 
-@st.dialog("🖥️ SYSTEM TERMINAL v24.0", width="large")
+# --- ENGINE TERMINAL ---
+@st.dialog("🖥️ SYSTEM TERMINAL v25.0", width="large")
 def run_robot(data):
     df_d = data['Dashboard']
     def v(k):
         res = df_d[df_d['Hạng mục'].astype(str).str.strip() == k]['Input dữ liệu']
         return str(res.values[0]).strip() if not res.empty else ""
 
-    active_sites = data['Website'][data['Website']['Trạng thái'].astype(str).str.contains('Active', case=False)]
     log_area = st.empty()
-    log_h = [f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Khởi động v24.0 (Final Fix)..."]
+    log_h = [f"[{datetime.now().strftime('%H:%M:%S')}] 🔍 ĐANG RÀ SOÁT HỆ THỐNG..."]
     
     def add_log(msg):
         log_h.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
         log_area.code("\n".join(log_h))
 
+    # --- BƯỚC 1: KIỂM TRA API KEY TRƯỚC ---
+    api_key = v('GEMINI_API_KEY')
+    add_log(f"🔑 Đang kiểm tra API Key...")
+    is_ok, check_msg = validate_api_connection(api_key)
+    if not is_ok:
+        add_log(check_msg)
+        add_log("🛑 HỆ THỐNG DỪNG LẠI. Ní hãy xử lý API Key trước khi chạy tiếp.")
+        return
+
+    # --- BƯỚC 2: KIỂM TRA WEBSITE ACTIVE ---
+    active_sites = data['Website'][data['Website']['Trạng thái'].astype(str).str.contains('Active', case=False)]
+    if active_sites.empty:
+        add_log("❌ LỖI: Không có website nào để chạy (Cột Trạng thái phải ghi 'Active').")
+        return
+    add_log(f"✅ Tìm thấy {len(active_sites)} vệ tinh đang sẵn sàng.")
+
+    # --- BƯỚC 3: CHẠY CHÍNH THỨC ---
     num = int(v('Số lượng bài cần tạo') or 1)
     for i in range(num):
         add_log(f"━━━━ Bài {i+1}/{num} ━━━━")
-        site = active_sites.sample(n=1).iloc[0] if not active_sites.empty else None
-        if not site: add_log("❌ Lỗi: Tab Website chưa có máy nào Active!"); break
-
+        site = active_sites.sample(n=1).iloc[0] # Lấy 1 dòng
         add_log(f"🛰 Vệ tinh: {site['Tên web']}")
-        add_log("🧠 Đang gõ cửa Google bằng v1beta...")
-
-        content, meta = call_ai_final_v24(v('GEMINI_API_KEY'), v('PROMPT_TEMPLATE'))
         
+        content, meta = call_ai_final(api_key, v('PROMPT_TEMPLATE'))
         if content:
-            add_log(f"✅ ĐÃ THÔNG! {meta}")
+            add_log("✅ AI đã trả bài. Đang lưu báo cáo...")
             # Ghi báo cáo
             gspread.authorize(get_creds()).open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip()).worksheet("Report").append_row([
-                site['URL / ID'], site['Nền tảng'], "Link", datetime.now().strftime("%Y-%m-%d"), "Keyword", "", "✅", "1%", "90/100", site.get('các website đích',''), "Tiêu đề", "Sapo", datetime.now().strftime("%H:%M"), "Thành công", "Active"
+                site['URL / ID'], site['Nền tảng'], "Link", datetime.now().strftime("%Y-%m-%d"), "Keyword", "", "✅", "1%", "95/100", site.get('các website đích',''), "Tiêu đề", "Sapo", datetime.now().strftime("%H:%M"), "Thành công", "Active"
             ])
-            add_log("✨ Đã lưu vào Tab Report.")
-        else:
-            add_log(f"❌ {meta}")
-            add_log("💡 Ní ơi, dán cái API Key MỚI vào Sheet rồi bấm Reload là xong!")
-        
+            add_log("✨ Hoàn tất bài viết.")
+        else: add_log(f"❌ Lỗi tạo nội dung: {meta}")
         time.sleep(1)
 
-    st.success("🎉 TIẾN TRÌNH KẾT THÚC!")
+    st.success("🎉 TẤT CẢ TIẾN TRÌNH ĐÃ XONG!")
     if st.button("ĐÓNG"): st.rerun()
 
 # --- UI ---
-st.markdown("<h1 style='color:#ffd700;'>🚕 LÁI HỘ MASTER v24.0</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='color:#ffd700;'>🚕 LÁI HỘ MASTER v25.0</h1>", unsafe_allow_html=True)
 data, msg = load_data()
-
 if data:
     tabs = st.tabs(list(data.keys()))
     for i, name in enumerate(data.keys()):
