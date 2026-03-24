@@ -3,13 +3,14 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import google.generativeai as genai
-import random, time, requests, re
+import random, time, requests
 from datetime import datetime, timedelta, timezone
 
-# --- 1. SETUP HỆ THỐNG ---
-st.set_page_config(page_title="SEO MASTER v55 - STABLE", layout="wide")
+# --- 1. SETUP CƠ BẢN ---
+st.set_page_config(page_title="SEO MASTER v57.0", layout="wide")
 
-def get_vn_time(): return datetime.now(timezone(timedelta(hours=7)))
+def get_vn_time(): 
+    return datetime.now(timezone(timedelta(hours=7)))
 
 def get_creds():
     try:
@@ -19,76 +20,62 @@ def get_creds():
     except: return None
 
 @st.cache_data(ttl=5)
-def load_full_data():
+def load_tab(name):
     try:
         client = gspread.authorize(get_creds())
         sh = client.open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip())
-        # Danh sách tab bồ cần - Đúng thứ tự bồ muốn
-        tabs = ["Dashboard", "Website", "Backlink", "Image", "Spin", "Local", "Report"]
-        res = {}
-        for t in tabs:
-            try:
-                vals = sh.worksheet(t).get_all_values()
-                df = pd.DataFrame(vals[1:], columns=vals[0]) if len(vals) > 0 else pd.DataFrame()
-                res[t] = df.fillna('')
-            except: res[t] = pd.DataFrame()
-        return res, "Hệ thống OK"
-    except Exception as e: return None, str(e)
+        vals = sh.worksheet(name).get_all_values()
+        if not vals: return pd.DataFrame()
+        return pd.DataFrame(vals[1:], columns=vals[0]).fillna('')
+    except: return pd.DataFrame()
 
-# --- 2. HÀM TÌM MODEL SỐNG (DIỆT LỖI 404) ---
-def get_working_model(api_key):
-    try:
-        genai.configure(api_key=api_key)
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                if 'gemini-1.5-flash' in m.name: return m.name
-        return "gemini-1.5-flash" # Fallback
-    except: return "gemini-1.5-flash"
-
-# --- 3. TRÌNH VẬN HÀNH "SẠCH" ---
-@st.dialog("⚙️ ĐIỀU HÀNH CHIẾN DỊCH", width="large")
-def run_robot(data):
-    df_d = data['Dashboard']
+# --- 2. TRÌNH VẬN HÀNH (TẬP TRUNG FIX 404) ---
+@st.dialog("⚙️ TRUNG TÂM VẬN HÀNH", width="large")
+def run_robot(data_dict):
+    df_d = data_dict['Dashboard']
     def v(k):
         res = df_d[df_d.iloc[:, 0].str.strip() == k].iloc[:, 1]
         return str(res.values[0]).strip() if not res.empty else ""
 
-    # Lấy Model chuẩn
-    model_name = get_working_model(v('GEMINI_API_KEY'))
-    model = genai.GenerativeModel(model_name=model_name)
+    # --- FIX 404 TẠI ĐÂY ---
+    try:
+        genai.configure(api_key=v('GEMINI_API_KEY'))
+        # Giải pháp: Gọi tên model trực tiếp, không dùng biến trung gian hay tiền tố
+        model = genai.GenerativeModel('gemini-1.5-flash')
+    except Exception as e:
+        st.error(f"Lỗi khởi tạo AI: {e}"); return
 
-    # Lọc Website Active (Tìm cột "Trạng thái" linh hoạt)
-    df_web = data['Website']
-    status_col = [c for c in df_web.columns if "Trạng thái" in c][0]
-    active_sites = df_web[df_web[status_col].str.contains('Active', case=False, na=False)]
+    # Lọc Website (Cột K - Index 10)
+    df_web = data_dict['Website']
+    active_sites = df_web[df_web.iloc[:, 10].str.strip().str.contains('Active', case=False, na=False)]
     
-    df_bl = data['Backlink']
+    if active_sites.empty:
+        st.error("Không có Website nào 'Active' ở cột K!"); return
+
+    df_bl = data_dict['Backlink']
     num_posts = int(v('Số lượng bài cần tạo') or 1)
 
     for i in range(num_posts):
         now_str = get_vn_time().strftime("%Y-%m-%d %H:%M")
         site = active_sites.sample(n=1).iloc[0]
         
-        # Bốc Backlink (Cột A: Link, Cột B: Anchor)
+        # Backlink: Cột A(0) là Link, Cột B(1) là Anchor
         bl_pool = df_bl.sample(n=min(len(df_bl), 5)).values.tolist()
         anchors = [str(r[1]) for r in bl_pool] + [""]*5
         links = [str(r[0]) for r in bl_pool] + [""]*3
 
-        with st.status(f"Đang biên tập bài {i+1}...", expanded=True):
+        with st.status(f"Đang chạy bài {i+1}...", expanded=True):
             try:
-                prompt = f"Viết bài SEO chuyên nghiệp. Từ khóa: {v('Danh sách Keyword bài viết')}. Chèn link {links[0]} vào từ {anchors[0]}. Prompt: {v('PROMPT_TEMPLATE')}"
-                resp = model.generate_content(prompt)
+                prompt = f"Viết bài SEO. Từ khóa: {v('Danh sách Keyword bài viết')}. Chèn link {links[0]} vào từ {anchors[0]}. Prompt: {v('PROMPT_TEMPLATE')}"
                 
-                # --- DIỆT "CHÀO SẾP" BẰNG REGEX ---
-                raw_content = resp.text
-                # Xóa các dòng chứa từ "Chào", "Kính chào" ở đầu văn bản
-                clean_content = re.sub(r'^(Chào|Kính chào|Hello|Hi|Chào Sếp).*?\n', '', raw_content, flags=re.IGNORECASE | re.MULTILINE)
-                title = clean_content.split('\n')[0].replace('#', '').replace('*', '').strip()
+                # Thực thi Generate
+                resp = model.generate_content(prompt)
+                title = resp.text.split('\n')[0].replace('#', '').replace('*', '').strip()
 
-                # GHI REPORT 18 CỘT
+                # GHI REPORT 18 CỘT CHUẨN (A-R)
                 report_row = [
                     site.iloc[0], site.iloc[1], now_str, "Chờ đăng", title, 
-                    v('Danh sách Keyword bài viết'), site.get('Giới hạn ảnh', '1'), 
+                    v('Danh sách Keyword bài viết'), site.iloc[9],
                     anchors[0], anchors[1], anchors[2], anchors[3], anchors[4],
                     links[0], links[1], links[2], "95/100", now_str, "Thành công"
                 ]
@@ -99,30 +86,40 @@ def run_robot(data):
                 requests.post(f"https://api.telegram.org/bot{v('TELEGRAM_BOT_TOKEN')}/sendMessage", 
                              json={"chat_id": v('TELEGRAM_CHAT_ID'), "text": msg, "parse_mode": "HTML"})
 
-                st.write(f"Đã đăng: {title[:50]}...")
-            except Exception as e: st.error(f"Lỗi: {e}")
+                st.write(f"Xong bài {i+1}: {title[:50]}...")
+            except Exception as e:
+                st.error(f"Lỗi tại bài {i+1}: {e}")
         time.sleep(1)
 
     st.success("Xong!")
-    if st.button("XÁC NHẬN VÀ ĐÓNG"): st.rerun()
+    if st.button("ĐÓNG"): st.rerun()
 
-# --- 4. GIAO DIỆN ---
-st.title("🚀 SEO MASTER v55.0")
-data, msg = load_full_data()
+# --- 3. UI ---
+st.title("🚀 SEO MASTER v57.0 - FIX 404")
 
-if data:
-    tabs = st.tabs([f"📂 {k}" for k in data.keys()])
-    for i, name in enumerate(data.keys()):
-        with tabs[i]:
-            if name == "Dashboard":
-                c1, c2, _ = st.columns([1, 1, 4])
-                if c1.button("🚀 CHẠY NGAY", type="primary"): run_robot(data)
-                if c2.button("🔄 REFRESH"): st.cache_data.clear(); st.rerun()
-                
-                # MÃ HÓA BẢO MẬT
-                df_show = data[name].copy()
-                mask = df_show.iloc[:, 0].str.contains('KEY|PASS|TOKEN|API', case=False, na=False)
-                df_show.loc[mask, df_show.columns[1]] = "********"
-                st.dataframe(df_show, use_container_width=True, hide_index=True)
+# Report nằm cuối cùng
+tab_names = ["Dashboard", "Website", "Backlink", "Image", "Spin", "Local", "Report"]
+all_data = {n: load_tab(n) for n in tab_names}
+
+tabs = st.tabs([f"📂 {n}" for n in tab_names])
+
+for i, name in enumerate(tab_names):
+    with tabs[i]:
+        df = all_data[name]
+        if name == "Dashboard":
+            c1, c2, _ = st.columns([1, 1, 4])
+            if c1.button("🚀 VẬN HÀNH", type="primary"): run_robot(all_data)
+            if c2.button("🔄 LÀM MỚI"): st.cache_data.clear(); st.rerun()
+            
+            # MÃ HÓA BẢO MẬT DASHBOARD
+            if not df.empty:
+                display_df = df.copy()
+                sensitive = ["KEY", "PASSWORD", "TOKEN", "API"]
+                mask = display_df.iloc[:, 0].str.contains('|'.join(sensitive), case=False, na=False)
+                display_df.loc[mask, display_df.columns[1]] = "********"
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+        else:
+            if not df.empty:
+                st.dataframe(df, use_container_width=True, height=500, hide_index=True)
             else:
-                st.dataframe(data[name], use_container_width=True, height=500, hide_index=True)
+                st.info(f"Tab '{name}' trống hoặc chưa có dữ liệu.")
