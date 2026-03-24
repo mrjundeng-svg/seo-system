@@ -8,6 +8,7 @@ from datetime import datetime
 # --- CONFIG ---
 st.set_page_config(page_title="LÁI HỘ MASTER", layout="wide", page_icon="🚕")
 
+# Hàm xử lý credential
 def get_creds():
     try:
         info = dict(st.secrets["service_account"])
@@ -15,7 +16,8 @@ def get_creds():
         return ServiceAccountCredentials.from_json_keyfile_dict(info, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
     except: return None
 
-@st.cache_data(ttl=30)
+# Hàm load data có cache (có thể clear để Reload)
+@st.cache_data(ttl=300)
 def load_data():
     try:
         client = gspread.authorize(get_creds())
@@ -37,75 +39,93 @@ def update_report(row):
         sh.worksheet("Report").append_row(row)
     except: pass
 
-@st.dialog("🤖 ROBOT VẬN HÀNH", width="large")
+# --- ĐỘNG CƠ RUN ---
+@st.dialog("🤖 SYSTEM LOGGING", width="large")
 def run_robot(data):
     df_d = data['Dashboard']
-    
-    # --- FIX: Đọc cột 'Input dữ liệu' theo hình image_e560e5.png ---
     def v(k):
         try:
             res = df_d[df_d['Hạng mục'].str.strip() == k]['Input dữ liệu']
-            if not res.empty: return str(res.values[0]).strip()
-            return ""
+            return str(res.values[0]).strip() if not res.empty else ""
         except: return ""
 
-    if not v('GEMINI_API_KEY'):
-        st.error("❌ Không tìm thấy giá trị GEMINI_API_KEY. Ní kiểm tra lại cột 'Input dữ liệu' nhé!"); return
-    
     active_sites = data['Website'][data['Website']['Trạng thái'] == 'Active']
     if active_sites.empty:
-        st.error("❌ Không có website nào 'Active'!"); return
+        st.error("❌ Không có website 'Active'!"); return
 
-    term = st.empty(); log = f"root@{v('PROJECT_NAME').lower() or 'bot'}:~# Đang vít ga...\n"
+    # Khu vực Log - Đảm bảo show từng bước
+    log_area = st.empty() 
+    log_content = f"root@{v('PROJECT_NAME').lower()}:~# Kích hoạt hệ thống...\n"
     
-    num_to_gen = v('Số lượng bài cần tạo')
-    num_to_gen = int(num_to_gen) if num_to_gen.isdigit() else 1
-
+    num_to_gen = int(v('Số lượng bài cần tạo') or 1)
+    
     for i in range(num_to_gen):
         site = active_sites.sample(n=1).iloc[0]
-        model_v = v('MODEL_VERSION') or "gemini-1.5-flash"
-        model = random.choice([m.strip() for m in model_v.split(',') if m.strip()])
+        model = random.choice([m.strip() for m in v('MODEL_VERSION').split(',') if m.strip()])
         
-        log += f"[+] Đang gen bài {i+1}: {site['Tên web']}\n"; term.code(log, language="bash")
-        
-        # Local SEO
+        log_content += f"[+] [{i+1}/{num_to_gen}] Đang xử lý: {site['Tên web']}...\n"
+        log_area.code(log_content, language="bash")
+
+        # Step 1: Gen Content
         loc_str = ""
-        l_ratio = v('LOCAL_RATIO')
-        l_ratio = float(l_ratio) if l_ratio else 0.2
-        if random.random() < l_ratio and not data['Local'].empty:
+        if random.random() < float(v('LOCAL_RATIO') or 0.2) and not data['Local'].empty:
             l = data['Local'].sample(n=1).iloc[0]
             loc_str = f"📍 Địa điểm: {l['Cung đường']}, {l['Quận']}, {l['Tỉnh thành']}."
         
-        # Gen Content
         prompt = f"{v('PROMPT_TEMPLATE')}\nKeywords: {v('Danh sách Keyword bài viết')}\n{loc_str}"
         content = call_ai(v('GEMINI_API_KEY'), model, prompt)
         
-        if v('SPIN_MODE') == "ON" and not data['Spin'].empty:
-            log += "  .. Đang chạy Spin lọc AI Detection...\n"; term.code(log, language="bash")
-            rules = data['Spin'].to_string(index=False)
-            content = call_ai(v('GEMINI_API_KEY'), "gemini-1.5-flash", f"{v('AI_HUMANIZER_PROMPT')}\nRules: {rules}\nContent: {content}")
+        log_content += f"  > Đã tạo xong nội dung gốc ({model}).\n"
+        log_area.code(log_content, language="bash")
 
-        # Ghi Report (Dùng cột 'các website đích' theo image_e559de.png)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        update_report([
-            site['URL / ID'], site['Nền tảng'], f"{site['URL / ID']}/post", 
-            now, "", "", "", "", "", 
-            site.get('các website đích', ''), 
-            "Tiêu đề", "Sapo", now, "✅ Thành công", "85"
-        ])
+        # Step 2: Spin
+        if v('SPIN_MODE') == "ON":
+            log_content += "  > Đang chạy bộ lọc Spin Humanize...\n"
+            log_area.code(log_content, language="bash")
+            content = call_ai(v('GEMINI_API_KEY'), "gemini-1.5-flash", f"{v('AI_HUMANIZER_PROMPT')}\nRules: {data['Spin'].to_string(index=False)}\nContent: {content}")
+
+        # Step 3: Ghi Report
+        update_report([site['URL / ID'], site['Nền tảng'], f"{site['URL / ID']}/post", datetime.now().strftime("%Y-%m-%d %H:%M"), "", "", "", "", "", site.get('các website đích', ''), "Tiêu đề AI", "Sapo AI", datetime.now().strftime("%Y-%m-%d %H:%M"), "✅ Thành công", "85"])
         
-        log += "  .. Xong! Check Tab Report nhé.\n"; term.code(log, language="bash")
+        log_content += "  > ✅ Đã lưu Report thành công.\n"
+        log_area.code(log_content, language="bash")
         time.sleep(1)
-    st.success("🎉 CHIẾN DỊCH HOÀN TẤT!")
+        
+    st.success("🎉 TẤT CẢ TIẾN TRÌNH HOÀN TẤT!")
 
-# --- UI ---
-st.markdown("<h1 style='color:#ffd700;'>🚕 LÁI HỘ MASTER v14.5</h1>", unsafe_allow_html=True)
+# --- UI INTERFACE ---
+st.markdown("<h1 style='color:#ffd700;'>🚕 LÁI HỘ MASTER v15.0</h1>", unsafe_allow_html=True)
+
+# Toolbar: Reload & RUN
 data, msg = load_data()
+
 if data:
     tabs = st.tabs(list(data.keys()))
     for i, name in enumerate(data.keys()):
         with tabs[i]:
             if name == "Dashboard":
-                if st.button("🚀 KÍCH HOẠT VÍT GA", type="primary", use_container_width=True): run_robot(data)
-            st.dataframe(data[name], use_container_width=True, height=400, hide_index=True)
+                col1, col2, col3 = st.columns([1, 1, 3])
+                with col1:
+                    if st.button("🚀 RUN", type="primary", use_container_width=True):
+                        run_robot(data)
+                with col2:
+                    if st.button("🔄 Reload DB", use_container_width=True):
+                        st.cache_data.clear()
+                        st.rerun()
+                
+                # Xử lý ẩn dữ liệu nhạy cảm (Key, Mail...)
+                display_df = data[name].copy()
+                sensitive_words = ['KEY', 'API', 'MAIL', 'TOKEN', 'PASSWORD', 'SECRET']
+                
+                def mask_sensitive(row):
+                    item = str(row['Hạng mục']).upper()
+                    if any(word in item for word in sensitive_words):
+                        val = str(row['Input dữ liệu'])
+                        return val[:4] + "********" + val[-4:] if len(val) > 8 else "********"
+                    return row['Input dữ liệu']
+
+                display_df['Input dữ liệu'] = display_df.apply(mask_sensitive, axis=1)
+                st.dataframe(display_df, use_container_width=True, height=400, hide_index=True)
+            else:
+                st.dataframe(data[name], use_container_width=True, height=450, hide_index=True)
 else: st.error(f"Lỗi kết nối: {msg}")
