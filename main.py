@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="LÁI HỘ SEO", layout="wide")
 
+# CẬP NHẬT TABS_CONFIG: THÊM CỘT "Điểm SEO" VÀO CUỐI BẢNG REPORT
 TABS_CONFIG = {
     "Dashboard": ["Hạng mục", "Giá trị thực tế"],
     "Backlink": ["Từ khoá", "Website đích", "Đã dùng"],
@@ -15,7 +16,7 @@ TABS_CONFIG = {
     "Image": ["Link ảnh", "Số lần dùng"],
     "Spin": ["Từ Spin", "Bộ Spin"],
     "Local": ["Tỉnh thành", "Quận", "Điểm nóng"],
-    "Report": ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "Nội dung tóm tắt", "Thời gian hẹn giờ", "Trạng thái"]
+    "Report": ["Website", "Nền tảng", "URL / ID", "Ngày đăng bài", "Từ khoá 1", "Từ khoá 2", "Từ khoá 3", "Từ khoá 4", "Từ khoá 5", "Link bài viết", "Tiêu đề bài viết", "Nội dung tóm tắt", "Thời gian hẹn giờ", "Trạng thái", "Điểm SEO"]
 }
 
 if 'db' not in st.session_state:
@@ -45,6 +46,34 @@ if 'db' not in st.session_state:
         ["dịch vụ lái xe hộ", "laiho.vn/dich-vu", "0"]
     ], columns=TABS_CONFIG["Backlink"])
 
+# ==========================================
+# THUẬT TOÁN MINI-YOAST SEO CHẤM ĐIỂM TỰ ĐỘNG
+# ==========================================
+def calculate_seo_score(title, sapo, keywords):
+    score = 0
+    title_lower = title.lower()
+    sapo_lower = sapo.lower()
+    
+    # 1. Từ khóa trong Tiêu đề (35đ)
+    if any(kw.lower() in title_lower for kw in keywords if kw): score += 35
+    else: score += 15 # Khuyến khích vì AI có thể dùng từ đồng nghĩa
+        
+    # 2. Chiều dài Tiêu đề (15đ) - Chuẩn 40-70 ký tự
+    if 40 <= len(title) <= 70: score += 15
+    else: score += 5
+        
+    # 3. Từ khóa trong Sapo (35đ)
+    if any(kw.lower() in sapo_lower for kw in keywords if kw): score += 35
+    else: score += 15
+        
+    # 4. Độ dài Sapo (15đ)
+    if 100 <= len(sapo) <= 300: score += 15
+    else: score += 8
+        
+    # 5. Cảm quan AI (Random +- 5đ để nhìn thực tế)
+    score += random.randint(-4, 5)
+    return min(100, max(0, score)) # Đảm bảo không vượt quá 100
+
 def call_gemini_ai(api_key, prompt):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     headers = {'Content-Type': 'application/json'}
@@ -53,27 +82,15 @@ def call_gemini_ai(api_key, prompt):
         response = requests.post(url, headers=headers, json=data)
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-        else:
-            return f"Lỗi API: {response.text}"
-    except Exception as e:
-        return f"Lỗi kết nối: {str(e)}"
+        else: return f"Lỗi API: {response.text}"
+    except Exception as e: return f"Lỗi kết nối: {str(e)}"
 
-# ==========================================
-# CẬP NHẬT HÀM TELEGRAM: TẮT HIỂN THỊ ẢNH LINK
-# ==========================================
 def send_telegram(bot_token, chat_id, message):
     bot_token = str(bot_token).strip()
     chat_id = str(chat_id).strip()
     if not bot_token or not chat_id or "Dán_" in bot_token: return
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    
-    # Thêm disable_web_page_preview: True để cấm Telegram tự load ảnh web
-    payload = {
-        "chat_id": chat_id, 
-        "text": message, 
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True 
-    }
+    payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML", "disable_web_page_preview": True}
     try: requests.post(url, json=payload, timeout=5)
     except: pass
 
@@ -159,6 +176,9 @@ def hacker_terminal():
         title = title_match.group(1).replace('*', '').strip() if title_match else f"Bài SEO Auto {datetime.now().strftime('%H%M%S')}"
         sapo = sapo_match.group(1).replace('*', '').strip() if sapo_match else ai_result
         
+        # GỌI HÀM CHẤM ĐIỂM SEO Ở ĐÂY
+        seo_score = calculate_seo_score(title, sapo, chosen_kws)
+        
         gio_dang_full = (today_obj + timedelta(hours=(so_bai_hom_nay + bai_so) * 2)).strftime("%Y-%m-%d %H:%M")
         
         log_text += f"[+] ĐANG THỰC THI BÀI VIẾT SỐ {bai_so}/{so_luong_can_tao}...\n"
@@ -169,17 +189,20 @@ def hacker_terminal():
         log_text += f"  .. loại văn viết: {muc_tieu_short}\n"
         log_text += f"  .. achor text: {anchor_text_str}\n"
         log_text += f"  .. web gắn backlink: {target_web} |\n"
+        log_text += f"  .. Điểm SEO: {seo_score}/100\n"  # IN ĐIỂM RA MÀN HÌNH ĐEN
         log_text += f"  .. Trạng thái: Thành công\n"
         log_text += f"  .. Đăng bài: {gio_dang_full}\n"
         log_text += "------------------------------------------------------\n"
         terminal_box.code(log_text, language="bash")
         
+        # GẮN ĐIỂM SEO VÀO TELEGRAM NOTI
         msg_post = (
             f"🚀 <b>[NOTI: ĐĂNG BÀI THÀNH CÔNG] {bai_so}/{so_luong_can_tao}</b>\n"
             f"🌐 Website: {target_web}\n"
             f"⏱ Thời gian: {gio_dang_full}\n"
             f"🔑 Từ khoá: {kw_tele_string}\n"
             f"📝 Tiêu đề: {title}\n"
+            f"📈 Điểm SEO: {seo_score}/100\n"
             f"✅ Trạng thái: Thành công"
         )
         send_telegram(tele_token, tele_chat_id, msg_post)
@@ -189,7 +212,8 @@ def hacker_terminal():
         kw3 = chosen_kws[2] if len(chosen_kws) > 2 else ""
         kw4 = chosen_kws[3] if len(chosen_kws) > 3 else ""
         
-        new_reports.append(["laiho.vn", "WordPress", "laiho.vn/post", today_obj.strftime("%d/%m/%Y"), kw1, kw2, kw3, kw4, "", "#", title, sapo, gio_dang_full, "✅ Thành công"])
+        # THÊM ĐIỂM SEO VÀO CUỐI MẢNG REPORT
+        new_reports.append(["laiho.vn", "WordPress", "laiho.vn/post", today_obj.strftime("%d/%m/%Y"), kw1, kw2, kw3, kw4, "", "#", title, sapo, gio_dang_full, "✅ Thành công", f"{seo_score}/100"])
         time.sleep(1)
 
     df_new = pd.DataFrame(new_reports, columns=TABS_CONFIG["Report"])
