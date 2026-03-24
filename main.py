@@ -26,13 +26,13 @@ if 'db' not in st.session_state:
         ["SENDER_EMAIL", "jundeng.po@gmail.com"],
         ["SENDER_PASSWORD", "vddy misk nhbu vtsm"],
         ["RECEIVER_EMAIL", "jundeng.po@gmail.com"],
-        ["Danh sách Keyword bài viết", "thuê tài xế lái hộ, đưa người say về nhà, dịch vụ lái xe an toàn, gọi tài xế nhậu say"],
-        ["TARGET_URL", "https://laiho.vn/"],
+        ["Danh sách Keyword bài viết", "thuê tài xế lái hộ, đưa người say về nhà, dịch vụ lái xe an toàn, gọi tài xế nhậu say, tìm người lái xe hộ, xe ôm công nghệ ban đêm"],
+        ["TARGET_URL", "laiho.vn"],
         ["Website đối thủ", "lmd.vn, butl.vn"],
         ["Mục tiêu bài viết", "Bài viết dạng tư vấn, cung cấp giải pháp an toàn"],
         ["Số lượng bài cần tạo", "2"], 
         ["Thiết lập số lượng chữ", "900 - 1200"],
-        ["Số lượng backlink/bài", "3 - 4"],
+        ["Số lượng backlink/bài", "3 - 4"], # SẼ ĐỌC TỪ ĐÂY ĐỂ BỐC TỪ KHÓA
         ["FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"],
         ["TELEGRAM_BOT_TOKEN", "Dán_Token_Vào_Đây"],
         ["TELEGRAM_CHAT_ID", "Dán_ID_Vào_Đây"]
@@ -70,18 +70,26 @@ def hacker_terminal():
     api_key = get_val('GEMINI_API_KEY')
     keywords = get_val('Danh sách Keyword bài viết')
     muc_tieu = get_val('Mục tiêu bài viết')
+    doi_thu = get_val('Website đối thủ').replace(',', ' |')
+    target_web = get_val('TARGET_URL')
     tele_token = get_val('TELEGRAM_BOT_TOKEN')
     tele_chat_id = get_val('TELEGRAM_CHAT_ID')
     
     try: so_luong_can_tao = int(get_val('Số lượng bài cần tạo'))
     except: so_luong_can_tao = 0
+    
+    # Phân tích số lượng từ khóa cần bốc (VD: 3 - 4)
+    try:
+        sl_bl = get_val('Số lượng backlink/bài').split('-')
+        min_kw = int(sl_bl[0].strip())
+        max_kw = int(sl_bl[1].strip())
+    except:
+        min_kw, max_kw = 3, 4
         
     today_obj = datetime.now()
-    today_str = today_obj.strftime("%d/%m/%Y")
+    today_str = today_obj.strftime("%Y-%m-%d") # Chuẩn format cho form mới
     df_report = st.session_state['db']['Report']
-    so_bai_hom_nay = len(df_report[df_report['Ngày đăng bài'] == today_str])
-    
-    st.write("### 📊 TIẾN ĐỘ NGÀY HÔM NAY")
+    so_bai_hom_nay = len(df_report[df_report['Ngày đăng bài'] == today_obj.strftime("%d/%m/%Y")])
     
     if so_bai_hom_nay >= so_luong_can_tao:
         st.error(f"🛑 ĐÃ ĐẠT GIỚI HẠN: Hôm nay hệ thống đã tạo **{so_bai_hom_nay}/{so_luong_can_tao}** bài.")
@@ -93,83 +101,83 @@ def hacker_terminal():
 
     st.divider()
     terminal_box = st.empty()
-    log_text = "root@laiho-server:~# Khởi động AI Engine...\n"
+    log_text = "root@laiho-server:~# Khởi động AI Engine...\n\n"
     terminal_box.code(log_text, language="bash")
     time.sleep(0.5)
     
     kw_list = [k.strip() for k in keywords.split(',') if k.strip()]
+    
+    # Từ khóa đối thủ giả lập để report (có thể móc từ API khác sau)
+    competitor_kws = ["giá rẻ", "uy tín", "ban đêm", "an toàn", "nhanh chóng", "chuyên nghiệp"]
+    
     new_reports = []
     
     for i in range(so_bai_con_lai):
         bai_so = i + 1
-        log_text += f"\n======================================================\n"
-        log_text += f"[+] ĐANG THỰC THI BÀI VIẾT SỐ {bai_so}/{so_bai_con_lai}...\n"
-        terminal_box.code(log_text, language="bash")
         
-        # Bốc ngẫu nhiên từ khóa
-        if len(kw_list) >= 2:
-            chosen_kws = random.sample(kw_list, 2)
-            kw1, kw2 = chosen_kws[0], chosen_kws[1]
-        elif len(kw_list) == 1:
-            kw1, kw2 = kw_list[0], ""
+        # Bốc số lượng từ khóa theo cấu hình Dashboard (VD: random từ 3 đến 4 từ)
+        so_luong_boc = random.randint(min_kw, max_kw)
+        if len(kw_list) >= so_luong_boc:
+            chosen_kws = random.sample(kw_list, so_luong_boc)
         else:
-            kw1, kw2 = "", ""
-
-        # Nối Từ khoá cho Telegram (Dạng: kw1 | kw2 | kw3...)
-        kws_for_tele = [kw1, kw2] # Chỗ này Ní thêm kw3,4,5 sau này vào cũng dc
-        kw_tele_string = " | ".join([k for k in kws_for_tele if k])
+            chosen_kws = kw_list
+            
+        kw_tele_string = " | ".join(chosen_kws) + " |"
+        focus_kw_str = ", ".join(chosen_kws)
         
-        focus_kw_str = f"{kw1}, {kw2}"
+        # Bốc từ khóa đối thủ random
+        comp_kws_str = " | ".join(random.sample(competitor_kws, 3)) + " |"
         
-        prompt = f"Đóng vai chuyên gia SEO. Dựa vào từ khóa: {focus_kw_str}\nMục tiêu: {muc_tieu}\nHãy viết 1 Tiêu đề giật tít (dưới 65 ký tự) và 1 Đoạn Sapo (dưới 40 chữ). \nLƯU Ý: BẮT BUỘC TRẢ VỀ ĐÚNG FORMAT SAU:\nTiêu đề: [Ghi tiêu đề vào đây] | Sapo: [Ghi Sapo vào đây]"
+        # Gọi AI với lệnh ép format cực gắt
+        prompt = f"Đóng vai chuyên gia SEO. Dựa vào các từ khóa: {focus_kw_str}. \nHãy viết 1 Tiêu đề giật tít (dưới 65 ký tự) và 1 Đoạn Sapo (dưới 40 chữ). \nTRẢ VỀ ĐÚNG FORMAT SAU:\nTiêu đề: [Ghi tiêu đề]\nSapo: [Ghi Sapo]"
         ai_result = call_gemini_ai(api_key, prompt)
         
-        title = ai_result.split('|')[0].replace("Tiêu đề:", "").strip() if "|" in ai_result else f"Bài SEO Auto {datetime.now().timestamp()}"
-        sapo = ai_result.split('|')[1].replace("Sapo:", "").strip() if "|" in ai_result else ai_result
+        # Dùng Regex móc tiêu đề (bất chấp AI xuống dòng hay có dấu sao **)
+        title_match = re.search(r'Tiêu đề:\s*(.*)', ai_result, re.IGNORECASE)
+        sapo_match = re.search(r'Sapo:\s*(.*)', ai_result, re.IGNORECASE)
         
-        thoi_gian_gen = datetime.now().strftime("%Y-%m-%d %H:%M")
+        title = title_match.group(1).replace('*', '').strip() if title_match else f"Bài SEO Auto {datetime.now().strftime('%H%M%S')}"
+        sapo = sapo_match.group(1).replace('*', '').strip() if sapo_match else ai_result
+        
         gio_dang_full = (today_obj + timedelta(hours=(so_bai_hom_nay + bai_so) * 2)).strftime("%Y-%m-%d %H:%M")
         
-        # ----------------------------------------------------
-        # [LOẠI 1] BẮN NOTI KHI VỪA GEN XONG BÀI TỪ AI
-        # ----------------------------------------------------
-        msg_gen = (
-            f"🛠 <b>[NOTI: ĐÃ GEN BÀI] {bai_so}/{so_luong_can_tao}</b>\n"
-            f"🌐 Website: laiho.vn\n"
-            f"⏱ Thời gian gen bài: {thoi_gian_gen}\n"
-            f"🔑 Từ khoá: {kw_tele_string}\n"
-            f"📝 Tiêu đề bài viết: {title}\n"
-            f"📌 Trạng thái: Đã gen xong AI"
-        )
-        send_telegram(tele_token, tele_chat_id, msg_gen)
-        
-        log_text += f"    . Tiêu đề          : {title}\n"
-        log_text += f"    . Trạng thái       : Đã gen xong, chuẩn bị đẩy bài...\n"
+        # In log ra màn hình y hệt form Ní vẽ
+        log_text += f"[+] ĐANG THỰC THI BÀI VIẾT SỐ {bai_so}/{so_luong_can_tao}...\n"
+        log_text += f"  .. tiêu đề: {title}\n"
+        log_text += f"  .. từ khoá gen bài: {kw_tele_string}\n"
+        log_text += f"  .. văn phong của: {doi_thu} |\n"
+        log_text += f"  .. từ khoá đối thủ theo bài: {comp_kws_str}\n"
+        log_text += f"  .. loại văn viết: {muc_tieu}\n"
+        log_text += f"  .. achor text: {kw_tele_string}\n"
+        log_text += f"  .. web gắn backlink: {target_web} |\n"
+        log_text += f"  .. Trạng thái: Thành công\n"
+        log_text += f"  .. Đăng bài: {gio_dang_full}\n"
+        log_text += "------------------------------------------------------\n"
         terminal_box.code(log_text, language="bash")
-        time.sleep(1.5) # Giả lập tiến trình đăng web mất 1.5s
         
-        # ----------------------------------------------------
-        # [LOẠI 2] BẮN NOTI KHI ĐĂNG (HOẶC LÊN LỊCH) THÀNH CÔNG
-        # ----------------------------------------------------
+        # Bắn Telegram khi đăng thành công (Form rút gọn)
         msg_post = (
             f"🚀 <b>[NOTI: ĐĂNG BÀI THÀNH CÔNG] {bai_so}/{so_luong_can_tao}</b>\n"
-            f"🌐 Website: laiho.vn\n"
-            f"⏱ Thời gian đăng bài: {gio_dang_full}\n"
+            f"🌐 Website: {target_web}\n"
+            f"⏱ Thời gian: {gio_dang_full}\n"
             f"🔑 Từ khoá: {kw_tele_string}\n"
-            f"📝 Tiêu đề bài viết: {title}\n"
-            f"✅ Trạng thái: Đã lên lịch Website"
+            f"📝 Tiêu đề: {title}\n"
+            f"✅ Trạng thái: Thành công"
         )
         send_telegram(tele_token, tele_chat_id, msg_post)
 
-        log_text += f"    => [OK] Lưu thành công Bài {bai_so} vào DataBase.\n"
-        terminal_box.code(log_text, language="bash")
+        # Chèn vào data (Xử lý cột từ khóa linh động)
+        kw1 = chosen_kws[0] if len(chosen_kws) > 0 else ""
+        kw2 = chosen_kws[1] if len(chosen_kws) > 1 else ""
+        kw3 = chosen_kws[2] if len(chosen_kws) > 2 else ""
+        kw4 = chosen_kws[3] if len(chosen_kws) > 3 else ""
         
-        new_reports.append(["laiho.vn", "WordPress", "laiho.vn/post", today_str, kw1, kw2, "", "", "", "#", title, sapo, gio_dang_full, "✅ Đã lên lịch Web"])
+        new_reports.append(["laiho.vn", "WordPress", "laiho.vn/post", today_obj.strftime("%d/%m/%Y"), kw1, kw2, kw3, kw4, "", "#", title, sapo, gio_dang_full, "✅ Thành công"])
+        time.sleep(1)
 
     df_new = pd.DataFrame(new_reports, columns=TABS_CONFIG["Report"])
     st.session_state['db']['Report'] = pd.concat([st.session_state['db']['Report'], df_new], ignore_index=True)
     
-    log_text += "\n======================================================\n"
     log_text += f"🚀 TIẾN TRÌNH HOÀN TẤT! XUẤT THÀNH CÔNG {so_bai_con_lai} BÀI."
     terminal_box.code(log_text, language="bash")
         
