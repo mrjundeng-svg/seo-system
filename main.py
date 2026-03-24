@@ -29,14 +29,21 @@ if 'db' not in st.session_state:
         ["Danh sách Keyword bài viết", "thuê tài xế lái hộ, đưa người say về nhà, dịch vụ lái xe an toàn, gọi tài xế nhậu say, tìm người lái xe hộ, xe ôm công nghệ ban đêm"],
         ["TARGET_URL", "laiho.vn"],
         ["Website đối thủ", "lmd.vn, butl.vn"],
-        ["Mục tiêu bài viết", "Bài viết dạng tư vấn, cung cấp giải pháp an toàn"],
+        ["Mục tiêu bài viết", "Bài viết dạng tư vấn và giới thiệu. không có mang tính chất bán hàng hay quảng bá website. Người đọc là khách hàng cần tìm dịch vụ và mong muốn được tìm hiểu trước khi mua"],
         ["Số lượng bài cần tạo", "2"], 
         ["Thiết lập số lượng chữ", "900 - 1200"],
-        ["Số lượng backlink/bài", "3 - 4"], # SẼ ĐỌC TỪ ĐÂY ĐỂ BỐC TỪ KHÓA
+        ["Số lượng backlink/bài", "3 - 4"], 
         ["FOLDER_DRIVE_ID", "1STdk4mpDP2KOdyyJKf6rdHnnYdr8TLN4"],
         ["TELEGRAM_BOT_TOKEN", "Dán_Token_Vào_Đây"],
         ["TELEGRAM_CHAT_ID", "Dán_ID_Vào_Đây"]
     ], columns=["Hạng mục", "Giá trị thực tế"])
+    
+    st.session_state['db']['Backlink'] = pd.DataFrame([
+        ["thuê tài xế", "laiho.vn/thue-tai-xe", "0"],
+        ["đưa người say về nhà", "laiho.vn/dua-nguoi-say", "0"],
+        ["đã uống bia rượu không tự lái xe", "laiho.vn/an-toan", "0"],
+        ["dịch vụ lái xe hộ", "laiho.vn/dich-vu", "0"]
+    ], columns=TABS_CONFIG["Backlink"])
 
 def call_gemini_ai(api_key, prompt):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
@@ -51,12 +58,22 @@ def call_gemini_ai(api_key, prompt):
     except Exception as e:
         return f"Lỗi kết nối: {str(e)}"
 
+# ==========================================
+# CẬP NHẬT HÀM TELEGRAM: TẮT HIỂN THỊ ẢNH LINK
+# ==========================================
 def send_telegram(bot_token, chat_id, message):
     bot_token = str(bot_token).strip()
     chat_id = str(chat_id).strip()
     if not bot_token or not chat_id or "Dán_" in bot_token: return
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+    
+    # Thêm disable_web_page_preview: True để cấm Telegram tự load ảnh web
+    payload = {
+        "chat_id": chat_id, 
+        "text": message, 
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True 
+    }
     try: requests.post(url, json=payload, timeout=5)
     except: pass
 
@@ -75,10 +92,12 @@ def hacker_terminal():
     tele_token = get_val('TELEGRAM_BOT_TOKEN')
     tele_chat_id = get_val('TELEGRAM_CHAT_ID')
     
+    muc_tieu_words = muc_tieu.split()
+    muc_tieu_short = " ".join(muc_tieu_words[:10]) + ("..." if len(muc_tieu_words) > 10 else "")
+    
     try: so_luong_can_tao = int(get_val('Số lượng bài cần tạo'))
     except: so_luong_can_tao = 0
     
-    # Phân tích số lượng từ khóa cần bốc (VD: 3 - 4)
     try:
         sl_bl = get_val('Số lượng backlink/bài').split('-')
         min_kw = int(sl_bl[0].strip())
@@ -87,7 +106,7 @@ def hacker_terminal():
         min_kw, max_kw = 3, 4
         
     today_obj = datetime.now()
-    today_str = today_obj.strftime("%Y-%m-%d") # Chuẩn format cho form mới
+    today_str = today_obj.strftime("%Y-%m-%d") 
     df_report = st.session_state['db']['Report']
     so_bai_hom_nay = len(df_report[df_report['Ngày đăng bài'] == today_obj.strftime("%d/%m/%Y")])
     
@@ -106,16 +125,14 @@ def hacker_terminal():
     time.sleep(0.5)
     
     kw_list = [k.strip() for k in keywords.split(',') if k.strip()]
-    
-    # Từ khóa đối thủ giả lập để report (có thể móc từ API khác sau)
-    competitor_kws = ["giá rẻ", "uy tín", "ban đêm", "an toàn", "nhanh chóng", "chuyên nghiệp"]
+    competitor_kws = ["giá rẻ", "uy tín", "ban đêm", "an toàn", "nhanh chóng", "chuyên nghiệp", "gọi là có"]
+    df_backlink = st.session_state['db']['Backlink']
     
     new_reports = []
     
     for i in range(so_bai_con_lai):
         bai_so = i + 1
         
-        # Bốc số lượng từ khóa theo cấu hình Dashboard (VD: random từ 3 đến 4 từ)
         so_luong_boc = random.randint(min_kw, max_kw)
         if len(kw_list) >= so_luong_boc:
             chosen_kws = random.sample(kw_list, so_luong_boc)
@@ -124,15 +141,18 @@ def hacker_terminal():
             
         kw_tele_string = " | ".join(chosen_kws) + " |"
         focus_kw_str = ", ".join(chosen_kws)
+        comp_kws_str = " | ".join(random.sample(competitor_kws, 4)) + " |"
         
-        # Bốc từ khóa đối thủ random
-        comp_kws_str = " | ".join(random.sample(competitor_kws, 3)) + " |"
+        if not df_backlink.empty:
+            sl_anchor = min(random.randint(2, 3), len(df_backlink))
+            anchor_list = df_backlink.sample(n=sl_anchor)['Từ khoá'].tolist()
+            anchor_text_str = " | ".join(anchor_list) + " |"
+        else:
+            anchor_text_str = "Chưa có data backlink |"
         
-        # Gọi AI với lệnh ép format cực gắt
-        prompt = f"Đóng vai chuyên gia SEO. Dựa vào các từ khóa: {focus_kw_str}. \nHãy viết 1 Tiêu đề giật tít (dưới 65 ký tự) và 1 Đoạn Sapo (dưới 40 chữ). \nTRẢ VỀ ĐÚNG FORMAT SAU:\nTiêu đề: [Ghi tiêu đề]\nSapo: [Ghi Sapo]"
+        prompt = f"Đóng vai chuyên gia SEO. Dựa vào các từ khóa: {focus_kw_str}. \nMục tiêu: {muc_tieu}\nHãy viết 1 Tiêu đề giật tít (dưới 65 ký tự) và 1 Đoạn Sapo (dưới 40 chữ). \nTRẢ VỀ ĐÚNG FORMAT SAU:\nTiêu đề: [Ghi tiêu đề]\nSapo: [Ghi Sapo]"
         ai_result = call_gemini_ai(api_key, prompt)
         
-        # Dùng Regex móc tiêu đề (bất chấp AI xuống dòng hay có dấu sao **)
         title_match = re.search(r'Tiêu đề:\s*(.*)', ai_result, re.IGNORECASE)
         sapo_match = re.search(r'Sapo:\s*(.*)', ai_result, re.IGNORECASE)
         
@@ -141,21 +161,19 @@ def hacker_terminal():
         
         gio_dang_full = (today_obj + timedelta(hours=(so_bai_hom_nay + bai_so) * 2)).strftime("%Y-%m-%d %H:%M")
         
-        # In log ra màn hình y hệt form Ní vẽ
         log_text += f"[+] ĐANG THỰC THI BÀI VIẾT SỐ {bai_so}/{so_luong_can_tao}...\n"
         log_text += f"  .. tiêu đề: {title}\n"
         log_text += f"  .. từ khoá gen bài: {kw_tele_string}\n"
         log_text += f"  .. văn phong của: {doi_thu} |\n"
         log_text += f"  .. từ khoá đối thủ theo bài: {comp_kws_str}\n"
-        log_text += f"  .. loại văn viết: {muc_tieu}\n"
-        log_text += f"  .. achor text: {kw_tele_string}\n"
+        log_text += f"  .. loại văn viết: {muc_tieu_short}\n"
+        log_text += f"  .. achor text: {anchor_text_str}\n"
         log_text += f"  .. web gắn backlink: {target_web} |\n"
         log_text += f"  .. Trạng thái: Thành công\n"
         log_text += f"  .. Đăng bài: {gio_dang_full}\n"
         log_text += "------------------------------------------------------\n"
         terminal_box.code(log_text, language="bash")
         
-        # Bắn Telegram khi đăng thành công (Form rút gọn)
         msg_post = (
             f"🚀 <b>[NOTI: ĐĂNG BÀI THÀNH CÔNG] {bai_so}/{so_luong_can_tao}</b>\n"
             f"🌐 Website: {target_web}\n"
@@ -166,7 +184,6 @@ def hacker_terminal():
         )
         send_telegram(tele_token, tele_chat_id, msg_post)
 
-        # Chèn vào data (Xử lý cột từ khóa linh động)
         kw1 = chosen_kws[0] if len(chosen_kws) > 0 else ""
         kw2 = chosen_kws[1] if len(chosen_kws) > 1 else ""
         kw3 = chosen_kws[2] if len(chosen_kws) > 2 else ""
