@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import requests, random, time, re, json
+import requests, random, time, re
 from datetime import datetime
 
 # --- KẾT NỐI HỆ THỐNG ---
@@ -25,53 +25,34 @@ def load_data():
 
 # --- YOAST SEO AUDIT ---
 def yoast_seo_audit(content, keyword, title):
-    score = 0
-    kw = keyword.lower().strip()
-    c_low = content.lower()
-    t_low = title.lower()
-    words = content.split()
-    
+    score, kw = 0, keyword.lower().strip()
+    c_low, t_low, words = content.lower(), title.lower(), content.split()
     if kw in t_low: score += 20
     if kw in c_low[:300]: score += 20
     if len(words) >= 600: score += 20
-    density = (c_low.count(kw) / len(words)) * 100 if len(words) > 0 else 0
-    if 0.5 <= density <= 2.5: score += 20
+    dens = (c_low.count(kw) / len(words)) * 100 if words else 0
+    if 0.5 <= dens <= 2.5: score += 20
     if "##" in content or "<h3>" in c_low: score += 20
-    return score, round(density, 2)
+    return score, round(dens, 2)
 
-# --- AI CALLER VỚI CHI TIẾT LỖI ---
-def call_ai_with_debug(key, model, prompt):
+# --- AI CALLER (TRỊ LỖI 404 & CHI TIẾT LỖI) ---
+def call_ai_clean(key, model, prompt):
+    model = model.strip() # Xóa sạch khoảng trắng dư thừa gây lỗi 404
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
     try:
         res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=60)
-        status_code = res.status_code
-        res_json = res.json()
-        
-        if status_code == 200:
-            return res_json['candidates'][0]['content']['parts'][0]['text'].strip(), "OK"
+        res_j = res.json()
+        if res.status_code == 200:
+            return res_j['candidates'][0]['content']['parts'][0]['text'].strip(), "OK"
         else:
-            # Phân tích lý do lỗi từ Google
-            error_msg = res_json.get('error', {}).get('message', 'Không rõ nguyên nhân')
-            if status_code == 429: reason = f"Lỗi 429: Hết hạn mức (Quota Exceeded)"
-            elif status_code == 400: reason = f"Lỗi 400: API Key sai hoặc Model không hỗ trợ"
-            else: reason = f"Lỗi {status_code}: {error_msg}"
+            msg = res_j.get('error', {}).get('message', 'Lỗi không xác định')
+            if res.status_code == 404: reason = f"Lỗi 404: Tên Model '{model}' không đúng hoặc API chưa cấp quyền."
+            elif res.status_code == 429: reason = "Lỗi 429: Hết hạn mức API (Quota Exceeded)."
+            else: reason = f"Lỗi {res.status_code}: {msg}"
             return None, reason
-    except Exception as e:
-        return None, f"Lỗi kết nối: {str(e)}"
+    except Exception as e: return None, f"Lỗi kết nối: {str(e)}"
 
-def send_telegram(token, chat_id, msg):
-    if not token or not chat_id: return
-    try: requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"})
-    except: pass
-
-def update_report(row):
-    try:
-        sh = gspread.authorize(get_creds()).open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip())
-        sh.worksheet("Report").append_row(row)
-        return True
-    except: return False
-
-# --- ENGINE LOGGING TỪNG DÒNG ---
+# --- ENGINE TERMINAL (DÒNG NÀO RA DÒNG ĐÓ) ---
 @st.dialog("🖥️ SYSTEM TERMINAL (DEEP DEBUG)", width="large")
 def run_robot(data):
     df_d = data['Dashboard']
@@ -80,87 +61,64 @@ def run_robot(data):
         return str(res.values[0]).strip() if not res.empty else ""
 
     active_sites = data['Website'][data['Website']['Trạng thái'] == 'Active']
-    log_area = st.empty() 
-    log_lines = [f"<b>[{datetime.now().strftime('%H:%M:%S')}] root@seo-system:~# Bắt đầu vận hành...</b>"]
     
-    def print_log(msg):
-        log_lines.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
-        log_area.markdown(f"<pre style='white-space: pre-wrap; word-wrap: break-word;'>{chr(10).join(log_lines)}</pre>", unsafe_allow_html=True)
+    # Khu vực Log sạch sẽ
+    full_log = f"[{datetime.now().strftime('%H:%M:%S')}] root@seo:~# Khởi động Robot...\n"
+    terminal = st.empty()
+    terminal.code(full_log)
+
+    def write_log(msg):
+        nonlocal full_log
+        full_log += f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n"
+        terminal.code(full_log) # In đè Log cũ để tạo hiệu ứng cuộn xuống dòng
 
     num_to_gen = int(v('Số lượng bài cần tạo') or 1)
-    
     for i in range(num_to_gen):
-        print_log(f"━━━━━━━━━━━━━━━━━━ [BÀI {i+1}/{num_to_gen}] ━━━━━━━━━━━━━━━━━━")
-        
-        # 1. Khởi tạo dữ liệu
+        write_log(f"━━━━━━━━━━ BÀI {i+1}/{num_to_gen} ━━━━━━━━━━")
         site = active_sites.sample(n=1).iloc[0]
-        model = random.choice([m.strip() for m in v('MODEL_VERSION').split(',') if m.strip()])
-        kws = v('Danh sách Keyword bài viết')
-        main_kw = kws.split('|')[0].strip()
-        
-        print_log(f"🛰 Vệ tinh: <b>{site['Tên web']}</b>")
-        print_log(f"🔑 Keyword: {main_kw}")
+        model_v = [m.strip() for m in v('MODEL_VERSION').split(',') if m.strip()]
+        chosen_model = random.choice(model_v)
+        main_kw = v('Danh sách Keyword bài viết').split('|')[0].strip()
 
-        # 2. Xử lý Local
-        loc_str = ""
-        if random.random() < float(v('LOCAL_RATIO') or 0.2) and not data['Local'].empty:
-            l = data['Local'].sample(n=1).iloc[0]
-            loc_str = f"📍 {l['Cung đường']}, {l['Quận']}, {l['Tỉnh thành']}."
-            print_log(f"📍 Chế độ Local: {l['Cung đường']}")
-        else:
-            print_log(f"🌐 Chế độ: Global SEO")
+        write_log(f"🛰 Vệ tinh: {site['Tên web']}")
+        write_log(f"🧠 AI: Đang dùng {chosen_model}")
 
-        # 3. Gọi AI Gen Content
-        print_log(f"🧠 AI ({model}): Đang tạo nội dung...")
-        content, err = call_ai_with_debug(v('GEMINI_API_KEY'), model, f"{v('PROMPT_TEMPLATE')}\nKWS: {kws}\n{loc_str}")
+        # AI Gen
+        write_log(".. Đang tạo nội dung...")
+        content, err = call_ai_clean(v('GEMINI_API_KEY'), chosen_model, f"{v('PROMPT_TEMPLATE')}\nKeywords: {v('Danh sách Keyword bài viết')}")
         
         if not content:
-            print_log(f"❌ <b>STUCK! LÝ DO: {err}</b>")
-            continue # Nhảy sang bài tiếp theo nếu lỗi
+            write_log(f"❌ STUCK! LÝ DO: {err}")
+            continue
 
-        # 4. Spin Humanize
+        # Spin & SEO
         if v('SPIN_MODE') == "ON":
-            print_log(f"🔄 Spin: Đang humanize để lách AI Detection...")
-            content, err = call_ai_with_debug(v('GEMINI_API_KEY'), "gemini-1.5-flash", f"{v('AI_HUMANIZER_PROMPT')}\nRules: {data['Spin'].to_string()}\nContent: {content}")
-            if not content:
-                print_log(f"  ❌ Spin thất bại: {err}")
-                continue
+            write_log("🔄 Spin: Đang lách AI Detection...")
+            content, _ = call_ai_clean(v('GEMINI_API_KEY'), "gemini-1.5-flash", f"{v('AI_HUMANIZER_PROMPT')}\nRules: {data['Spin'].to_string()}\nContent: {content}")
 
-        # 5. Chấm điểm Yoast SEO
         title = content.split('\n')[0].replace('#', '').strip()
         score, dens = yoast_seo_audit(content, main_kw, title)
-        print_log(f"📊 Yoast SEO Audit: <b>{score}/100</b> | Mật độ: {dens}%")
-
-        # 6. Ghi Report
-        print_log(f"📝 Report: Đang lưu dữ liệu vào Google Sheet...")
-        now_date = datetime.now().strftime("%Y-%m-%d")
-        now_time = datetime.now().strftime("%H:%M")
+        write_log(f"📊 SEO Audit: {score}/100 | Mật độ: {dens}%")
         
-        report_row = [
-            site['URL / ID'], site['Nền tảng'], f"{site['URL / ID']}/post-{random.randint(1000,9999)}", 
-            now_date, kws, loc_str, "✅ Pass", f"{dens}%", f"{score}/100",
-            site.get('các website đích',''), title, "Sapo optimized", now_time, "Thành công", "Active"
-        ]
+        # Ghi Sheet
+        write_log("📝 Sheet: Đang ghi vào Tab Report...")
+        sh_ok = gspread.authorize(get_creds()).open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip()).worksheet("Report").append_row([
+            site['URL / ID'], site['Nền tảng'], "Link", datetime.now().strftime("%Y-%m-%d"), v('Danh sách Keyword bài viết'), "", "✅", f"{dens}%", f"{score}/100", site.get('các website đích',''), title, "Sapo", datetime.now().strftime("%H:%M"), "Thành công", "Active"
+        ])
         
-        if update_report(report_row):
-            print_log(f"  ✅ Ghi Sheet thành công.")
-        else:
-            print_log(f"  ❌ Lỗi: Không thể ghi Sheet (Kiểm tra quyền Editor hoặc mạng).")
-
-        # 7. Bắn Telegram
-        print_log(f"📲 Telegram: Đang gửi thông báo về máy...")
-        tele_msg = (f"🚀 <b>SEO REPORT</b>\n🛰 Vệ tinh: {site['Tên web']}\n🎯 Bắn về: {site.get('các website đích', 'N/A')}\n"
-                    f"⏱ Thời gian: {now_date} {now_time}\n🔑 Từ khoá: {main_kw}\n📈 SEO: {score}/100\n✅ Trạng thái: Thành công")
-        send_telegram(v('TELEGRAM_BOT_TOKEN'), v('TELEGRAM_CHAT_ID'), tele_msg)
-        
-        print_log(f"✨ <b>HOÀN TẤT BÀI {i+1}!</b>")
+        if sh_ok: write_log("✅ Đã lưu bài thành công!")
+        write_log(f"✨ HOÀN TẤT BÀI {i+1}!")
         time.sleep(1)
 
-    st.success("🎉 TẤT CẢ TIẾN TRÌNH KẾT THÚC!")
-    if st.button("KẾT THÚC & ĐÓNG"): st.rerun()
+    st.success("🎉 TIẾN TRÌNH KẾT THÚC!")
 
-# --- UI ---
-st.markdown("<h1 style='color:#ffd700;'>🚕 LÁI HỘ MASTER v16.5</h1>", unsafe_allow_html=True)
+# --- UI INTERFACE ---
+st.markdown("<h1 style='color:#ffd700;'>🚕 LÁI HỘ MASTER v17.0</h1>", unsafe_allow_html=True)
+
+# Khởi tạo bộ đếm thời gian để Anti-Spam
+if 'last_action_time' not in st.session_state:
+    st.session_state.last_action_time = 0
+
 data, msg = load_data()
 
 if data:
@@ -169,8 +127,25 @@ if data:
         with tabs[i]:
             if name == "Dashboard":
                 c1, c2, _ = st.columns([1, 1, 4])
-                if c1.button("🚀 RUN", type="primary", use_container_width=True): run_robot(data)
-                if c2.button("🔄 Reload DB", use_container_width=True): st.cache_data.clear(); st.rerun()
+                
+                # Logic Nút RUN với Delay 5s
+                if c1.button("🚀 RUN", type="primary", use_container_width=True):
+                    curr = time.time()
+                    if curr - st.session_state.last_action_time < 5:
+                        st.warning(f"⏳ Chậm lại ní ơi! Đợi {int(5 - (curr - st.session_state.last_action_time))}s nữa nhé.")
+                    else:
+                        st.session_state.last_action_time = curr
+                        run_robot(data)
+
+                # Logic Nút Reload với Delay 5s
+                if c2.button("🔄 Reload DB", use_container_width=True):
+                    curr = time.time()
+                    if curr - st.session_state.last_action_time < 5:
+                        st.toast(f"⚠️ Reload quá nhanh! Đợi {int(5 - (curr - st.session_state.last_action_time))}s.")
+                    else:
+                        st.session_state.last_action_time = curr
+                        st.cache_data.clear()
+                        st.rerun()
                 
                 disp_df = data[name].copy()
                 sensitive = ['KEY', 'API', 'MAIL', 'TOKEN', 'PASSWORD', 'SECRET', 'CHAT_ID']
