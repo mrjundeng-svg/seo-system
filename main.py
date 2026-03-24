@@ -5,7 +5,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import requests, random, time, re
 from datetime import datetime
 
-# --- KẾT NỐI HỆ THỐNG ---
+# --- CONFIG & CONNECTION ---
 st.set_page_config(page_title="LÁI HỘ MASTER", layout="wide", page_icon="🚕")
 
 def get_creds():
@@ -25,7 +25,7 @@ def load_data():
 
 # --- YOAST SEO AUDIT ---
 def yoast_seo_audit(content, keyword, title):
-    score, kw = 0, keyword.lower().strip()
+    score, kw = 0, str(keyword).lower().strip()
     c_low, t_low, words = content.lower(), title.lower(), content.split()
     if kw in t_low: score += 20
     if kw in c_low[:300]: score += 20
@@ -35,24 +35,34 @@ def yoast_seo_audit(content, keyword, title):
     if "##" in content or "<h3>" in c_low: score += 20
     return score, round(dens, 2)
 
-# --- AI CALLER (TRỊ LỖI 404 & CHI TIẾT LỖI) ---
-def call_ai_clean(key, model, prompt):
-    model = model.strip() # Xóa sạch khoảng trắng dư thừa gây lỗi 404
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
-    try:
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=60)
-        res_j = res.json()
-        if res.status_code == 200:
-            return res_j['candidates'][0]['content']['parts'][0]['text'].strip(), "OK"
-        else:
-            msg = res_j.get('error', {}).get('message', 'Lỗi không xác định')
-            if res.status_code == 404: reason = f"Lỗi 404: Tên Model '{model}' không đúng hoặc API chưa cấp quyền."
-            elif res.status_code == 429: reason = "Lỗi 429: Hết hạn mức API (Quota Exceeded)."
-            else: reason = f"Lỗi {res.status_code}: {msg}"
-            return None, reason
-    except Exception as e: return None, f"Lỗi kết nối: {str(e)}"
+# --- AI CALLER (ANTI-404 ENGINE) ---
+def call_ai_robust(key, model_name, prompt):
+    # Tự động thử các biến thể tên model để tránh lỗi 404
+    name = model_name.strip()
+    # Nếu sếp gõ gemini-1.5-flash, tui sẽ thử cả bản -latest nếu lỗi
+    candidates = [name, f"{name}-latest", f"models/{name}"]
+    
+    last_err = ""
+    for cand in candidates:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{cand}:generateContent?key={key}"
+        try:
+            res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=60)
+            res_j = res.json()
+            if res.status_code == 200:
+                return res_j['candidates'][0]['content']['parts'][0]['text'].strip(), "OK"
+            last_err = res_j.get('error', {}).get('message', 'Lỗi 404')
+        except Exception as e: last_err = str(e)
+    
+    return None, f"Lỗi: {last_err} (Đã thử {len(candidates)} tên model)"
 
-# --- ENGINE TERMINAL (DÒNG NÀO RA DÒNG ĐÓ) ---
+def update_report(row):
+    try:
+        sh = gspread.authorize(get_creds()).open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip())
+        sh.worksheet("Report").append_row(row)
+        return True
+    except: return False
+
+# --- ENGINE TERMINAL (LINE-BY-LINE) ---
 @st.dialog("🖥️ SYSTEM TERMINAL (DEEP DEBUG)", width="large")
 def run_robot(data):
     df_d = data['Dashboard']
@@ -62,65 +72,64 @@ def run_robot(data):
 
     active_sites = data['Website'][data['Website']['Trạng thái'] == 'Active']
     
-    # Khu vực Log sạch sẽ
-    full_log = f"[{datetime.now().strftime('%H:%M:%S')}] root@seo:~# Khởi động Robot...\n"
-    terminal = st.empty()
-    terminal.code(full_log)
-
-    def write_log(msg):
-        nonlocal full_log
-        full_log += f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n"
-        terminal.code(full_log) # In đè Log cũ để tạo hiệu ứng cuộn xuống dòng
+    # --- LOGGING SETUP ---
+    log_placeholder = st.empty()
+    log_list = [f"[{datetime.now().strftime('%H:%M:%S')}] root@seo:~# Khởi động hệ thống..."]
+    
+    def add_log(msg):
+        log_list.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+        log_placeholder.code("\n".join(log_list)) # Nhả log xuống dòng tăm tắp
 
     num_to_gen = int(v('Số lượng bài cần tạo') or 1)
     for i in range(num_to_gen):
-        write_log(f"━━━━━━━━━━ BÀI {i+1}/{num_to_gen} ━━━━━━━━━━")
+        add_log(f"━━━━━ BÀI {i+1}/{num_to_gen} ━━━━━")
         site = active_sites.sample(n=1).iloc[0]
-        model_v = [m.strip() for m in v('MODEL_VERSION').split(',') if m.strip()]
-        chosen_model = random.choice(model_v)
+        model_list = [m.strip() for m in v('MODEL_VERSION').split(',') if m.strip()]
+        chosen_model = random.choice(model_list)
         main_kw = v('Danh sách Keyword bài viết').split('|')[0].strip()
 
-        write_log(f"🛰 Vệ tinh: {site['Tên web']}")
-        write_log(f"🧠 AI: Đang dùng {chosen_model}")
+        add_log(f"🛰 Vệ tinh: {site['Tên web']}")
+        add_log(f"🧠 AI: Đang dùng {chosen_model}...")
 
         # AI Gen
-        write_log(".. Đang tạo nội dung...")
-        content, err = call_ai_clean(v('GEMINI_API_KEY'), chosen_model, f"{v('PROMPT_TEMPLATE')}\nKeywords: {v('Danh sách Keyword bài viết')}")
+        content, err = call_ai_robust(v('GEMINI_API_KEY'), chosen_model, f"{v('PROMPT_TEMPLATE')}\nKeywords: {v('Danh sách Keyword bài viết')}")
         
         if not content:
-            write_log(f"❌ STUCK! LÝ DO: {err}")
+            add_log(f"❌ LỖI RỒI! LÝ DO: {err}")
+            add_log("👉 Cách sửa: Kiểm tra API Key hoặc gõ đúng 'gemini-1.5-flash' vào Sheet.")
             continue
 
         # Spin & SEO
-        if v('SPIN_MODE') == "ON":
-            write_log("🔄 Spin: Đang lách AI Detection...")
-            content, _ = call_ai_clean(v('GEMINI_API_KEY'), "gemini-1.5-flash", f"{v('AI_HUMANIZER_PROMPT')}\nRules: {data['Spin'].to_string()}\nContent: {content}")
+        add_log("🔄 Spin: Đang humanize...")
+        # (Gọi Spin bằng flash cho nhanh)
+        content_spin, _ = call_ai_robust(v('GEMINI_API_KEY'), "gemini-1.5-flash", f"{v('AI_HUMANIZER_PROMPT')}\nRules: {data['Spin'].to_string()}\nContent: {content}")
+        content = content_spin if content_spin else content
 
         title = content.split('\n')[0].replace('#', '').strip()
         score, dens = yoast_seo_audit(content, main_kw, title)
-        write_log(f"📊 SEO Audit: {score}/100 | Mật độ: {dens}%")
+        add_log(f"📊 SEO: {score}/100 | Mật độ: {dens}%")
         
         # Ghi Sheet
-        write_log("📝 Sheet: Đang ghi vào Tab Report...")
-        sh_ok = gspread.authorize(get_creds()).open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip()).worksheet("Report").append_row([
-            site['URL / ID'], site['Nền tảng'], "Link", datetime.now().strftime("%Y-%m-%d"), v('Danh sách Keyword bài viết'), "", "✅", f"{dens}%", f"{score}/100", site.get('các website đích',''), title, "Sapo", datetime.now().strftime("%H:%M"), "Thành công", "Active"
+        add_log("📝 Sheet: Đang ghi báo cáo...")
+        sh_res = update_report([
+            site['URL / ID'], site['Nền tảng'], "Link", datetime.now().strftime("%Y-%m-%d"), 
+            v('Danh sách Keyword bài viết'), "", "✅", f"{dens}%", f"{score}/100", 
+            site.get('các website đích',''), title, "Sapo", datetime.now().strftime("%H:%M"), "Thành công", "Active"
         ])
         
-        if sh_ok: write_log("✅ Đã lưu bài thành công!")
-        write_log(f"✨ HOÀN TẤT BÀI {i+1}!")
+        if sh_res: add_log("✅ Đã lưu vào Tab Report thành công!")
+        add_log(f"✨ HOÀN TẤT BÀI {i+1}!")
         time.sleep(1)
 
     st.success("🎉 TIẾN TRÌNH KẾT THÚC!")
+    if st.button("❌ ĐÓNG VÀ QUAY LẠI", use_container_width=True): st.rerun()
 
-# --- UI INTERFACE ---
-st.markdown("<h1 style='color:#ffd700;'>🚕 LÁI HỘ MASTER v17.0</h1>", unsafe_allow_html=True)
+# --- UI ---
+st.markdown("<h1 style='color:#ffd700;'>🚕 LÁI HỘ MASTER v17.2</h1>", unsafe_allow_html=True)
 
-# Khởi tạo bộ đếm thời gian để Anti-Spam
-if 'last_action_time' not in st.session_state:
-    st.session_state.last_action_time = 0
+if 'last_action' not in st.session_state: st.session_state.last_action = 0
 
 data, msg = load_data()
-
 if data:
     tabs = st.tabs(list(data.keys()))
     for i, name in enumerate(data.keys()):
@@ -128,33 +137,31 @@ if data:
             if name == "Dashboard":
                 c1, c2, _ = st.columns([1, 1, 4])
                 
-                # Logic Nút RUN với Delay 5s
+                # Nút RUN 5s delay
                 if c1.button("🚀 RUN", type="primary", use_container_width=True):
-                    curr = time.time()
-                    if curr - st.session_state.last_action_time < 5:
-                        st.warning(f"⏳ Chậm lại ní ơi! Đợi {int(5 - (curr - st.session_state.last_action_time))}s nữa nhé.")
+                    if time.time() - st.session_state.last_action < 5:
+                        st.warning("⏳ Chậm lại ní! 5s bấm 1 lần thôi.")
                     else:
-                        st.session_state.last_action_time = curr
+                        st.session_state.last_action = time.time()
                         run_robot(data)
 
-                # Logic Nút Reload với Delay 5s
+                # Nút Reload 5s delay
                 if c2.button("🔄 Reload DB", use_container_width=True):
-                    curr = time.time()
-                    if curr - st.session_state.last_action_time < 5:
-                        st.toast(f"⚠️ Reload quá nhanh! Đợi {int(5 - (curr - st.session_state.last_action_time))}s.")
+                    if time.time() - st.session_state.last_action < 5:
+                        st.toast("⚠️ Đợi 5s hãy Reload tiếp!")
                     else:
-                        st.session_state.last_action_time = curr
-                        st.cache_data.clear()
-                        st.rerun()
+                        st.session_state.last_action = time.time()
+                        st.cache_data.clear(); st.rerun()
                 
-                disp_df = data[name].copy()
+                # Masking sensitive data
+                disp = data[name].copy()
                 sensitive = ['KEY', 'API', 'MAIL', 'TOKEN', 'PASSWORD', 'SECRET', 'CHAT_ID']
                 def mask(row):
                     if any(w in str(row['Hạng mục']).upper() for w in sensitive):
-                        val = str(row['Input dữ liệu'])
-                        return val[:4] + "****" + val[-4:] if len(val) > 8 else "****"
+                        v_str = str(row['Input dữ liệu'])
+                        return v_str[:4] + "****" + v_str[-4:] if len(v_str) > 8 else "****"
                     return row['Input dữ liệu']
-                disp_df['Input dữ liệu'] = disp_df.apply(mask, axis=1)
-                st.dataframe(disp_df, use_container_width=True, height=400, hide_index=True)
+                disp['Input dữ liệu'] = disp.apply(mask, axis=1)
+                st.dataframe(disp, use_container_width=True, height=400, hide_index=True)
             else: st.dataframe(data[name], use_container_width=True, height=450, hide_index=True)
 else: st.error(f"Lỗi: {msg}")
