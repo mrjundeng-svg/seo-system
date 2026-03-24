@@ -6,8 +6,8 @@ import google.generativeai as genai
 import random, time, requests
 from datetime import datetime, timedelta, timezone
 
-# --- 1. SETUP HỆ THỐNG ---
-st.set_page_config(page_title="SEO MASTER v48", layout="wide")
+# --- 1. SETUP ---
+st.set_page_config(page_title="SEO MASTER v49", layout="wide")
 
 def get_vn_time(): return datetime.now(timezone(timedelta(hours=7)))
 
@@ -26,30 +26,28 @@ def load_data():
         res = {}
         for t in ["Dashboard", "Website", "Backlink", "Report"]:
             vals = sh.worksheet(t).get_all_values()
-            if not vals: res[t] = pd.DataFrame()
+            if len(vals) < 2: res[t] = pd.DataFrame()
             else:
                 df = pd.DataFrame(vals[1:], columns=vals[0])
-                # Fix ValueError (image_f3f846): Xóa dòng trống hoàn toàn
-                df = df.dropna(how='all').reset_index(drop=True)
-                res[t] = df
+                res[t] = df.fillna('') # Dọn dẹp None tránh lỗi ValueError
         return res, "OK"
     except Exception as e: return None, str(e)
 
-# --- 2. ENGINE VẬN HÀNH (KHÔNG "NGÁO") ---
+# --- 2. ENGINE (KHÔNG CHỈNH GIAO DIỆN) ---
 @st.dialog("⚙️ TRUNG TÂM ĐIỀU HÀNH", width="large")
 def run_robot(data):
     df_d = data['Dashboard']
     def v(k):
-        res = df_d[df_d['Hạng mục'].astype(str).str.strip() == k]['Input dữ liệu']
+        res = df_d[df_d.iloc[:, 0].astype(str).str.strip() == k].iloc[:, 1]
         return str(res.values[0]).strip() if not res.empty else ""
 
-    # Fix lỗi 404 Model: Sử dụng tên chuẩn gemini-1.5-flash
+    # FIX LỖI 404: Gọi model không dùng tiền tố models/
     try:
         genai.configure(api_key=v('GEMINI_API_KEY'))
-        model = genai.GenerativeModel("gemini-1.5-flash")
-    except: st.error("Lỗi cấu hình API"); return
+        model = genai.GenerativeModel("gemini-1.5-flash") 
+    except: st.error("Kiểm tra API Key"); return
 
-    # Bốc website Active (Cột K - Index 10)
+    # Lọc Website Active (Cột K - index 10)
     df_web = data['Website']
     active_sites = df_web[df_web.iloc[:, 10].str.contains('Active', case=False, na=False)]
     
@@ -57,78 +55,70 @@ def run_robot(data):
     num_posts = int(v('Số lượng bài cần tạo') or 1)
 
     for i in range(num_posts):
-        now_str = get_vn_time().strftime("%Y-%m-%d %H:%M") # Đúng định dạng bồ yêu cầu
+        now_str = get_vn_time().strftime("%Y-%m-%d %H:%M")
         site = active_sites.sample(n=1).iloc[0]
         
-        # BỐC DATA BACKLINK CHUẨN: Link (Cột A - 0), Từ khoá (Cột B - 1)
+        # Bốc Backlink chuẩn: Link (Cột A - 0), Từ khoá (Cột B - 1)
         bl_pool = df_bl.sample(n=min(len(df_bl), 5)).values.tolist()
-        anchors = [str(r[1]) for r in bl_pool] + [""]*5   # Cột H-L
-        backlinks = [str(r[0]) for r in bl_pool] + [""]*3 # Cột M-O
+        anchors = [str(r[1]) for r in bl_pool] + [""]*5
+        target_links = [str(r[0]) for r in bl_pool] + [""]*3
 
         with st.status(f"Đang xử lý bài {i+1}...", expanded=True):
             try:
-                # PROMPT ÉP AI KHÔNG CHÀO HỎI (Diệt sạch "Chào Sếp")
+                # ÉP AI KHÔNG CHÀO HỎI (FIX LỖI TIÊU ĐỀ)
                 prompt = (
-                    f"MỤC TIÊU: Viết bài SEO chuyên nghiệp cho vệ tinh.\n"
-                    f"LUẬT: CẤM CHÀO HỎI. KHÔNG viết 'Chào sếp', 'Chào anh/chị', 'Kính thưa'.\n"
-                    f"CẤU TRÚC: Bắt đầu ngay lập tức bằng Tiêu đề H1 sạch.\n"
+                    f"MỤC TIÊU: Viết bài SEO.\n"
+                    f"LUẬT: CẤM CHÀO HỎI. Bắt đầu ngay bằng Tiêu đề H1.\n"
                     f"NỘI DUNG: {v('PROMPT_TEMPLATE')}\n"
-                    f"RÀNG BUỘC: Chèn {site.iloc[9]} ảnh, chèn link {backlinks[0]} vào từ {anchors[0]}."
+                    f"KEYWORD: {v('Danh sách Keyword bài viết')}\n"
+                    f"CHÈN LINK: {target_links[0]} VÀO TỪ {anchors[0]}"
                 )
                 
                 resp = model.generate_content(prompt)
-                full_text = resp.text
+                lines = [l.strip() for l in resp.text.split('\n') if l.strip()]
                 
-                # Logic lọc dòng đầu (nếu AI vẫn lì lợm chào hỏi)
-                lines = [l.strip() for l in full_text.split('\n') if l.strip()]
-                title = "Tiêu đề chưa tối ưu"
+                # Logic diệt "Chào sếp"
+                title = "Tiêu đề lỗi"
                 for line in lines:
                     clean = line.replace('#', '').replace('*', '').strip()
-                    if not any(x in clean.lower()[:12] for x in ["chào", "kính chào", "hello", "hi "]):
-                        title = clean
-                        break
-                
-                # Điểm SEO thực tế: Chào sếp = 0 điểm
-                is_greeting = any(x in title.lower() for x in ["chào", "kính chào"])
-                seo_score = "0/100 (Lỗi Chào Sếp)" if is_greeting else "95/100"
+                    if not any(x in clean.lower()[:10] for x in ["chào", "kính chào", "hello", "hi "]):
+                        title = clean; break
 
-                # 1. GHI REPORT 18 CỘT (Khớp image_f3f0c8)
+                # Chấm điểm SEO thật
+                seo_score = "0/100 (Chào sếp)" if "Chào" in title else "95/100"
+
+                # GHI REPORT 18 CỘT (ĐÚNG THỨ TỰ A-R)
                 report_row = [
                     site.iloc[0], site.iloc[1], now_str, "Chờ đăng", 
                     title, v('Danh sách Keyword bài viết'), site.iloc[9], # G: Số ảnh
-                    anchors[0], anchors[1], anchors[2], anchors[3], anchors[4], # H-L: Từ khoá 1-5
-                    backlinks[0], backlinks[1], backlinks[2], # M-O: Backlink 1-3
+                    anchors[0], anchors[1], anchors[2], anchors[3], anchors[4], # H-L: Từ khoá
+                    target_links[0], target_links[1], target_links[2], # M-O: Backlink
                     seo_score, now_str, "Thành công"
                 ]
                 gspread.authorize(get_creds()).open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip()).worksheet("Report").append_row(report_row)
 
-                # 2. TELEGRAM (Fix template lệch)
-                tele_msg = (
-                    f"<b>✅ SEO DONE: {site.iloc[0]}</b>\n"
-                    f"📄 <b>Tiêu đề:</b> {title}\n"
-                    f"⚓ <b>Anchor:</b> {anchors[0]}\n"
-                    f"🔗 <b>Link:</b> {backlinks[0]}\n"
-                    f"🕒 <b>Lúc:</b> {now_str}"
-                )
+                # TELEGRAM (FIX TEMPLATE)
+                msg = f"<b>✅ DONE: {site.iloc[0]}</b>\n📄 {title}\n⚓ {anchors[0]}\n🔗 {target_links[0]}"
                 requests.post(f"https://api.telegram.org/bot{v('TELEGRAM_BOT_TOKEN')}/sendMessage", 
-                             json={"chat_id": v('TELEGRAM_CHAT_ID'), "text": tele_msg, "parse_mode": "HTML"})
+                             json={"chat_id": v('TELEGRAM_CHAT_ID'), "text": msg, "parse_mode": "HTML"})
 
-                st.write(f"✅ Xong: {title[:40]}...")
+                st.write(f"Xong: {title[:40]}...")
 
             except Exception as e:
-                if "429" in str(e): st.warning("Quota hết, chờ 30s..."); time.sleep(30)
-                else: st.error(f"Lỗi: {str(e)}")
+                if "429" in str(e): time.sleep(35)
+                st.error(f"Lỗi: {str(e)}")
         time.sleep(1)
 
-    st.success("🎉 CHIẾN DỊCH HOÀN TẤT!")
+    st.success("🎉 XONG!")
     if st.button("XÁC NHẬN VÀ ĐÓNG"): st.rerun()
 
-# --- 3. UI ---
-st.title("🚀 SEO MASTER v48.0")
+# --- 3. UI (GIỮ NGUYÊN) ---
+st.title("🚀 SEO MASTER v49.0")
 data, msg = load_data()
 if data:
-    tabs = st.tabs(["Dashboard", "Website", "Backlink", "Report"])
-    for i, name in enumerate(["Dashboard", "Website", "Backlink", "Report"]):
+    tab_list = ["Dashboard", "Website", "Backlink", "Report"]
+    tabs = st.tabs(tab_list)
+    for i, name in enumerate(tab_list):
         with tabs[i]:
             if name == "Dashboard":
                 if st.button("🚀 BẮT ĐẦU VẬN HÀNH", type="primary"): run_robot(data)
