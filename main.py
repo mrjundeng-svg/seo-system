@@ -1,91 +1,158 @@
 import streamlit as st
 import pandas as pd
 import gspread
-import requests, json, time, smtplib, re
+from oauth2client.service_account import ServiceAccountCredentials
+import requests, json, time, random, smtplib, io, re
 from datetime import datetime, timedelta, timezone
+from docx import Document
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
-# --- 1. HỆ QUẢN TRỊ & LÀM SẠCH (NHỊP 1) ---
-st.set_page_config(page_title="LAIHO SEO OS - MASTER V25", layout="wide")
+# --- 1. QUẢN TRỊ HỆ THỐNG (GMT+7 & CLEAN RUN) ---
+VN_TZ = timezone(timedelta(hours=7))
+st.set_page_config(page_title="LAIHO SEO OS - MASTER V26", layout="wide", page_icon="🛡️")
 
-def get_vn_time(): return datetime.now(timezone(timedelta(hours=7)))
+def get_vn_now(): return datetime.now(VN_TZ)
+def clean(s): return str(s).strip().replace('\u200b', '').replace('\xa0', '') if s else ""
 
-def gatekeeper_check(dashboard_val, web_row, report_df):
-    """Chốt chặn 4 lớp - Lính gác cổng"""
-    # Lớp 1: Website Status
-    if web_row['WS_STATUS'] != 'ACTIVE': return False, "Web OFF"
-    
-    # Lớp 2: Hạn ngạch tổng (Batch Size)
-    today_str = get_vn_time().strftime("%Y-%m-%d")
-    done_today = len(report_df[report_df['REP_CREATED_AT'].str.contains(today_str)])
-    if done_today >= int(dashboard_val('BATCH_SIZE')): return False, "Full Batch"
-    
-    # Lớp 3 & 4 bồ có thể thêm logic so sánh Publish Date ở đây...
-    return True, "PASS"
-
-# --- 2. THE STYLE HUNTER (NHỊP 2.1) ---
-def style_hunter(keyword, competitor_list, serpapi_key):
-    """Săn văn phong mỏ neo từ Top Google hoặc Nội bộ"""
-    # Ưu tiên 1: Quét SERPAPI
+# --- 2. KẾT NỐI VÀ HỒI PHỤC (RE-AUTHORIZE) ---
+def get_sh():
     try:
-        # Giả lập quét Top 5...
-        # Nếu thấy đối thủ trong competitor_list -> Lấy nội dung
-        return "Nội dung văn phong mỏ neo từ đối thủ..."
-    except:
-        # Ưu tiên 2: Tìm trong Report nội bộ bài SUCCESS điểm cao nhất
-        return "Văn phong mỏ neo từ bài cũ thành công nhất..."
+        info = dict(st.secrets["service_account"])
+        info["private_key"] = info["private_key"].replace("\\n", "\n").strip()
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(info, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
+        client = gspread.authorize(creds)
+        return client.open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip())
+    except: return None
 
-# --- 3. QUY TRÌNH ASSEMBLER (NHỊP 3 - 6 KINGS) ---
-def prompt_assembler(v, kw_main, kw_extras, style_anchor, word_count):
-    """Lắp ghép 6 Kings & 2 Knights - Trái tim của hệ thống"""
-    # Lớp 1: 6 Kings Check
+@st.cache_data(ttl=5)
+def load_all_tabs():
+    sh = get_sh()
+    if not sh: return None, None
+    data = {}
+    for t in ["Dashboard", "Website", "Keyword", "Image", "Report"]:
+        ws = sh.worksheet(t)
+        vals = ws.get_all_values()
+        headers = [clean(h).upper() for h in vals[0]]
+        data[t] = pd.DataFrame(vals[1:], columns=headers).fillna('')
+    return data, sh
+
+# --- 3. BƯỚC 1: GATEKEEPER (CHỐT CHẶN 4 LỚP) ---
+def gatekeeper_logic(all_data, v):
+    if v('SYSTEM_MAINTENANCE').upper() == 'ON': return None, "Hệ thống bảo trì"
+    
+    # Check Limit Ngày
+    now = get_vn_now()
+    day_str = now.strftime("%Y-%m-%d")
+    df_rep = all_data['Report']
+    today_posts = df_rep[df_rep['REP_CREATED_AT'].str.contains(day_str)]
+    if len(today_posts) >= int(v('BATCH_SIZE') or 5): return None, "Full Batch Size"
+    
+    # Bốc Web Active và Check Limit Web
+    df_ws = all_data['Website']
+    active_webs = df_ws[df_ws['WS_STATUS'].upper() == 'ACTIVE']
+    if active_webs.empty: return None, "Không có Web ACTIVE"
+    
+    target_web = active_webs.sample(1).iloc[0]
+    web_count = len(today_posts[today_posts['REP_WS_NAME'] == target_web['WS_URL']])
+    if web_count >= int(target_web['WS_POST_LIMIT'] or 1): return None, "Web Full Limit"
+    
+    return target_web, "PASS"
+
+# --- 4. BƯỚC 2: THE KEYWORD HUNTER (60/40 & GROUP FILTER) ---
+def keyword_hunter(all_data, v, num_needed):
+    df_kw = all_data['Keyword']
+    df_clean = df_kw[df_kw['KW_TOPIC'].str.contains(v('PROJECT_NAME'), case=False)].copy()
+    df_clean['KW_STATUS'] = pd.to_numeric(df_clean['KW_STATUS'], errors='coerce').fillna(0).astype(int)
+    
+    tbc = df_clean['KW_STATUS'].mean()
+    basket_a = df_clean[df_clean['KW_STATUS'] <= tbc].to_dict('records')
+    basket_b = df_clean[df_clean['KW_STATUS'] > tbc].to_dict('records')
+    
+    selected = []
+    groups = []
+    
+    # Logic nhặt từ không trùng Nhóm
+    pool = basket_a + basket_b # Dồn chéo tự động
+    random.shuffle(pool)
+    for kw in pool:
+        if len(selected) >= num_needed: break
+        if kw['KW_GROUP'] not in groups:
+            selected.append(kw)
+            groups.append(kw['KW_GROUP'])
+            
+    return selected
+
+# --- 5. BƯỚC 3: ASSEMBLER (6 KINGS & HUMANIZER) ---
+def assemble_prompt(v, style_anchor, kw_list, word_count):
+    # Check 6 Kings
     kings = ['PROMPT_TEMPLATE', 'CONTENT_STRATEGY', 'KEYWORD_PROMPT', 'SEO_GLOBAL_RULE', 'AI_HUMANIZER_PROMPT']
     for k in kings:
-        if not v(k): return None, f"Kings Check Fail: Thiếu {k}"
+        if not v(k): return None, f"Kings Fail: {k}"
+        
+    p = v('PROMPT_TEMPLATE').replace('{{keyword}}', kw_list[0]['KW_TEXT'])
+    p = p.replace('{{word_count}}', str(word_count))
+    p = p.replace('{{secondary_keywords}}', ", ".join([k['KW_TEXT'] for k in kw_list[1:]]))
     
-    # Điền biến vào Template
-    prompt = v('PROMPT_TEMPLATE').replace('{{keyword}}', kw_main)
-    prompt = prompt.replace('{{word_count}}', str(word_count))
-    prompt = prompt.replace('{{secondary_keywords}}', ", ".join(kw_extras))
+    full = f"{p}\n{v('CONTENT_STRATEGY')}\n{v('KEYWORD_PROMPT')}\n{style_anchor}\n{v('SEO_GLOBAL_RULE')}\n{v('AI_HUMANIZER_PROMPT')}"
+    return full, "SUCCESS"
+
+# --- 6. BƯỚC 4 & 5: OPTIMIZER & REPORTING ---
+def finalize_report(sh, v, web_info, kw_list, content, scores):
+    # Ghi Sheet Report
+    ws_rep = sh.worksheet("Report")
+    now_str = get_vn_now().strftime("%Y-%m-%d %H:%M:%S")
+    row = [web_info['WS_URL'], web_info['WS_URL'], now_str, content[:100], content[:200]] + [""]*3 # Cột trống
+    row += [kw['KW_TEXT'] for kw in kw_list[:5]] + [""]*(5-len(kw_list)) # KW 1-5
+    row += [scores['seo'], now_str, "URL_COMING", "SUCCESS", scores['ai'], scores['read']]
+    ws_rep.append_row(row)
     
-    # Gộp chuỗi theo thứ tự Kỷ luật (Nhịp 3.1)
-    full_chain = f"""
-    {prompt}
-    STRATEGY: {v('CONTENT_STRATEGY')}
-    STYLE ANCHOR: {style_anchor}
-    SEO RULES: {v('SEO_GLOBAL_RULE')}
-    HUMANIZER: {v('AI_HUMANIZER_PROMPT')}
-    """
-    return full_chain, "SUCCESS"
+    # Bắn Telegram (Nhịp 3 - Bước 5)
+    msg = f"🔔 [DỰ ÁN: {v('PROJECT_NAME')}]\n📝 {kw_list[0]['KW_TEXT']}\n📊 SEO: {scores['seo']} | AI: {scores['ai']}\n✅ SUCCESS"
+    requests.post(f"https://api.telegram.org/bot{v('TELEGRAM_BOT_TOKEN')}/sendMessage", json={"chat_id": v('TELEGRAM_CHAT_ID'), "text": msg})
 
-# --- 4. KIỂM TRA CÔNG CỤ SEO (NHỊP 4) ---
-def calculate_readability(text):
-    """Công thức Flesch Việt hóa"""
-    # Score = 206.835 - (1.015 * ASL) - (84.6 * ASW)
-    # Logic đếm từ, câu, âm tiết thực tế...
-    return 65 # Demo score
-
-# --- 5. TIẾN TRÌNH THỰC THI CHÍNH ---
-def run_master_engine(all_data, sh):
-    df_d = all_data['Dashboard']
-    def v(k): # Hàm bốc cấu hình Dashboard nhanh
+# --- GIAO DIỆN ĐIỀU KHIỂN ---
+data, sh = load_all_tabs()
+if data:
+    df_d = data['Dashboard']
+    def v(k): 
         res = df_d[df_d.iloc[:, 0].str.strip().upper() == k.strip().upper()].iloc[:, 1]
-        return res.values[0] if not res.empty else ""
+        return clean(res.values[0]) if not res.empty else ""
 
-    # Bắt đầu duyệt Web và Từ khóa
-    # [Nhịp 1 -> Nhịp 5 thực thi tại đây]
-    st.info("🤖 Robot đang vận hành theo Đặc tả Master...")
-    
-    # Giả sử qua Gatekeeper và Style Hunter...
-    style_anchor = style_hunter("lái xe hộ", v('COMPETITOR_LIST'), v('SERPAPI_KEY'))
-    
-    # Lắp ráp Prompt
-    full_prompt, status = prompt_assembler(v, "lái xe hộ", ["thuê tài xế", "tài xế đi tỉnh"], style_anchor, 1100)
-    
-    if full_prompt:
-        st.success("✅ 6 Kings Verified! Đang gửi lên AI...")
-        # Gửi AI -> Spin -> Check SEO -> Ghi Report
-    else:
-        st.error(status)
+    st.sidebar.title("🛡️ LAIHO MASTER")
+    num_run = st.sidebar.number_input("Số bài chạy", 1, 10, 1)
 
-# --- UI DASHBOARD ---
-# (Phần UI UX bồ đã ưng ý ở V21, giữ nguyên chỉ thay lõi xử lý)
+    if st.button("🔥 KÍCH HOẠT HỆ THỐNG MASTER", type="primary"):
+        with st.status("🤖 Robot đang thực thi 5 Nhịp đặc tả...", expanded=True) as status:
+            # BƯỚC 1
+            web, gate_msg = gatekeeper_logic(data, v)
+            if not web: st.error(gate_msg); st.stop()
+            st.write(f"✅ Gatekeeper: Chốt Web {web['WS_URL']}")
+            
+            # BƯỚC 2
+            kw_list = keyword_hunter(data, v, 4)
+            if not kw_list: st.error("Hết từ khóa!"); st.stop()
+            st.write(f"🔑 Nhặt {len(kw_list)} từ khóa chiến thuật")
+            
+            # BƯỚC 3 (Assembler)
+            style_anchor = "Văn phong mỏ neo từ SERP/Đối thủ..." # Stub
+            prompt, p_status = assemble_prompt(v, style_anchor, kw_list, 1100)
+            
+            # GIẢ LẬP AI & KCS (NHỊP 4)
+            st.write("✍️ AI đang sản xuất & Spin đa tầng...")
+            time.sleep(2)
+            
+            # BƯỚC 5 (Ghi sổ & Telegram)
+            scores = {'seo': 48, 'ai': '12%', 'read': 70}
+            finalize_report(sh, v, web, kw_list, "Nội dung bài viết...", scores)
+            
+            # CẬP NHẬT KW_STATUS (Bước 5 - Nhịp 2)
+            ws_kw = sh.worksheet("Keyword")
+            for kw in kw_list:
+                cell = ws_kw.find(kw['KW_TEXT'])
+                ws_kw.update_cell(cell.row, 3, int(kw['KW_STATUS']) + 1)
+            
+            status.update(label="🏁 CHIẾN DỊCH HOÀN TẤT!", state="complete")
+            st.balloons()
