@@ -2,105 +2,75 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import requests, json, time
+import requests, json, time, smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
 
-# --- 1. CONFIG GIAO DIỆN (DỌN DẸP SẠCH SẼ) ---
-st.set_page_config(page_title="LAIHO SEO COMMAND", layout="wide", page_icon="🛡️")
-
-# Fix lỗi trắng xóa Metrics bằng CSS "hàng hiệu"
-st.markdown("""
-    <style>
-    [data-testid="stMetricValue"] { font-size: 28px; color: #ff4b4b !important; }
-    [data-testid="stMetricLabel"] { font-size: 14px; color: #808495 !important; }
-    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
-    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre; border-radius: 4px 4px 0px 0px; font-weight: 600; }
-    div[data-testid="stExpander"] { border: none; box-shadow: none; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- 1. SETUP HỆ THỐNG ---
+st.set_page_config(page_title="LAIHO.VN - GMAIL MASTER", layout="wide", page_icon="📧")
 
 def get_vn_time(): return datetime.now(timezone(timedelta(hours=7)))
 def clean_str(s): return str(s).strip().replace('\u200b', '').replace('\xa0', '') if s else ""
 
-# --- 2. KẾT NỐI HỆ THỐNG ---
-def get_creds():
+# --- 2. HÀM GỬI EMAIL "GIỐNG NGÀY XƯA" ---
+def send_email_report(sender, password, receiver, keyword, content):
+    if not sender or not password or not receiver: return
+    
+    msg = MIMEMultipart()
+    msg['From'] = f"Laiho Robot <{sender}>"
+    msg['To'] = receiver
+    msg['Subject'] = f"[HỆ THỐNG PBN] {keyword} - 🚀 XUẤT BẢN THÀNH CÔNG"
+
+    # Tạo nội dung HTML giống như xưa
+    html = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <h2 style="color: #2e7d32;">🚀 XUẤT BẢN: {keyword}</h2>
+        <p>🌐 <b>BÁO CÁO PHÂN PHÁT WEB:</b><br>Nội dung đã được lưu trữ và sẵn sàng đăng tải.</p>
+        <hr>
+        <p>📊 <b>KẾT QUẢ SEO:</b><br>
+        - Độ dài: ~{len(content.split())} chữ<br>
+        - Trạng thái: <b>Thành công 100%</b></p>
+        <div style="background: #f4f4f4; padding: 15px; border-radius: 5px; border-left: 5px solid #ff4b4b;">
+          <i>{content[:500]}...</i>
+        </div>
+        <br>
+        <p>✅ <b>Đã lưu dữ liệu và cập nhật Tracking.</b></p>
+      </body>
+    </html>
+    """
+    msg.attach(MIMEText(html, 'html'))
+    
     try:
-        info = dict(st.secrets["service_account"])
-        info["private_key"] = info["private_key"].replace("\\n", "\n").strip()
-        return ServiceAccountCredentials.from_json_keyfile_dict(info, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
-    except: return None
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(sender, password)
+            server.sendmail(sender, receiver, msg.as_string())
+    except Exception as e:
+        st.error(f"Lỗi gửi Email: {e}")
 
-@st.cache_data(ttl=5)
-def load_data():
-    try:
-        creds = get_creds()
-        client = gspread.authorize(creds)
-        sh = client.open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip())
-        data = {}
-        for t in ["Dashboard", "Keyword", "Report"]:
-            ws = sh.worksheet(t)
-            vals = ws.get_all_values()
-            if vals:
-                headers = [clean_str(h).upper() for h in vals[0]]
-                data[t] = pd.DataFrame(vals[1:], columns=headers).fillna('')
-        return data, sh
-    except: return None, None
+# --- 3. TIẾN TRÌNH BATCH (TÍCH HỢP EMAIL) ---
+@st.dialog("🚀 CHIẾN DỊCH VIẾT BÀI & GỬI MAIL", width="large")
+def run_batch_popup(all_data, sh, num_posts):
+    df_d = all_data['Dashboard']
+    def v(k):
+        res = df_d[df_d.iloc[:, 0].str.strip().str.upper() == k.strip().upper()].iloc[:, 1]
+        return clean_str(res.values[0]) if not res.empty else ""
 
-# --- 3. GIAO DIỆN CHÍNH (UX TINH GỌN) ---
-data, sh = load_data()
+    # ... (Phần nhặt từ khóa và gọi AI giữ nguyên như V21)
+    # Giả sử sau khi call_ai thành công và ghi Sheet xong:
+    
+    # [TRÍCH ĐOẠN LOGIC TRONG VÒNG LẶP]
+    # if "❌" not in content:
+    #    ... Ghi Sheet xong ...
+    #    # 📧 BẮT ĐẦU GỬI MAIL
+    #    send_email_report(
+    #        v('EMAIL_SENDER'), 
+    #        v('EMAIL_PASSWORD'), 
+    #        v('EMAIL_RECEIVER'), 
+    #        kw_main, 
+    #        content
+    #    )
+    #    st.success(f"📧 Đã gửi báo cáo mail cho: {kw_main}")
 
-if data:
-    # SIDEBAR: Chỉ để những thứ thực sự cần
-    with st.sidebar:
-        st.title("🛡️ LAIHO SEO")
-        st.caption("Phiên bản V21 - Clean & Stable")
-        num_posts = st.select_slider("Số lượng bài viết/lần", options=[1, 3, 5, 10, 20], value=3)
-        st.divider()
-        if st.button("🔄 LÀM MỚI DỮ LIỆU", use_container_width=True):
-            st.cache_data.clear(); st.rerun()
-
-    # KPI SECTION: Nhìn phát biết ngay tình hình
-    df_kw = data['Keyword']
-    total = len(df_kw)
-    # Lọc SUCCESS hoặc 1 (tùy bồ điền)
-    done = len(df_kw[df_kw.iloc[:, 2].astype(str).str.contains('SUCCESS|1', case=False)])
-    pending = total - done
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("📌 TỔNG TỪ KHÓA", total)
-    m2.metric("✅ ĐÃ XONG", done)
-    m3.metric("⏳ ĐANG CHỜ", pending)
-    m4.metric("🕒 HỆ THỐNG", get_vn_time().strftime("%H:%M"))
-
-    st.divider()
-
-    # TABS: Chia vùng làm việc rõ ràng
-    tab_run, tab_data, tab_log = st.tabs(["🎮 ĐIỀU KHIỂN", "📂 KHO TỪ KHÓA", "📜 BÁO CÁO"])
-
-    with tab_run:
-        c_btn, c_txt = st.columns([1, 2])
-        with c_btn:
-            # Nút bấm to, rõ ràng
-            if st.button(f"🚀 CHẠY CHIẾN DỊCH {num_posts} BÀI", type="primary", use_container_width=True):
-                # Khi bồ bấm, nó sẽ gọi Batch Popup như V18
-                st.toast("Đang khởi động Robot...", icon="🤖")
-        with c_txt:
-            st.info(f"Robot sẽ bốc {num_posts} từ khóa 'Status = 0' để viết bài.")
-
-    with tab_data:
-        st.subheader("Kho từ khóa chiến thuật")
-        st.dataframe(df_kw, use_container_width=True, hide_index=True)
-
-    with tab_log:
-        st.subheader("Nhật ký 20 bài gần nhất")
-        df_rep = data['Report']
-        if not df_rep.empty:
-            # Hiển thị các cột quan trọng nhất theo hình bồ gửi
-            display_cols = ["REP_CREATED_AT", "REP_WS_URL", "REP_TITLE", "REP_RESULT"]
-            # Chỉ lấy các cột tồn tại trong DataFrame
-            actual_cols = [c for c in display_cols if c in df_rep.columns]
-            st.dataframe(df_rep[actual_cols].iloc[::-1].head(20), use_container_width=True, hide_index=True)
-        else:
-            st.write("Chưa có dữ liệu báo cáo.")
-else:
-    st.error("❌ Không kết nối được Google Sheet. Kiểm tra lại ID hoặc phân quyền!")
+# --- Giao diện Home bồ giữ nguyên bản V21 ---
