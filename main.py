@@ -3,13 +3,13 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests, json
-from datetime import datetime, timedelta, timezone
 
-# --- 1. SETUP HỆ THỐNG & TRIM DỮ LIỆU ---
-st.set_page_config(page_title="LAIHO.VN AI WRITER", layout="wide")
+# --- 1. SETUP HỆ THỐNG & GỌT SẠCH KHOẢNG TRẮNG ---
+st.set_page_config(page_title="LAIHO.VN - ONE PIPE AI", layout="wide")
 
 def clean_str(s):
-    return str(s).strip().replace('\u200b', '').replace('\xa0', '') if s else ""
+    if not s: return ""
+    return str(s).strip().replace('\u200b', '').replace('\xa0', '')
 
 def get_creds():
     try:
@@ -40,22 +40,20 @@ def load_all_tabs():
                 data[t] = pd.DataFrame(rows, columns=headers).fillna('')
         return data, sh
     except Exception as e:
-        st.error(f"Lỗi kết nối Sheet: {e}"); return None, None
+        st.error(f"Lỗi Sheet: {e}"); return None, None
 
-# --- 2. HÀM GỌI AI (OPENROUTER DUY NHẤT) ---
+# --- 2. HÀM GỌI AI DUY NHẤT (OPENROUTER) ---
 def call_openrouter(api_key, model_name, prompt):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key.strip()}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://laiho.vn", # Để OpenRouter không báo lỗi auth
+        "HTTP-Referer": "https://laiho.vn",
         "X-Title": "Laiho SEO Robot"
     }
-    # Nếu Dashboard trống, dùng model miễn phí để test
-    target_model = model_name.strip() if model_name else "meta-llama/llama-3.2-1b-instruct:free"
-    
+    # Chỉ bốc 1 cái tên model sạch sẽ
     payload = {
-        "model": target_model,
+        "model": model_name,
         "messages": [{"role": "user", "content": prompt}]
     }
     try:
@@ -75,39 +73,33 @@ def run_ai_popup(all_data, sh):
         res = df_d[df_d.iloc[:, 0].str.strip() == k.strip()].iloc[:, 1]
         return clean_str(res.values[0]) if not res.empty else ""
 
-    st.write("🔄 **Đang kiểm tra chìa khóa vạn năng...**")
-    
-    kw_main = "Dịch vụ lái xe hộ chuyên nghiệp" # Demo bốc từ khóa
+    st.write("🔄 **Đang chuẩn bị luồng chạy đơn...**")
+    kw_main = "Dịch vụ lái xe hộ" 
     prompt_final = f"Viết bài SEO về {kw_main}. Quy tắc: {v('SEO_GLOBAL_RULE')}"
 
-    api_key = v('OPENROUTER_API_KEY')
-    model_name = v('MODEL_VERSION')
-
-    st.info(f"🤖 Đang gọi não bộ: `{model_name if model_name else 'Model Free'}`")
+    # LẤY CHÍNH XÁC 1 MODEL ĐẦU TIÊN
+    raw_models = v('MODEL_VERSION')
+    first_model = raw_models.split(',')[0].strip() if ',' in raw_models else raw_models.strip()
     
+    # Nếu trống, ép dùng model FREE để test
+    final_model = first_model if first_model else "meta-llama/llama-3.2-1b-instruct:free"
+
+    st.info(f"🤖 Đang gọi não bộ: `{final_model}`")
     with st.spinner("Đang sản xuất nội dung..."):
-        content = call_openrouter(api_key, model_name, prompt_final)
+        content = call_openrouter(v('OPENROUTER_API_KEY'), final_model, prompt_final)
         
         if "❌" in content:
             st.error(content)
-            st.warning("👉 Nếu lỗi 'No endpoints', bồ hãy đổi MODEL_VERSION thành model miễn phí (xem bên dưới).")
+            st.warning("👉 Kiểm tra MODEL_VERSION trên Sheet xem có đúng định dạng chưa.")
         else:
             st.success("✅ THÀNH CÔNG!")
-            st.text_area("Bản thảo AI", content, height=400)
-            # Sau đó bồ thêm logic ghi Sheet vào đây là xong bài.
+            st.text_area("Bản thảo", content, height=400)
 
-# --- 4. GIAO DIỆN TRANG CHỦ ---
+# --- 4. GIAO DIỆN HOME ---
 data, sh = load_all_tabs()
 if data:
-    c1, c2, _ = st.columns([1.5, 1, 4])
-    with c1:
-        if st.button("Viết bài AI", type="primary", use_container_width=True):
-            run_ai_popup(data, sh)
-    with c2:
-        if st.button("🔄 LÀM MỚI KHO", use_container_width=True):
-            st.cache_data.clear(); st.rerun()
-
+    c1, _, _ = st.columns([1.5, 1, 4])
+    if c1.button("Viết bài AI", type="primary", use_container_width=True):
+        run_ai_popup(data, sh)
     st.divider()
-    tabs = st.tabs([f"📂 {n}" for n in data.keys()])
-    for i, name in enumerate(data.keys()):
-        with tabs[i]: st.dataframe(data[name], use_container_width=True, hide_index=True)
+    st.dataframe(data['Dashboard'], use_container_width=True, hide_index=True)
