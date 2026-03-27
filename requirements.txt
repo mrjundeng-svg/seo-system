@@ -4,5 +4,5 @@ pandas
 oauth2client
 requests
 streamlit
+python-docx
 altair<5
-streamlit>=1.30.0
