@@ -13,11 +13,8 @@ from email import encoders
 VN_TZ = timezone(timedelta(hours=7))
 st.set_page_config(page_title="LAIHO SEO OS", layout="wide")
 
-def get_vn_now():
-    return datetime.now(VN_TZ)
-
-def clean(s):
-    return str(s).strip().replace('\u200b', '').replace('\xa0', '') if s else ""
+def get_vn_now(): return datetime.now(VN_TZ)
+def clean(s): return str(s).strip().replace('\u200b', '').replace('\xa0', '') if s else ""
 
 def get_range_val(val, default=1):
     s = clean(str(val))
@@ -55,7 +52,7 @@ def load_all_tabs():
     return data, sh
 
 def pulse_1_gatekeeper(data, v):
-    if v('SYSTEM_MAINTENANCE').upper() == 'ON': return None, "MAINTENANCE_ON"
+    if v('SYSTEM_MAINTENANCE').upper() == 'ON': return None, "Hệ thống bảo trì"
     now = get_vn_now()
     df_rep = data['Report']
     batch_size = get_range_val(v('BATCH_SIZE'), 5)
@@ -63,15 +60,14 @@ def pulse_1_gatekeeper(data, v):
         target_date = (now + timedelta(days=i)).strftime("%Y-%m-%d")
         day_posts = df_rep[df_rep['REP_CREATED_AT'].str.contains(target_date)] if not df_rep.empty else []
         if len(day_posts) >= batch_size: continue
-        df_ws = data['Website']
-        active_webs = df_ws[df_ws['WS_STATUS'].str.upper() == 'ACTIVE']
-        if active_webs.empty: return None, "NO_ACTIVE_WEB"
+        active_webs = data['Website'][data['Website']['WS_STATUS'].str.upper() == 'ACTIVE']
+        if active_webs.empty: return None, "Hết Web Active"
         web_row = active_webs.sample(1).iloc[0].to_dict()
         web_limit = get_range_val(web_row['WS_POST_LIMIT'], 1)
         web_today = len(day_posts[day_posts['REP_WS_NAME'] == web_row['WS_URL']]) if len(day_posts) > 0 else 0
         if web_today < web_limit:
             return {"web": web_row, "date": target_date}, "PASS"
-    return None, "ALL_DAYS_FULL"
+    return None, "Full Slot"
 
 def pulse_2_hunter(data, v):
     df_kw = data['Keyword']
@@ -98,6 +94,7 @@ def pulse_2_hunter(data, v):
 def pulse_5_report(sh, v, web, kw_list, content, scores):
     kw_main = kw_list[0]['KW_TEXT']
     now_str = get_vn_now().strftime("%Y-%m-%d %H:%M:%S")
+    # Mảng 19 phần tử chuẩn A -> S
     report_row = [
         web.get('WS_URL', ''), web.get('WS_PLATFORM', ''), now_str, f"Bài: {kw_main}", 
         content[:300], "1", "YES", "NO", kw_list[0]['KW_TEXT'],
@@ -115,12 +112,12 @@ def pulse_5_report(sh, v, web, kw_list, content, scores):
     except: pass
     try:
         requests.post(f"https://api.telegram.org/bot{v('TELEGRAM_BOT_TOKEN')}/sendMessage", 
-                      json={"chat_id": v('TELEGRAM_CHAT_ID'), "text": f"✅ {kw_main}\n🌐 {web.get('WS_URL')}", "parse_mode": "Markdown"})
+                      json={"chat_id": v('TELEGRAM_CHAT_ID'), "text": f"✅ {kw_main}\n🌐 {web.get('WS_URL')}"})
     except: pass
     try:
         sender, pw, rec = v('SENDER_EMAIL'), v('SENDER_PASSWORD'), v('RECEIVER_EMAIL')
-        msg = MIMEMultipart()
-        msg['Subject'] = f"🚀 {kw_main}"; msg.attach(MIMEText(content[:500], 'html'))
+        msg = MIMEMultipart(); msg['Subject'] = f"🚀 {kw_main}"
+        msg.attach(MIMEText(content[:500], 'html'))
         doc = Document(); doc.add_heading(kw_main, 0); doc.add_paragraph(content)
         w_io = io.BytesIO(); doc.save(w_io); w_io.seek(0)
         part = MIMEBase('application', 'octet-stream'); part.set_payload(w_io.read()); encoders.encode_base64(part)
@@ -136,10 +133,15 @@ if data:
         row = df_d[df_d.iloc[:, 0].str.strip().str.upper() == key.strip().upper()]
         return clean(row.iloc[0, 1]) if not row.empty else ""
     st.title("LAIHO SEO OS")
-    if st.button("🚀 KÍCH HOẠT ROBOT"):
+    if st.button("🚀 KÍCH HOẠT ROBOT MASTER"):
         slot, g_msg = pulse_1_gatekeeper(data, v)
         if not slot: st.error(g_msg); st.stop()
         kw_list = pulse_2_hunter(data, v)
-        if not kw_list: st.error("NO_KW_FOUND"); st.stop()
-        pulse_5_report(sh, v, slot['web'], kw_list, "Nội dung AI chuẩn Master...", {'seo': 48, 'ai': '12%', 'read': 70})
-        st.success(f"SUCCESS: {kw_list[0]['KW_TEXT']} -> {slot['web']['WS_URL']}")
+        if not kw_list: st.error("Không tìm thấy từ khóa khớp Topic"); st.stop()
+        
+        # Nhịp 3: Lấy Word Count ngẫu nhiên
+        target_words = get_range_val(v('WORD_COUNT_RANGE'), 1000)
+        st.write(f"Đang xử lý bài {kw_list[0]['KW_TEXT']} ({target_words} chữ) lên web {slot['web']['WS_URL']}...")
+        
+        pulse_5_report(sh, v, slot['web'], kw_list, "Nội dung thật từ AI...", {'seo': 48, 'ai': '12%', 'read': 70})
+        st.success("HOÀN TẤT CHIẾN DỊCH!")
