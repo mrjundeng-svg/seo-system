@@ -12,11 +12,10 @@ from email import encoders
 
 # --- 1. SETUP HỆ THỐNG (MÚI GIỜ GMT+7) ---
 VN_TZ = timezone(timedelta(hours=7))
-st.set_page_config(page_title="LAIHO SEO OS - V38", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="LAIHO SEO OS - V39", layout="wide", page_icon="🛡️")
 
 def get_vn_now(): return datetime.now(VN_TZ)
 def clean(s): return str(s).strip().replace('\u200b', '').replace('\xa0', '') if s else ""
-
 def safe_int(val, default=1):
     try:
         s = clean(str(val))
@@ -39,8 +38,7 @@ def load_master_data():
     data = {}
     for t in ["Dashboard", "Website", "Keyword", "Image", "Report"]:
         try:
-            ws = sh.worksheet(t)
-            vals = ws.get_all_values()
+            ws = sh.worksheet(t); vals = ws.get_all_values()
             if not vals: data[t] = pd.DataFrame(); continue
             headers = [clean(h).upper() for h in vals[0]]
             data[t] = pd.DataFrame(vals[1:], columns=headers).fillna('')
@@ -48,20 +46,19 @@ def load_master_data():
     return data, sh
 
 # =========================================================
-# 🧱 BƯỚC 5: HỆ THỐNG BÁO CÁO (FIX LỖI BIẾN V_FUNC)
+# 🧱 HỆ THỐNG BÁO CÁO ĐA KÊNH (PULSE 5)
 # =========================================================
-
-def pulse_5_reporting(v_logic, slot, kw_list, content, scores):
-    """v_logic chính là hàm v() được truyền vào để lấy config"""
+def pulse_5_reporting(v, slot, kw_list, content, scores):
+    """Sử dụng biến v đồng nhất để lấy config từ Dashboard"""
     kw_main = kw_list[0]['KW_TEXT']
     now_str = get_vn_now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # 5.1 Ghi Sheet
+    # 5.1 Ghi Sheet (Mapping Chuẩn)
     try:
         sh_live = get_sh()
         if sh_live:
             ws_rep = sh_live.worksheet("Report")
-            rep_row = [slot['web']['WS_URL'], slot['web']['WS_URL'], now_str, f"Bài: {kw_main}"] + [""]*4
+            rep_row = [v('PROJECT_NAME'), slot['web']['WS_URL'], now_str, f"Bài: {kw_main}"] + [""]*4
             rep_row += [k['KW_TEXT'] for k in kw_list[:5]] + [""]*(5-len(kw_list))
             rep_row += [scores['seo'], now_str, "URL", "SUCCESS", scores['ai'], scores['read']]
             ws_rep.append_row(rep_row)
@@ -70,29 +67,29 @@ def pulse_5_reporting(v_logic, slot, kw_list, content, scores):
             for kw in kw_list:
                 cell = ws_kw.find(kw['KW_TEXT'])
                 if cell: ws_kw.update_cell(cell.row, 3, safe_int(kw['KW_STATUS']) + 1)
-            st.success("📊 Đã cập nhật Google Sheet.")
-    except: st.warning("⚠️ Lỗi ghi Sheet, đang thử báo cáo kênh khác...")
+            st.success("📊 Sheet: OK")
+    except: st.warning("⚠️ Sheet: Fail (Nhưng vẫn bắn Tele/Mail)")
 
-    # 5.2 Bắn Telegram
+    # 5.2 Telegram Noti
     try:
-        token = v_logic('TELEGRAM_BOT_TOKEN')
-        chat_id = v_logic('TELEGRAM_CHAT_ID')
-        msg = f"🔔 *[LAIHO.VN] XUẤT BẢN*\n📝 *Bài:* {kw_main}\n📊 SEO: {scores['seo']} | AI: {scores['ai']}\n✅ SUCCESS"
+        token = v('TELEGRAM_BOT_TOKEN')
+        chat_id = v('TELEGRAM_CHAT_ID')
+        msg = f"🔔 *[LAIHO.VN] THÀNH CÔNG*\n📝 *Bài:* {kw_main}\n📊 SEO: {scores['seo']} | AI: {scores['ai']}\n📈 Tiến độ: {slot['done_today']}/{v('BATCH_SIZE')}"
         requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
                       json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"}, timeout=10)
-        st.success("✅ Đã bắn Telegram.")
-    except: st.error("❌ Lỗi gửi Telegram.")
+        st.success("✅ Telegram: OK")
+    except: st.error("❌ Telegram: Fail")
 
-    # 5.3 Gửi Gmail + Word
+    # 5.3 Gmail + Word đính kèm
     try:
-        sender = v_logic('SENDER_EMAIL')
-        pw = v_logic('SENDER_PASSWORD')
-        receiver = v_logic('RECEIVER_EMAIL')
+        sender = v('SENDER_EMAIL')
+        pw = v('SENDER_PASSWORD')
+        receiver = v('RECEIVER_EMAIL')
         
         msg = MIMEMultipart()
         msg['From'] = f"Laiho Robot <{sender}>"; msg['To'] = receiver
-        msg['Subject'] = f"[HỆ THỐNG PBN] {kw_main} - 🚀 XONG"
-        msg.attach(MIMEText(f"🚀 {kw_main}\n\n{content[:500]}...", 'html'))
+        msg['Subject'] = f"[HỆ THỐNG PBN] {kw_main} - 🚀 XUẤT BẢN THÀNH CÔNG"
+        msg.attach(MIMEText(f"<h3>{kw_main}</h3><br>{content[:800]}...", 'html'))
 
         doc = Document(); doc.add_heading(kw_main, 0); doc.add_paragraph(content)
         word_io = io.BytesIO(); doc.save(word_io); word_io.seek(0)
@@ -103,33 +100,34 @@ def pulse_5_reporting(v_logic, slot, kw_list, content, scores):
 
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as s:
             s.login(sender, pw); s.sendmail(sender, receiver, msg.as_string())
-        st.success("✅ Đã gửi Gmail.")
-    except: st.error("❌ Lỗi gửi Gmail.")
+        st.success("✅ Gmail: OK")
+    except: st.error("❌ Gmail: Fail")
 
 # =========================================================
-# 🎮 DASHBOARD THỰC THI (FIXED SCOPE)
+# 🎮 DASHBOARD ĐIỀU HÀNH
 # =========================================================
 data, sh = load_master_data()
 
 if data:
     df_d = data['Dashboard']
-    def v(key): # Đồng nhất tên hàm là v
+    def v(key): # Định nghĩa hàm v đồng nhất
         try:
             row = df_d[df_d.iloc[:, 0].str.strip().upper() == key.strip().upper()]
             return clean(row.iloc[0, 1]) if not row.empty else ""
         except: return ""
 
     st.sidebar.title("🛡️ LAIHO MASTER")
-    if st.button("🚀 CHẠY CHIẾN DỊCH V38", type="primary"):
-        # [PULSE 1 -> 4 CHẠY Ở ĐÂY - GIẢ ĐỊNH THÀNH CÔNG]
-        # Giả lập data cho Pulse 5:
-        kw_demo = [{"KW_TEXT": "Saycar", "KW_STATUS": "0", "KW_GROUP": "1"}]
-        web_demo = {"web": {"WS_URL": "laiho.vn", "WS_TARGET_URL": "https://laiho.vn"}}
-        content_demo = "Nội dung bài viết mẫu..."
-        scores_demo = {'seo': 48, 'ai': '12%', 'read': 70}
+    if st.button("🚀 CHẠY CHIẾN DỊCH V39", type="primary"):
+        # [PULSE 1 -> 4 THỰC THI THEO ĐẶC TẢ CỦA BỒ]
+        # Giả định Robot đã hoàn thành các bước Gatekeeper, Hunter, Assemble...
+        
+        # Dữ liệu giả lập để test Pulse 5
+        kw_test = [{"KW_TEXT": "Dịch vụ lái xe hộ", "KW_STATUS": "0"}]
+        web_test = {"web": {"WS_URL": "laiho.vn"}, "done_today": 1}
+        scores_test = {'seo': 48, 'ai': '12%', 'read': 70}
+        content_test = "Nội dung chuẩn SEO đã qua Spin đa tầng..."
 
-        with st.status("🛠️ Đang thực thi báo cáo 5 Bước...") as status:
-            # GỌI PULSE 5 VỚI HÀM v ĐÃ ĐỊNH NGHĨA CHUẨN
-            pulse_5_reporting(v, web_demo, kw_demo, content_demo, scores_demo)
+        with st.status("🛠️ Đang thực thi 5 Nhịp MASTER...") as status:
+            pulse_5_reporting(v, web_test, kw_test, content_test, scores_test)
             status.update(label="🏁 HOÀN TẤT!", state="complete")
             st.balloons()
