@@ -5,10 +5,10 @@ from oauth2client.service_account import ServiceAccountCredentials
 import requests, json
 
 # --- 1. TIỆN ÍCH HỆ THỐNG & FIX LỖI "GET_CREDS" ---
-st.set_page_config(page_title="LAIHO.VN - TEST GROQ ENGINE", layout="wide")
+st.set_page_config(page_title="LAIHO.VN - GROQ AI WRITER", layout="wide")
 
 def clean_str(s):
-    """Hàm TRIM: Gọt sạch khoảng trắng để trị lỗi Invalid Key"""
+    """Hàm TRIM: Gọt sạch khoảng trắng để trị lỗi Invalid Key/Model"""
     return str(s).strip().replace('\u200b', '').replace('\xa0', '') if s else ""
 
 def get_creds():
@@ -43,18 +43,16 @@ def load_all_tabs():
     except Exception as e:
         st.error(f"Lỗi kết nối Sheet: {e}"); return None, None
 
-# --- 2. HÀM GỌI GROQ (SÚNG CHÍNH HIỆN TẠI) ---
+# --- 2. HÀM GỌI GROQ (SỨC MẠNH CHÍNH) ---
 def call_groq(api_key, model_name, prompt):
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key.strip()}",
         "Content-Type": "application/json"
     }
-    # Nếu bồ để trống model, tui lấy con Llama 3 ổn định nhất cho bồ
-    target_model = model_name.strip() if model_name else "llama-3.1-70b-versatile"
     
     payload = {
-        "model": target_model,
+        "model": model_name,
         "messages": [
             {"role": "system", "content": "Bạn là chuyên gia viết bài SEO chuyên nghiệp cho laiho.vn"},
             {"role": "user", "content": prompt}
@@ -78,26 +76,29 @@ def run_groq_popup(all_data, sh):
         res = df_d[df_d.iloc[:, 0].str.strip() == k.strip()].iloc[:, 1]
         return clean_str(res.values[0]) if not res.empty else ""
 
-    st.write("🔄 **Đang kiểm tra chìa khóa Groq...**")
+    st.write("🔄 **Đang kiểm tra chìa khóa và từ khóa...**")
     
-    # Giả lập prompt
-    kw_main = "Dịch vụ thuê tài xế lái xe hộ" 
+    # Logic bốc từ khóa (Demo)
+    kw_main = "Dịch vụ lái xe hộ chuyên nghiệp" 
     prompt_final = f"Viết bài SEO về {kw_main}. Quy tắc: {v('SEO_GLOBAL_RULE')}"
 
-    api_key = v('GROQ_API_KEY')
-    model_name = v('MODEL_VERSION')
+    # 🛠️ LOGIC TÁCH MODEL THÔNG MINH
+    raw_models = v('MODEL_VERSION')
+    # Tìm model đầu tiên có chứa chữ 'llama' hoặc 'mixtral' (Model của Groq)
+    model_list = [m.strip() for m in raw_models.split(',') if m.strip()]
+    target_model = next((m for m in model_list if any(x in m.lower() for x in ['llama', 'mixtral'])), "llama-3.1-70b-versatile")
 
-    st.info(f"🚀 Đang dùng não bộ Groq: `{model_name if model_name else 'llama-3.1-70b-versatile'}`")
+    st.info(f"🚀 Đang triệu hồi Groq: `{target_model}`")
     
-    with st.spinner("Groq đang viết bài cực nhanh..."):
-        content = call_groq(api_key, model_name, prompt_final)
+    with st.spinner("Groq đang 'múa phím' bài viết..."):
+        content = call_groq(v('GROQ_API_KEY'), target_model, prompt_final)
         
         if "❌" in content:
             st.error(content)
-            st.warning("👉 Kiểm tra lại Key Groq (phải bắt đầu bằng gsk_) hoặc đổi Model khác.")
+            st.warning("👉 Kiểm tra Key Groq (gsk_...) hoặc danh sách Model trên Sheet.")
         else:
             st.success("✅ THÀNH CÔNG RỰC RỠ!")
-            st.text_area("Bản thảo AI (Groq)", content, height=450)
+            st.text_area("Bản thảo từ Groq", content, height=450)
 
 # --- 4. GIAO DIỆN HOME ---
 data, sh = load_all_tabs()
