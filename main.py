@@ -2,23 +2,16 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import google.generativeai as genai
-import random, time, requests, re, json, math
+import requests, json
 from datetime import datetime, timedelta, timezone
 
-# --- 1. TIỆN ÍCH HỆ THỐNG & LÀM SẠCH DỮ LIỆU ---
-st.set_page_config(page_title="LAIHO.VN - MASTER V7", layout="wide")
-
-def get_vn_time(): 
-    return datetime.now(timezone(timedelta(hours=7)))
+# --- 1. SETUP HỆ THỐNG & TRIM DỮ LIỆU ---
+st.set_page_config(page_title="LAIHO.VN AI WRITER", layout="wide")
 
 def clean_str(s):
-    """TRIM siêu cấp: Loại bỏ khoảng trắng và ký tự 'rác' tàng hình"""
-    if not s: return ""
-    return str(s).strip().replace('\u200b', '').replace('\xa0', '')
+    return str(s).strip().replace('\u200b', '').replace('\xa0', '') if s else ""
 
 def get_creds():
-    """HÀM CHÌA KHÓA: Đã fix lỗi 'get_creds is not defined'"""
     try:
         info = dict(st.secrets["service_account"])
         info["private_key"] = info["private_key"].replace("\\n", "\n").strip()
@@ -26,7 +19,7 @@ def get_creds():
             info, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         )
     except Exception as e:
-        st.error(f"Lỗi cấu hình Secrets: {e}"); return None
+        st.error(f"Lỗi Secrets: {e}"); return None
 
 @st.cache_data(ttl=5)
 def load_all_tabs():
@@ -49,20 +42,20 @@ def load_all_tabs():
     except Exception as e:
         st.error(f"Lỗi kết nối Sheet: {e}"); return None, None
 
-# --- 2. CÁC HÀM GỌI NÃO BỘ (FIX LỖI AUTH HEADER) ---
-
+# --- 2. HÀM GỌI AI (OPENROUTER DUY NHẤT) ---
 def call_openrouter(api_key, model_name, prompt):
-    """Cổng vạn năng: Fix lỗi 'No cookie auth' bằng cách thêm đầy đủ Header"""
     url = "https://openrouter.ai/api/v1/chat/completions"
-    # TRỌNG TÂM: Header phải chuẩn 100%
     headers = {
         "Authorization": f"Bearer {api_key.strip()}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://laiho.vn", # Bắt buộc hoặc tùy chọn để OpenRouter định danh
+        "HTTP-Referer": "https://laiho.vn", # Để OpenRouter không báo lỗi auth
         "X-Title": "Laiho SEO Robot"
     }
+    # Nếu Dashboard trống, dùng model miễn phí để test
+    target_model = model_name.strip() if model_name else "meta-llama/llama-3.2-1b-instruct:free"
+    
     payload = {
-        "model": model_name.strip(),
+        "model": target_model,
         "messages": [{"role": "user", "content": prompt}]
     }
     try:
@@ -70,21 +63,11 @@ def call_openrouter(api_key, model_name, prompt):
         res_json = response.json()
         if 'choices' in res_json:
             return res_json['choices'][0]['message']['content']
-        return f"Lỗi OpenRouter: {res_json.get('error', {}).get('message', 'Lỗi không xác định')}"
+        return f"❌ Lỗi: {res_json.get('error', {}).get('message', 'Unknown Error')}"
     except Exception as e:
-        return f"Lỗi kết nối OpenRouter: {str(e)}"
+        return f"❌ Lỗi kết nối: {str(e)}"
 
-def call_gemini(api_key, model_name, prompt):
-    """Google Gemini trực tiếp"""
-    try:
-        genai.configure(api_key=api_key.strip())
-        m_path = f"models/{model_name.strip()}" if "models/" not in model_name else model_name
-        model = genai.GenerativeModel(m_path)
-        return model.generate_content(prompt).text
-    except Exception as e:
-        return f"Lỗi Google 404/Auth: {str(e)}"
-
-# --- 3. TRUNG TÂM VIẾT BÀI AI (POPUP) ---
+# --- 3. POPUP VIẾT BÀI AI ---
 @st.dialog("⚙️ TRUNG TÂM VIẾT BÀI AI", width="large")
 def run_ai_popup(all_data, sh):
     df_d = all_data['Dashboard']
@@ -92,44 +75,28 @@ def run_ai_popup(all_data, sh):
         res = df_d[df_d.iloc[:, 0].str.strip() == k.strip()].iloc[:, 1]
         return clean_str(res.values[0]) if not res.empty else ""
 
-    st.write("🔄 **Đang kiểm tra rổ từ khóa & đạn dược...**")
+    st.write("🔄 **Đang kiểm tra chìa khóa vạn năng...**")
+    
     kw_main = "Dịch vụ lái xe hộ chuyên nghiệp" # Demo bốc từ khóa
     prompt_final = f"Viết bài SEO về {kw_main}. Quy tắc: {v('SEO_GLOBAL_RULE')}"
 
-    content_raw = ""
-    # Lấy danh sách mẫu từ ô MODEL_VERSION
-    models_to_try = [m.strip() for m in v('MODEL_VERSION').split(',') if m.strip()]
+    api_key = v('OPENROUTER_API_KEY')
+    model_name = v('MODEL_VERSION')
+
+    st.info(f"🤖 Đang gọi não bộ: `{model_name if model_name else 'Model Free'}`")
     
-    for m_name in models_to_try:
-        m_lower = m_name.lower()
+    with st.spinner("Đang sản xuất nội dung..."):
+        content = call_openrouter(api_key, model_name, prompt_final)
         
-        # Nhánh 1: OpenRouter (Khi có dấu '/')
-        if '/' in m_lower:
-            st.write(f"🌐 Đang gọi OpenRouter: `{m_name}`")
-            keys = [k.strip() for k in v('OPENROUTER_API_KEY').split(',') if k.strip()]
-            for ok in keys:
-                res = call_openrouter(ok, m_name, prompt_final)
-                if "Lỗi" not in res: content_raw = res; break
-                else: st.error(f"❌ Key {ok[:8]}...: {res}")
-        
-        # Nhánh 2: Gemini trực tiếp
-        elif 'gemini' in m_lower:
-            st.write(f"🧬 Đang gọi Gemini: `{m_name}`")
-            keys = [k.strip() for k in v('GEMINI_API_KEY').split(',') if k.strip()]
-            for gk in keys:
-                res = call_gemini(gk, m_name, prompt_final)
-                if "Lỗi" not in res: content_raw = res; break
-                else: st.error(f"❌ Key {gk[:8]}...: {res}")
-        
-        if content_raw: break
+        if "❌" in content:
+            st.error(content)
+            st.warning("👉 Nếu lỗi 'No endpoints', bồ hãy đổi MODEL_VERSION thành model miễn phí (xem bên dưới).")
+        else:
+            st.success("✅ THÀNH CÔNG!")
+            st.text_area("Bản thảo AI", content, height=400)
+            # Sau đó bồ thêm logic ghi Sheet vào đây là xong bài.
 
-    if content_raw:
-        st.success("✅ **SUCCESS!** Robot đã xuất bản nội dung thành công.")
-        st.text_area("Bản thảo", content_raw, height=300)
-    else:
-        st.error("💀 **CẠN KIỆT:** Vui lòng nạp thêm tiền vào OpenRouter hoặc đổi Key mới.")
-
-# --- 4. GIAO DIỆN HOME ---
+# --- 4. GIAO DIỆN TRANG CHỦ ---
 data, sh = load_all_tabs()
 if data:
     c1, c2, _ = st.columns([1.5, 1, 4])
@@ -137,7 +104,7 @@ if data:
         if st.button("Viết bài AI", type="primary", use_container_width=True):
             run_ai_popup(data, sh)
     with c2:
-        if st.button("🔄 LÀM MỚI DỮ LIỆU", use_container_width=True):
+        if st.button("🔄 LÀM MỚI KHO", use_container_width=True):
             st.cache_data.clear(); st.rerun()
 
     st.divider()
