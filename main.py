@@ -44,8 +44,7 @@ def load_all_tabs():
     sh = get_sh()
     if not sh: return None, None
     data = {}
-    tabs = ["Dashboard", "Website", "Keyword", "Image", "Report"]
-    for t in tabs:
+    for t in ["Dashboard", "Website", "Keyword", "Image", "Report"]:
         ws = sh.worksheet(t)
         vals = ws.get_all_values()
         if not vals: data[t] = pd.DataFrame(); continue
@@ -58,8 +57,7 @@ def pulse_1_gatekeeper(data, v):
     now = get_vn_now()
     df_rep = data['Report']
     batch_size = get_range_val(v('BATCH_SIZE'), 5)
-    max_days = get_range_val(v('MAX_SCHEDULE_DAYS'), 30)
-    for i in range(max_days):
+    for i in range(get_range_val(v('MAX_SCHEDULE_DAYS'), 30)):
         target_date = (now + timedelta(days=i)).strftime("%Y-%m-%d")
         day_posts = df_rep[df_rep['REP_CREATED_AT'].str.contains(target_date)]
         if len(day_posts) >= batch_size: continue
@@ -133,7 +131,7 @@ data, sh = load_all_tabs()
 if data:
     df_d = data['Dashboard']
     def v(key):
-        row = df_d[df_d.iloc[:, 0].str.strip().upper() == key.strip().upper()]
+        row = df_d[df_d.iloc[:, 0].str.strip().str.upper() == key.strip().upper()]
         return clean(row.iloc[0, 1]) if not row.empty else ""
     st.title("LAIHO SEO OS")
     if st.button("🚀 KÍCH HOẠT ROBOT"):
