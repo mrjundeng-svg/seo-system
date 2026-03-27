@@ -48,16 +48,14 @@ def load_all_tabs():
         try:
             ws = sh.worksheet(t)
             vals = ws.get_all_values()
-            if not vals: 
-                data[t] = pd.DataFrame()
-                continue
+            if not vals: data[t] = pd.DataFrame(); continue
             headers = [clean(h).upper() for h in vals[0]]
             data[t] = pd.DataFrame(vals[1:], columns=headers).fillna('')
         except: data[t] = pd.DataFrame()
     return data, sh
 
 def pulse_1_gatekeeper(data, v):
-    if v('SYSTEM_MAINTENANCE').upper() == 'ON': return None, "MAINTENANCE"
+    if v('SYSTEM_MAINTENANCE').upper() == 'ON': return None, "MAINTENANCE_ON"
     now = get_vn_now()
     df_rep = data['Report']
     batch_size = get_range_val(v('BATCH_SIZE'), 5)
@@ -66,21 +64,18 @@ def pulse_1_gatekeeper(data, v):
         day_posts = df_rep[df_rep['REP_CREATED_AT'].str.contains(target_date)] if not df_rep.empty else []
         if len(day_posts) >= batch_size: continue
         df_ws = data['Website']
-        if df_ws.empty: return None, "NO_WEBSITE_DATA"
         active_webs = df_ws[df_ws['WS_STATUS'].str.upper() == 'ACTIVE']
         if active_webs.empty: return None, "NO_ACTIVE_WEB"
         web_row = active_webs.sample(1).iloc[0].to_dict()
         web_limit = get_range_val(web_row['WS_POST_LIMIT'], 1)
         web_today = len(day_posts[day_posts['REP_WS_NAME'] == web_row['WS_URL']]) if len(day_posts) > 0 else 0
         if web_today < web_limit:
-            return {"web": web_row, "date": target_date, "batch": batch_size}, "PASS"
-    return None, "FULL_SLOT"
+            return {"web": web_row, "date": target_date}, "PASS"
+    return None, "ALL_DAYS_FULL"
 
 def pulse_2_hunter(data, v):
     df_kw = data['Keyword']
-    if df_kw.empty: return []
-    proj_name = v('PROJECT_NAME')
-    df_p = df_kw[df_kw['KW_TOPIC'].str.contains(proj_name, case=False, na=False)].copy()
+    df_p = df_kw[df_kw['KW_TOPIC'].str.contains(v('PROJECT_NAME'), case=False)].copy()
     if df_p.empty: return []
     df_p['KW_STATUS'] = pd.to_numeric(df_p['KW_STATUS'], errors='coerce').fillna(0).astype(int)
     tbc = df_p['KW_STATUS'].mean()
@@ -116,19 +111,16 @@ def pulse_5_report(sh, v, web, kw_list, content, scores):
         sh.worksheet("Report").append_row(report_row)
         ws_kw = sh.worksheet("Keyword")
         cell = ws_kw.find(kw_main)
-        if cell: 
-            old_status = get_range_val(kw_list[0].get('KW_STATUS', 0))
-            ws_kw.update_cell(cell.row, 3, old_status + 1)
+        if cell: ws_kw.update_cell(cell.row, 3, get_range_val(kw_list[0].get('KW_STATUS', 0)) + 1)
     except: pass
     try:
         requests.post(f"https://api.telegram.org/bot{v('TELEGRAM_BOT_TOKEN')}/sendMessage", 
-                      json={"chat_id": v('TELEGRAM_CHAT_ID'), "text": f"✅ {kw_main}\n📊 {web.get('WS_URL')}", "parse_mode": "Markdown"})
+                      json={"chat_id": v('TELEGRAM_CHAT_ID'), "text": f"✅ {kw_main}\n🌐 {web.get('WS_URL')}", "parse_mode": "Markdown"})
     except: pass
     try:
         sender, pw, rec = v('SENDER_EMAIL'), v('SENDER_PASSWORD'), v('RECEIVER_EMAIL')
         msg = MIMEMultipart()
-        msg['Subject'] = f"🚀 {kw_main}"
-        msg.attach(MIMEText(content[:500], 'html'))
+        msg['Subject'] = f"🚀 {kw_main}"; msg.attach(MIMEText(content[:500], 'html'))
         doc = Document(); doc.add_heading(kw_main, 0); doc.add_paragraph(content)
         w_io = io.BytesIO(); doc.save(w_io); w_io.seek(0)
         part = MIMEBase('application', 'octet-stream'); part.set_payload(w_io.read()); encoders.encode_base64(part)
@@ -141,7 +133,6 @@ data, sh = load_all_tabs()
 if data:
     df_d = data['Dashboard']
     def v(key):
-        if df_d.empty or len(df_d.columns) < 2: return ""
         row = df_d[df_d.iloc[:, 0].str.strip().str.upper() == key.strip().upper()]
         return clean(row.iloc[0, 1]) if not row.empty else ""
     st.title("LAIHO SEO OS")
@@ -149,6 +140,6 @@ if data:
         slot, g_msg = pulse_1_gatekeeper(data, v)
         if not slot: st.error(g_msg); st.stop()
         kw_list = pulse_2_hunter(data, v)
-        if not kw_list: st.error("EMPTY_KW"); st.stop()
-        pulse_5_report(sh, v, slot['web'], kw_list, "Nội dung AI...", {'seo': 48, 'ai': '12%', 'read': 70})
-        st.success("DONE")
+        if not kw_list: st.error("NO_KW_FOUND"); st.stop()
+        pulse_5_report(sh, v, slot['web'], kw_list, "Nội dung AI chuẩn Master...", {'seo': 48, 'ai': '12%', 'read': 70})
+        st.success(f"SUCCESS: {kw_list[0]['KW_TEXT']} -> {slot['web']['WS_URL']}")
