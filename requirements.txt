@@ -3,3 +3,5 @@ pandas
 gspread
 groq
 google-search-results
+requests
+python-docx
