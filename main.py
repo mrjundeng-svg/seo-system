@@ -45,11 +45,15 @@ def load_all_tabs():
     if not sh: return None, None
     data = {}
     for t in ["Dashboard", "Website", "Keyword", "Image", "Report"]:
-        ws = sh.worksheet(t)
-        vals = ws.get_all_values()
-        if not vals: data[t] = pd.DataFrame(); continue
-        headers = [clean(h).upper() for h in vals[0]]
-        data[t] = pd.DataFrame(vals[1:], columns=headers).fillna('')
+        try:
+            ws = sh.worksheet(t)
+            vals = ws.get_all_values()
+            if not vals: 
+                data[t] = pd.DataFrame()
+                continue
+            headers = [clean(h).upper() for h in vals[0]]
+            data[t] = pd.DataFrame(vals[1:], columns=headers).fillna('')
+        except: data[t] = pd.DataFrame()
     return data, sh
 
 def pulse_1_gatekeeper(data, v):
@@ -59,20 +63,24 @@ def pulse_1_gatekeeper(data, v):
     batch_size = get_range_val(v('BATCH_SIZE'), 5)
     for i in range(get_range_val(v('MAX_SCHEDULE_DAYS'), 30)):
         target_date = (now + timedelta(days=i)).strftime("%Y-%m-%d")
-        day_posts = df_rep[df_rep['REP_CREATED_AT'].str.contains(target_date)]
+        day_posts = df_rep[df_rep['REP_CREATED_AT'].str.contains(target_date)] if not df_rep.empty else []
         if len(day_posts) >= batch_size: continue
-        active_webs = data['Website'][data['Website']['WS_STATUS'].str.upper() == 'ACTIVE']
+        df_ws = data['Website']
+        if df_ws.empty: return None, "NO_WEBSITE_DATA"
+        active_webs = df_ws[df_ws['WS_STATUS'].str.upper() == 'ACTIVE']
         if active_webs.empty: return None, "NO_ACTIVE_WEB"
         web_row = active_webs.sample(1).iloc[0].to_dict()
         web_limit = get_range_val(web_row['WS_POST_LIMIT'], 1)
-        web_today = len(day_posts[day_posts['REP_WS_NAME'] == web_row['WS_URL']])
+        web_today = len(day_posts[day_posts['REP_WS_NAME'] == web_row['WS_URL']]) if len(day_posts) > 0 else 0
         if web_today < web_limit:
             return {"web": web_row, "date": target_date, "batch": batch_size}, "PASS"
     return None, "FULL_SLOT"
 
 def pulse_2_hunter(data, v):
     df_kw = data['Keyword']
-    df_p = df_kw[df_kw['KW_TOPIC'].str.contains(v('PROJECT_NAME'), case=False)].copy()
+    if df_kw.empty: return []
+    proj_name = v('PROJECT_NAME')
+    df_p = df_kw[df_kw['KW_TOPIC'].str.contains(proj_name, case=False, na=False)].copy()
     if df_p.empty: return []
     df_p['KW_STATUS'] = pd.to_numeric(df_p['KW_STATUS'], errors='coerce').fillna(0).astype(int)
     tbc = df_p['KW_STATUS'].mean()
@@ -85,7 +93,7 @@ def pulse_2_hunter(data, v):
         random.shuffle(basket)
         for kw in basket:
             if len(selected) >= limit: break
-            g = kw['KW_GROUP'].strip().lower()
+            g = clean(kw.get('KW_GROUP', '')).lower()
             if g not in groups:
                 selected.append(kw); groups.append(g)
     pick(basket_a, quota_a)
@@ -108,7 +116,9 @@ def pulse_5_report(sh, v, web, kw_list, content, scores):
         sh.worksheet("Report").append_row(report_row)
         ws_kw = sh.worksheet("Keyword")
         cell = ws_kw.find(kw_main)
-        if cell: ws_kw.update_cell(cell.row, 3, get_range_val(kw_list[0].get('KW_STATUS', 0)) + 1)
+        if cell: 
+            old_status = get_range_val(kw_list[0].get('KW_STATUS', 0))
+            ws_kw.update_cell(cell.row, 3, old_status + 1)
     except: pass
     try:
         requests.post(f"https://api.telegram.org/bot{v('TELEGRAM_BOT_TOKEN')}/sendMessage", 
@@ -131,6 +141,7 @@ data, sh = load_all_tabs()
 if data:
     df_d = data['Dashboard']
     def v(key):
+        if df_d.empty or len(df_d.columns) < 2: return ""
         row = df_d[df_d.iloc[:, 0].str.strip().str.upper() == key.strip().upper()]
         return clean(row.iloc[0, 1]) if not row.empty else ""
     st.title("LAIHO SEO OS")
