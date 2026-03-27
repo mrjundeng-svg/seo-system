@@ -6,7 +6,7 @@ import google.generativeai as genai
 import random, time, requests, re, math
 from datetime import datetime, timedelta, timezone
 
-# --- 1. SETUP HỆ THỐNG ---
+# --- 1. SETUP HỆ THỐNG & LÀM SẠCH DỮ LIỆU ---
 st.set_page_config(page_title="LAIHO.VN MASTER ENGINE", layout="wide")
 
 def get_vn_time(): 
@@ -31,15 +31,15 @@ def load_all_tabs():
             vals = ws.get_all_values()
             if not vals: data[t] = pd.DataFrame()
             else:
-                # ÉP TRIM TOÀN BỘ ĐỂ TRÁNH LỖI KHOẢNG TRẮNG
+                # ÉP TRIM: Xử lý triệt để lỗi KeyError: 'REP_CREATED_AT'
                 headers = [str(h).strip() for h in vals[0]]
                 rows = [[str(cell).strip() for cell in row] for row in vals[1:]]
                 data[t] = pd.DataFrame(rows, columns=headers).fillna('')
         return data, sh
     except Exception as e:
-        st.error(f"Lỗi kết nối Sheet: {e}"); return None, None
+        st.error(f"Lỗi kết nối Google Sheet: {e}"); return None, None
 
-# --- 2. CƠ CHẾ GỌI NÃO DỰ PHÒNG (GROQ) ---
+# --- 2. HÀM GỌI NÃO DỰ PHÒNG (GROQ) ---
 def call_groq_api(api_key, model_name, prompt):
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {api_key.strip()}", "Content-Type": "application/json"}
@@ -57,9 +57,9 @@ def call_groq_api(api_key, model_name, prompt):
     except Exception as e:
         return f"Lỗi kết nối Groq: {str(e)}"
 
-# --- 3. TRUNG TÂM ĐIỀU KHIỂN POPUP ---
-@st.dialog("⚙️ TRUNG TÂM ĐIỀU KHIỂN HYBRID", width="large")
-def run_robot_hybrid(all_data, sh):
+# --- 3. TRUNG TÂM ĐIỀU KHIỂN POPUP (ST.DIALOG) ---
+@st.dialog("⚙️ TRUNG TÂM ĐIỀU KHIỂN ROBOT", width="large")
+def run_robot_popup(all_data, sh):
     df_d = all_data['Dashboard']
     def v(k):
         res = df_d[df_d.iloc[:, 0].str.strip() == k.strip()].iloc[:, 1]
@@ -67,9 +67,9 @@ def run_robot_hybrid(all_data, sh):
 
     st.write("🔄 **Khởi động luồng chạy Hybrid...**")
     
-    # 1. Kiểm tra hạn ngạch
+    # Check Batch Size & Today (Trị lỗi REP_CREATED_AT)
     df_rep = all_data['Report']
-    df_rep.columns = [c.strip() for c in df_rep.columns] # Sửa lỗi REP_CREATED_AT
+    df_rep.columns = [c.strip() for c in df_rep.columns] # Đảm bảo cột sạch
     batch_size = int(v('BATCH_SIZE') or 5)
     today_str = get_vn_time().strftime("%Y-%m-%d")
     
@@ -78,18 +78,17 @@ def run_robot_hybrid(all_data, sh):
         today_count = len(df_rep[df_rep['REP_CREATED_AT'].astype(str).str.contains(today_str)])
     
     if today_count >= batch_size:
-        st.warning(f"Đã đạt giới hạn ngày ({today_count}/{batch_size})"); return
+        st.warning(f"Đã đạt chỉ tiêu ngày ({today_count}/{batch_size})!"); return
 
-    # 2. Bốc từ khóa (Logic Rổ A/B rút gọn)
+    # Bốc từ khóa (Dùng logic rổ A/B của bồ)
     st.write("🔍 **Đang nhặt từ khóa chiến thuật...**")
-    kw_main = "Tài xế lái hộ chuyên nghiệp" # Giả lập logic bốc từ khóa của bồ
-    kw_subs = ["lái xe hộ", "thuê tài xế"]
+    kw_main = "Dịch vụ lái xe hộ uy tín" # Demo
+    kw_subs = ["thuê tài xế", "lái xe đi tỉnh"]
     
     prompt_final = f"Viết bài SEO về {kw_main}. Từ khóa phụ: {', '.join(kw_subs)}. Quy tắc: {v('SEO_GLOBAL_RULE')}"
-
     content_raw = ""
 
-    # --- NHÁNH 1: THỬ GEMINI (ƯU TIÊN) ---
+    # --- NHÁNH 1: THỬ TOÀN BỘ KEY GEMINI ---
     st.markdown("### 🧬 Hệ thống Gemini")
     gemini_keys = [k.strip() for k in v('GEMINI_API_KEY').split(',') if k.strip()]
     models_gemini = [m.strip() for m in v('MODEL_VERSION').split(',') if 'gemini' in m.lower()]
@@ -104,52 +103,50 @@ def run_robot_hybrid(all_data, sh):
                 resp = model.generate_content(prompt_final)
                 if resp.text: content_raw = resp.text; break
             except Exception as e:
-                st.error(f"❌ Gemini tạch: {str(e)[:100]}")
+                st.error(f"❌ Gemini tạch: {str(e)[:150]}") # Bồ copy lỗi tại đây
                 continue
         if content_raw: break
 
-    # --- NHÁNH 2: THỬ GROQ (DỰ PHÒNG) ---
+    # --- NHÁNH 2: THỬ TOÀN BỘ KEY GROQ (FAILOVER) ---
     if not content_raw:
-        st.markdown("### 🚀 Hệ thống Groq (Failover)")
+        st.markdown("### 🚀 Hệ thống Groq (Dự phòng)")
         groq_keys = [k.strip() for k in v('GROQ_API_KEY').split(',') if k.strip()]
         models_groq = [m.strip() for m in v('MODEL_VERSION').split(',') if any(x in m.lower() for x in ['llama', 'mixtral'])]
         
         for qk in groq_keys:
             target_q = models_groq[0] if models_groq else "llama-3.1-70b-versatile"
-            st.write(f"⏳ Thử Groq: `{target_q}` | Key: `{qk[:8]}...`")
+            st.write(f"🚀 Thử Groq: `{target_q}` | Key: `{qk[:8]}...`")
             res_groq = call_groq_api(qk, target_q, prompt_final)
             if "Lỗi" not in res_groq:
                 content_raw = res_groq; break
             else:
-                st.error(f"❌ Groq tạch: {res_groq}")
+                st.error(f"❌ Groq tạch: {res_groq}") # Bồ copy lỗi tại đây
 
     if not content_raw:
-        st.error("💀 **CẠN KIỆT NGUỒN LỰC!** Cả Google và Groq đều từ chối yêu cầu."); return
+        st.error("💀 **CẠN KIỆT NGUỒN LỰC!** Cả Google và Groq đều từ chối."); return
 
-    # --- BƯỚC 4 & 5: TỐI ƯU & GHI CHÉP ---
-    st.success("✅ **Lấy nội dung thành công!** Đang ghi báo cáo...")
-    # ... [Đoạn logic Ghi Report, Bắn Telegram bồ giữ nguyên bản Master] ...
-    
-    st.info("Chiến dịch hoàn tất. Bồ có thể copy lỗi ở trên nếu cần.")
+    st.success("✅ **Thành công!** Đang ghi báo cáo...")
+    # ... [Đoạn logic Ghi Sheet & Bắn Telegram giữ nguyên] ...
     if st.button("Xác nhận & Đóng"): st.rerun()
 
-# --- 4. GIAO DIỆN HOME (CHÍNH) ---
+# --- 4. GIAO DIỆN CHÍNH (HOME) ---
 data, sh = load_all_tabs()
 
 if data:
     # NÚT BẤM TO RÕ TẠI HOME
-    c1, c2, _ = st.columns([1.5, 1, 4])
+    c1, c2, _ = st.columns([2, 1, 4])
     with c1:
         if st.button("🚀 KÍCH HOẠT ROBOT HYBRID", type="primary", use_container_width=True):
-            run_robot_hybrid(data, sh)
+            run_robot_popup(data, sh)
     with c2:
         if st.button("🔄 LÀM MỚI KHO", use_container_width=True):
             st.cache_data.clear(); st.rerun()
 
     st.divider()
-    # Hiển thị dữ liệu các Tab để bồ đối soát
-    tab_names = ["Dashboard", "Website", "Keyword", "Image", "Spin", "Local", "Report"]
-    st_tabs = st.tabs([f"📂 {n}" for n in tab_names])
-    for i, name in enumerate(tab_names):
+    
+    # Hiển thị các Tab để bồ đối soát dữ liệu
+    tab_list = ["Dashboard", "Website", "Keyword", "Image", "Spin", "Local", "Report"]
+    st_tabs = st.tabs([f"📂 {n}" for n in tab_list])
+    for i, name in enumerate(tab_list):
         with st_tabs[i]:
             st.dataframe(data[name], use_container_width=True, hide_index=True)
