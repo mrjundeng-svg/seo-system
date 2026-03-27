@@ -4,12 +4,11 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests, json
 
-# --- 1. SETUP HỆ THỐNG & GỌT SẠCH KHOẢNG TRẮNG ---
-st.set_page_config(page_title="LAIHO.VN - ONE PIPE AI", layout="wide")
+# --- 1. SETUP HỆ THỐNG & LÀM SẠCH DỮ LIỆU ---
+st.set_page_config(page_title="LAIHO.VN - AI WRITER V9", layout="wide")
 
 def clean_str(s):
-    if not s: return ""
-    return str(s).strip().replace('\u200b', '').replace('\xa0', '')
+    return str(s).strip().replace('\u200b', '').replace('\xa0', '') if s else ""
 
 def get_creds():
     try:
@@ -51,7 +50,6 @@ def call_openrouter(api_key, model_name, prompt):
         "HTTP-Referer": "https://laiho.vn",
         "X-Title": "Laiho SEO Robot"
     }
-    # Chỉ bốc 1 cái tên model sạch sẽ
     payload = {
         "model": model_name,
         "messages": [{"role": "user", "content": prompt}]
@@ -73,24 +71,25 @@ def run_ai_popup(all_data, sh):
         res = df_d[df_d.iloc[:, 0].str.strip() == k.strip()].iloc[:, 1]
         return clean_str(res.values[0]) if not res.empty else ""
 
-    st.write("🔄 **Đang chuẩn bị luồng chạy đơn...**")
+    st.write("🔄 **Đang chuẩn bị luồng chạy...**")
     kw_main = "Dịch vụ lái xe hộ" 
     prompt_final = f"Viết bài SEO về {kw_main}. Quy tắc: {v('SEO_GLOBAL_RULE')}"
 
-    # LẤY CHÍNH XÁC 1 MODEL ĐẦU TIÊN
+    # FIX LỖI MODEL ID: Chỉ lấy model đầu tiên trong danh sách
     raw_models = v('MODEL_VERSION')
-    first_model = raw_models.split(',')[0].strip() if ',' in raw_models else raw_models.strip()
+    selected_model = raw_models.split(',')[0].strip() if ',' in raw_models else raw_models.strip()
     
-    # Nếu trống, ép dùng model FREE để test
-    final_model = first_model if first_model else "meta-llama/llama-3.2-1b-instruct:free"
+    # Nếu trống, ép dùng model FREE để test cho ví $0
+    if not selected_model:
+        selected_model = "meta-llama/llama-3.2-1b-instruct:free"
 
-    st.info(f"🤖 Đang gọi não bộ: `{final_model}`")
+    st.info(f"🤖 Đang gọi não bộ: `{selected_model}`")
     with st.spinner("Đang sản xuất nội dung..."):
-        content = call_openrouter(v('OPENROUTER_API_KEY'), final_model, prompt_final)
+        content = call_openrouter(v('OPENROUTER_API_KEY'), selected_model, prompt_final)
         
         if "❌" in content:
             st.error(content)
-            st.warning("👉 Kiểm tra MODEL_VERSION trên Sheet xem có đúng định dạng chưa.")
+            st.warning("👉 Kiểm tra MODEL_VERSION (phải có tiền tố hãng/...) hoặc nạp thêm tiền.")
         else:
             st.success("✅ THÀNH CÔNG!")
             st.text_area("Bản thảo", content, height=400)
@@ -99,6 +98,7 @@ def run_ai_popup(all_data, sh):
 data, sh = load_all_tabs()
 if data:
     c1, _, _ = st.columns([1.5, 1, 4])
+    # Đã đổi tên nút theo ý bồ
     if c1.button("Viết bài AI", type="primary", use_container_width=True):
         run_ai_popup(data, sh)
     st.divider()
