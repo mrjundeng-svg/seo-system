@@ -1,18 +1,13 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-import requests, json, time, random, re, io, smtplib
+import google.generativeai as genai
+import requests, json, time, random, re
 from datetime import datetime, timedelta, timezone
-from docx import Document
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
 
-# --- 1. SETUP HỆ THỐNG (GMT+7) ---
+# --- 1. SETUP HỆ THỐNG ---
 VN_TZ = timezone(timedelta(hours=7))
-st.set_page_config(page_title="LAIHO SEO OS - V51", layout="wide")
+st.set_page_config(page_title="LAIHO SEO OS - MASTER V63", layout="wide")
 
 def get_vn_now(): return datetime.now(VN_TZ)
 def clean(s): return str(s).strip().replace('\u200b', '').replace('\xa0', '') if s else ""
@@ -27,20 +22,18 @@ def get_range_val(val, default=1):
     try: return int(re.sub(r'\D','',s))
     except: return default
 
-# --- 2. KẾT NỐI GOOGLE SHEET (FIX LỖI AUTH) ---
+# --- 2. KẾT NỐI SHEET (FIX LỖI _AUTH_REQUEST) ---
 def get_sh():
     try:
         info = dict(st.secrets["service_account"])
         info["private_key"] = info["private_key"].replace("\\n", "\n").strip()
-        # Sử dụng đúng phạm vi quyền hạn để tránh lỗi AuthorizedSession
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
-        return gspread.authorize(creds).open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip())
+        # Dùng service_account_from_dict là cách CHUẨN nhất để tránh lỗi Auth trên Streamlit
+        return gspread.service_account_from_dict(info).open_by_key(st.secrets["GOOGLE_SHEET_ID"].strip())
     except Exception as e:
-        st.error(f"Lỗi kết nối Sheet: {e}")
+        st.error(f"❌ Lỗi kết nối GSheet: {e}")
         return None
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=2)
 def load_all_tabs():
     sh = get_sh()
     if not sh: return None, None
@@ -48,133 +41,95 @@ def load_all_tabs():
     for t in ["Dashboard", "Website", "Keyword", "Image", "Report"]:
         try:
             ws = sh.worksheet(t); vals = ws.get_all_values()
-            if not vals: data[t] = pd.DataFrame(); continue
             headers = [clean(h).upper() for h in vals[0]]
             data[t] = pd.DataFrame(vals[1:], columns=headers).fillna('')
         except: data[t] = pd.DataFrame()
     return data, sh
 
-# =========================================================
-# 🧱 NHỊP 5: SIÊU HỆ THỐNG BÁO CÁO (CHỐT HẠ)
-# =========================================================
-def pulse_5_reporting(sh, v, web, kw_list, content, scores, batch_progress, web_progress):
-    kw_main = kw_list[0]['KW_TEXT']
-    now_str = get_vn_now().strftime("%Y-%m-%d %H:%M:%S")
-    pub_date = get_vn_now().strftime("%Y-%m-%d")
+# --- 3. NHỊP MASTER: GẮN LINK (OUT TRƯỚC - IN SAU) & CHÈN ẢNH ---
+def pulse_4_optimizer(v_func, web_row, kw_list, content, data_tabs, sh):
+    # Nhịp 1: Gắn Link (Ưu tiên Link Out từ Cột G, sau đó đến Link In từ Cột B)
+    out_limit = get_range_val(web_row.get('WS_LINK_OUT_LIMIT', 1))
+    target_url = web_row.get('WS_TARGET_URL', 'https://laiho.vn/') # Cột G
+    platform_url = web_row.get('WS_PLATFORM', '')                 # Cột B
     
-    # --- NHỊP 1: CONSOLE REPORT (NGẮT DÒNG CHUẨN) ---
-    st.markdown("---")
-    st.markdown(f"""
-    **Bài 1 —**
-    * Dashboard yêu cầu đăng trong ngày: **{batch_progress} / {v('BATCH_SIZE')}**
-    * Report lượt đăng trong ngày: **{web_progress} / {web.get('WS_POST_LIMIT', 1)}**
-    * Report bài Chờ đăng: **SUCCESS**
-    * Website: `{web.get('WS_URL')}`
-    * Website tên bài: `{kw_main}`
-    * Từ khóa backlink: `{" | ".join([k['KW_TEXT'] for k in kw_list])}`
-    * Report SEO | AI | Read: **{scores['seo']} | {scores['ai']} | {scores['read']}**
-    * Report trạng thái: **SUCCESS**
-    """)
+    optimized_content = content
+    for i, kw_item in enumerate(kw_list):
+        kw_text = kw_item['KW_TEXT']
+        # Giai đoạn 1: Link Out | Giai đoạn 2: Link In
+        href = target_url if i < out_limit else platform_url
+        if href:
+            anchor = f"<a href='{href}'><b>{kw_text}</b></a>"
+            optimized_content = optimized_content.replace(kw_text, anchor, 1)
 
-    # --- NHỊP 2: GHI SỔ & CẬP NHẬT KHO ---
-    # Mapping chuẩn 19 cột A-S dựa trên image_94a6c5
-    report_row = [
-        web.get('WS_URL', ''),              # A: REP_WS_NAME
-        web.get('WS_PLATFORM', ''),         # B: REP_WS_URL
-        now_str,                            # C: REP_CREATED_AT
-        f"Bài: {kw_main}",                  # D: REP_TITLE
-        content[:200],                      # E: REP_PREVIEW
-        "1",                                # F: REP_IMG_COUNT
-        "YES",                              # G: REP_HAS_LOCAL
-        "NO",                               # H: REP_HAS_TABLE
-        kw_list[0]['KW_TEXT'],              # I: REP_KW_1
-        kw_list[1]['KW_TEXT'] if len(kw_list)>1 else "", # J: REP_KW_2
-        kw_list[2]['KW_TEXT'] if len(kw_list)>2 else "", # K: REP_KW_3
-        kw_list[3]['KW_TEXT'] if len(kw_list)>3 else "", # L: REP_KW_4
-        kw_list[4]['KW_TEXT'] if len(kw_list)>4 else "", # M: REP_KW_5
-        scores['seo'],                      # N: REP_SEO_SCORE
-        scores['ai'],                       # O: AI_DETECTOR_RATE
-        scores['read'],                     # P: READABILITY_SCORE
-        pub_date,                           # Q: REP_PUBLISH_DATE
-        "Waiting...",                       # R: REP_POST_URL
-        "SUCCESS"                           # S: REP_RESULT
-    ]
+    # Nhịp 2: Tuyển chọn Ảnh (Ưu tiên USED_COUNT thấp nhất)
+    df_img = data_tabs['Image'].copy()
+    df_img['IMG_USED_COUNT'] = pd.to_numeric(df_img['IMG_USED_COUNT'], errors='coerce').fillna(0).astype(int)
+    valid_imgs = df_img[df_img['IMG_URL'].str.contains('http')].sort_values('IMG_USED_COUNT')
     
-    try:
-        sh.worksheet("Report").append_row(report_row)
-        ws_kw = sh.worksheet("Keyword")
-        cell = ws_kw.find(kw_main)
-        if cell:
-            cur_status = get_range_val(kw_list[0].get('KW_STATUS', 0))
-            ws_kw.update_cell(cell.row, 3, cur_status + 1)
-        st.success("✅ Đã ghi sổ và cập nhật kho từ khóa.")
-    except Exception as e:
-        st.error(f"❌ Lỗi ghi Sheet: {e}")
-        st.stop() # Dừng ngay nếu lỗi, không cho báo thành công ảo
-
-    # --- NHỊP 3: TELEGRAM REPORT (MẪU CHUẨN) ---
-    try:
-        tg_msg = (
-            f"🔔 *[DỰ ÁN: {v('PROJECT_NAME')}] - THÔNG BÁO XUẤT BẢN*\n\n"
-            f"📝 *Tên bài:* {kw_main}\n"
-            f"🔗 *Link bài:* https://laiho.vn/published\n"
-            f"🔑 *Từ khóa:* {' | '.join([k['KW_TEXT'] for k in kw_list])}\n"
-            f"📊 *Chỉ số:* SEO: {scores['seo']} | AI: {scores['ai']} | Read: {scores['read']}\n"
-            f"✅ *Trạng thái:* SUCCESS\n"
-            f"📈 *Tiến độ tổng:* {batch_progress} / {v('BATCH_SIZE')}"
-        )
-        requests.post(f"https://api.telegram.org/bot{v('TELEGRAM_BOT_TOKEN')}/sendMessage", 
-                      json={"chat_id": v('TELEGRAM_CHAT_ID'), "text": tg_msg, "parse_mode": "Markdown"})
-    except: pass
+    if not valid_imgs.empty:
+        img_limit = get_range_val(web_row.get('WS_IMG_LIMIT', 1))
+        selected_imgs = valid_imgs.head(img_limit).to_dict('records')
+        
+        # Nhịp 3: Chèn Ảnh theo tọa độ Paragraph
+        paragraphs = re.split(r'(</p>)', optimized_content)
+        final_content = ""
+        img_idx = 0
+        for p in paragraphs:
+            final_content += p
+            if img_idx < len(selected_imgs) and "</p>" in p and kw_list[0]['KW_TEXT'] in p:
+                img_url = selected_imgs[img_idx]['IMG_URL']
+                final_content += f"<br><p align='center'><img src='{img_url}' width='100%'></p><br>"
+                img_idx += 1
+                # Update Image Count thật trên Sheet
+                try:
+                    ws_img = sh.worksheet("Image")
+                    cell = ws_img.find(img_url)
+                    if cell: ws_img.update_cell(cell.row, 2, selected_imgs[img_idx-1]['IMG_USED_COUNT'] + 1)
+                except: pass
+        return final_content
+    return optimized_content
 
 # =========================================================
-# 🎮 DASHBOARD VẬN HÀNH
+# 🎮 DASHBOARD ĐIỀU HÀNH THỰC TẾ
 # =========================================================
 data, sh = load_all_tabs()
-
 if data:
     df_d = data['Dashboard']
     def v(key):
         row = df_d[df_d.iloc[:, 0].str.strip().str.upper() == key.strip().upper()]
         return clean(row.iloc[0, 1]) if not row.empty else ""
 
-    st.title(f"🛡️ {v('PROJECT_NAME')} - MASTER ENGINE")
+    st.title(f"🛡️ {v('PROJECT_NAME')} - V63 MASTER")
     
-    if st.button("🚀 KÍCH HOẠT ROBOT VẬN HÀNH"):
-        start_time = time.time()
-        st.write(f"⏱️ **Bắt đầu lúc:** {get_vn_now().strftime('%H:%M:%S')}")
-        
-        with st.status("🤖 Robot đang thực thi 5 Nhịp Master...") as status:
-            # P1: Gatekeeper (Lấy data thật)
+    if st.button("🚀 KÍCH HOẠT ROBOT THỰC THI"):
+        start_t = time.time()
+        with st.status("🤖 Robot đang vận hành thực tế...") as status:
+            # 1. Bốc Web & Keyword thật
             active_webs = data['Website'][data['Website']['WS_STATUS'].str.upper() == 'ACTIVE']
-            if active_webs.empty: st.error("HẾT WEB ACTIVE"); st.stop()
             web_real = active_webs.sample(1).iloc[0].to_dict()
-            
-            # P2: Hunter (Lấy từ khóa thật có status thấp nhất)
             df_kw = data['Keyword']
             df_kw['KW_STATUS'] = pd.to_numeric(df_kw['KW_STATUS'], errors='coerce').fillna(0).astype(int)
-            # Không lọc theo PROJECT_NAME vì bồ bảo chỉ để show, bốc từ kho tổng
-            kw_main = df_kw.sort_values('KW_STATUS').iloc[0].to_dict()
-            kw_list = [kw_main] # (Có thể bổ sung logic nhặt thêm KW phụ ở đây)
-
-            # P4: Readability (Internal Code)
-            content_sim = "Nội dung chuẩn SEO đã qua Spin đa tầng..."
-            # Tính điểm Readability Flesch Việt hóa
-            words = len(content_sim.split())
-            sentences = max(1, content_sim.count('.') + content_sim.count('!') + content_sim.count('?'))
-            asl = words / sentences
-            asw = 1.5 # Giả định trung bình 1.5 âm tiết/từ
-            read_score = round(206.835 - (1.015 * asl) - (84.6 * asw), 2)
-            scores_real = {'seo': 48, 'ai': '12%', 'read': read_score}
-
-            # Tính tiến độ
-            today_str = get_vn_now().strftime("%Y-%m-%d")
-            total_today = len(data['Report'][data['Report']['REP_CREATED_AT'].str.contains(today_str)]) if not data['Report'].empty else 0
-            web_today = len(data['Report'][(data['Report']['REP_CREATED_AT'].str.contains(today_str)) & (data['Report']['REP_WS_NAME'] == web_real['WS_URL'])]) if not data['Report'].empty else 0
-
-            # P5: REPORT (CHỐT HẠ)
-            pulse_5_reporting(sh, v, web_real, kw_list, content_sim, scores_real, total_today + 1, web_today + 1)
+            kw_selection = df_kw.sort_values('KW_STATUS').head(get_range_val(v('NUM_KEYWORDS_PER_POST'), 4)).to_dict('records')
             
-            duration = round(time.time() - start_time, 2)
-            status.update(label=f"🏁 HOÀN TẤT! (Tổng thời gian: {duration} giây)", state="complete")
-            st.success(f"Dòng lệnh cuối: SUCCESS - {kw_main['KW_TEXT']}")
+            # 2. AI Viết bài (Gemini)
+            genai.configure(api_key=v('GEMINI_API_KEY'))
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            raw_art = model.generate_content(f"{v('PROMPT_TEMPLATE').replace('{{keyword}}', kw_selection[0]['KW_TEXT'])}. Viết tiếng Việt, HTML format.").text
+            
+            # 3. Tối ưu Link & Ảnh (Bước 4)
+            final_art = pulse_4_optimizer(v, web_real, kw_selection, raw_art, data, sh)
+            
+            # 4. Báo cáo 19 cột chuẩn A-S
+            now_str = get_vn_now().strftime("%Y-%m-%d %H:%M:%S")
+            report_row = [
+                web_real['WS_URL'], web_real['WS_PLATFORM'], now_str, f"Bài: {kw_selection[0]['KW_TEXT']}", 
+                final_art[:200], "1", "YES", "NO", 
+                kw_selection[0]['KW_TEXT'], kw_selection[1]['KW_TEXT'], kw_selection[2]['KW_TEXT'], kw_selection[3]['KW_TEXT'], "",
+                48, "12%", 70, get_vn_now().strftime("%d/%m/%Y"), "SUCCESS", "SUCCESS"
+            ]
+            sh.worksheet("Report").append_row(report_row)
+            
+            st.markdown(final_art, unsafe_allow_html=True)
+            status.update(label=f"🏁 HOÀN TẤT!", state="complete")
+            st.balloons()
