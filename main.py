@@ -108,7 +108,7 @@ class AutoContentSEO:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
             }
-            res = requests.get(url, headers=headers, timeout=15)
+            res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.text, 'html.parser')
                 for tag in soup(["script", "style", "nav", "footer", "header", "aside"]): tag.decompose()
@@ -171,7 +171,6 @@ class AutoContentSEO:
             log_placeholder.success(f"✅ Đã tải file HTML lên Google Drive.")
             return link
         except Exception as e:
-            log_placeholder.warning(f"⚠️ Chưa lưu được lên Drive do cấu hình Google Cloud. (Bỏ qua bước này)")
             return ""
 
     def step1_kiem_tra_he_thong(self, log_placeholder) -> bool:
@@ -252,8 +251,11 @@ class AutoContentSEO:
         base_word = random.randint(int(word_range[0]), int(word_range[-1]))
         self.final_word_count = base_word // 2 if kw_web_content < 3 else base_word
 
+        # XỬ LÝ FALLBACK NẾU CÀO BÀI ĐỐI THỦ THẤT BẠI
         ref_content = self.fetch_reference_content(log_placeholder)
-        if not ref_content: return {"Lỗi": "Không tìm được bài mẫu ổn định. Google có thể đang chặn hoặc lỗi mạng."}
+        if not ref_content: 
+            log_placeholder.warning("⚠️ Không tìm được bài mẫu. Tự động chuyển sang chế độ tự sáng tạo.")
+            ref_content = f"Hãy viết một bài viết thật chi tiết, phân tích sâu sắc về chủ đề '{self.main_kw_text}', đảm bảo chuẩn SEO và mang lại giá trị cao cho người đọc."
 
         personas = ["chuyên gia", "khách hàng review", "nhà báo", "chủ doanh nghiệp"]
         t_template = spin_text(self.dashboard.get('PROMPT_TEMPLATE', '')).replace('{{keyword}}', self.main_kw_text).replace('{{word_count}}', str(self.final_word_count)).replace('{{secondary_keywords}}', ", ".join(self.content_kws))
@@ -271,7 +273,7 @@ class AutoContentSEO:
         rule_phan_bo = "QUY TẮC RẢI TỪ KHOÁ:\n" + "\n".join(dist_rules)
 
         persona_rule = f"Đóng vai {random.choice(personas)}. Mở bài mới mẻ."
-        style_full = f"{style_base}\n\nXƯƠNG SỐNG ĐỐI THỦ (Giữ nguyên Heading H1/H2/H3):\n{ref_content}"
+        style_full = f"{style_base}\n\nXƯƠNG SỐNG ĐỐI THỦ/ĐỊNH HƯỚNG (Giữ nguyên Heading H1/H2/H3):\n{ref_content}"
         anti_bold_rule = "TUYỆT ĐỐI KHÔNG SỬ DỤNG thẻ in đậm (như ** hay <b>) cho bất kỳ từ khoá nào trong bài viết."
         h1_rule = f"Tiêu đề (thẻ <h1>) phải tự nhiên. Từ khóa '{self.main_kw_text}' phải ĐƯỢC TRỘN VÀO GIỮA HOẶC CUỐI tiêu đề, KHÔNG để từ khoá trơ trọi ở đầu câu."
 
@@ -435,6 +437,21 @@ if db_mock is not None and not db_mock.get('DASHBOARD', pd.DataFrame()).empty:
 st.title(f"🚀 {project_name}")
 st.markdown("---")
 
+# MÃ INJECT JAVASCRIPT KHOÁ F5 TRÌNH DUYỆT NẾU ĐANG CHẠY
+if 'is_running' not in st.session_state:
+    st.session_state.is_running = False
+
+if st.session_state.is_running:
+    st.components.v1.html("""
+        <script>
+            const parentWindow = window.parent || window;
+            parentWindow.addEventListener("beforeunload", function (e) {
+                e.preventDefault();
+                e.returnValue = "Hệ thống đang viết bài nghen, nếu nhấn OK xác nhận là mất bài đang viết ráng chịu!";
+            });
+        </script>
+    """, height=0, width=0)
+
 tab1, tab2, tab3 = st.tabs(["📊 DASHBOARD", "⚙️ CONTROL", "📝 REPORT"])
 
 with tab1:
@@ -454,21 +471,46 @@ with tab1:
         if not df_today.empty:
             cols_to_show = [c for c in ['REP_TITLE', 'REP_WS_NAME', 'REP_PUBLISH_DATE', 'REP_RESULT', 'REP_POST_URL', 'REP_HTML'] if c in df_today.columns]
             st.dataframe(format_display_dataframe(df_today[cols_to_show]), use_container_width=True, hide_index=True)
-            st.info("💡 File bài viết đã tự động được lưu vào thư mục Google Drive của bạn. Copy link ở cột cuối dán vào trình duyệt để tải xuống nha Sếp!")
+            
+            st.markdown("### 👀 Xem & Tải Bài Viết")
+            if 'REP_HTML' in df_today.columns:
+                valid_articles = df_today.dropna(subset=['REP_TITLE']).copy()
+                valid_articles = valid_articles[valid_articles['REP_TITLE'].str.strip() != '']
+                if not valid_articles.empty:
+                    sel_title = st.selectbox("Chọn bài viết muốn xem/tải (Mới nhất trên cùng):", valid_articles['REP_TITLE'].tolist()[::-1])
+                    if sel_title:
+                        html_val = str(valid_articles[valid_articles['REP_TITLE'] == sel_title]['REP_HTML'].iloc[0]).strip()
+                        
+                        if html_val.startswith('http'):
+                            st.success("Tệp HTML đã được lưu tự động trên hệ thống Google Drive.")
+                            st.markdown(f"👉 **[BẤM VÀO ĐÂY ĐỂ MỞ VÀ TẢI FILE TỪ GOOGLE DRIVE]({html_val})**")
+                        elif html_val.startswith('<'):
+                            st.download_button(
+                                label="📥 TẢI FILE HTML VỀ MÁY", 
+                                data=html_val.encode('utf-8'), 
+                                file_name=f"{sel_title}.html", 
+                                mime="text/html", 
+                                type="primary"
+                            )
+                            with st.expander("Nhấp vào đây để xem trước nội dung"):
+                                st.components.v1.html(html_val, height=500, scrolling=True)
+                        else:
+                            st.warning("Bài viết này chưa có dữ liệu nội dung.")
         else: st.info("Chưa có bài viết nào được tạo trong hôm nay.")
 
 with tab2:
     st.subheader("Bảng Điều Khiển Vận Hành Auto")
     col_btn, col_log = st.columns([1, 3])
-    
+
+    def start_auto(): st.session_state.is_running = True
+
     with col_btn: 
-        start_btn = st.button("🚀 BẮT ĐẦU CHẠY AUTO", type="primary", use_container_width=True)
+        start_btn = st.button("🚀 BẮT ĐẦU CHẠY AUTO", type="primary", use_container_width=True, disabled=st.session_state.is_running, on_click=start_auto)
         
     with col_log: log_container = st.container()
         
-    if start_btn and db_mock is not None:
-        with log_container:
-            st.info("🚀 Đang khởi động cỗ máy cày Auto... Vui lòng không F5 trình duyệt!")
+    if st.session_state.is_running and db_mock is not None:
+        with st.spinner("ĐANG CHẠY AUTO - KHOÁ MÀN HÌNH (Vui lòng không tắt tab hay F5 trình duyệt)..."):
             df_rep_temp = db_mock.get('REPORT', pd.DataFrame())
             today_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%Y-%m-%d')
             created_today = len(df_rep_temp[df_rep_temp['REP_CREATED_AT'].astype(str).str.startswith(today_str, na=False)]) if not df_rep_temp.empty and 'REP_CREATED_AT' in df_rep_temp.columns else 0
@@ -513,6 +555,8 @@ with tab2:
                         if str(drive_link).startswith('http'):
                             st.markdown(f"👉 **[MỞ TRÊN GOOGLE DRIVE]({drive_link})**")
                         st.download_button(label="📥 TẢI FILE HTML", data=html_content.encode('utf-8'), file_name=f"{title}.html", mime="text/html", key=f"dl_btn_{idx}")
+            
+            st.session_state.is_running = False
 
 with tab3:
     st.subheader("Dữ Liệu Thô (Dành cho SEOer)")
