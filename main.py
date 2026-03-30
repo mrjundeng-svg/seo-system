@@ -179,7 +179,7 @@ class AutoContentSEO:
         log_placeholder.info("🧠 Bước 4: AI Gemini đang nặn chữ (Vui lòng đợi 15-30s)...")
         try:
             genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            model = genai.GenerativeModel('gemini-pro')
             response = model.generate_content(final_prompt)
             self.raw_html = response.text.replace('```html', '').replace('```', '').strip()
             log_placeholder.success("✅ AI đã viết xong bản nháp!")
