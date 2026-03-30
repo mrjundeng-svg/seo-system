@@ -63,8 +63,10 @@ class AutoContentSEO:
         limit_str = str(limit_val).strip()
         if '-' in limit_str:
             try:
-                min_val, max_val = map(int, limit_str.split('-'))
-                return random.randint(min_val, max_val)
+                p1, p2 = limit_str.split('-')
+                v1, v2 = int(p1.strip()), int(p2.strip())
+                # Dùng min() max() để chống lỗi nhập ngược (VD: 31-12)
+                return random.randint(min(v1, v2), max(v1, v2))
             except ValueError: return 1
         else:
             try: return int(limit_str)
@@ -101,18 +103,31 @@ class AutoContentSEO:
                     break
             if self.target_web is not None: break 
                 
-        # --- ĐÃ SỬA LỖI Ở DÒNG NÀY ---
         if self.target_web is None:
             log_placeholder.error("Đã lên lịch full ngày/web. Dừng hệ thống.")
             return False
 
+        # Parse AUTO_RUN_TIME
         run_time_raw = str(self.dashboard.get('AUTO_RUN_TIME', '09:30-19:30'))
         run_time_start, run_time_end = run_time_raw.split('-') if '-' in run_time_raw else ('09:30', '19:30')
-        base_time = self.target_date.replace(hour=int(run_time_start[:2]), minute=int(run_time_start[3:]))
+        try:
+            base_time = self.target_date.replace(hour=int(run_time_start[:2]), minute=int(run_time_start[3:5]))
+        except:
+            base_time = self.target_date.replace(hour=9, minute=30)
 
-        spacing_raw = str(self.dashboard.get('POST_SPACING_MINUTES', '30-90')).replace(' phút', '')
-        spacing_min, spacing_max = map(int, spacing_raw.split('-')) if '-' in spacing_raw else (30, 90)
-        
+        # Parse POST_SPACING_MINUTES siêu an toàn (Xử lý được cả dạng 30:00-60:00)
+        spacing_raw = str(self.dashboard.get('POST_SPACING_MINUTES', '30-90')).replace(' phút', '').strip()
+        try:
+            if '-' in spacing_raw:
+                parts = spacing_raw.split('-')
+                s_min = int(parts[0].split(':')[0].strip())
+                s_max = int(parts[1].split(':')[0].strip())
+            else:
+                s_min = s_max = int(spacing_raw.split(':')[0].strip())
+        except ValueError:
+            s_min, s_max = 30, 90
+            
+        spacing_min, spacing_max = min(s_min, s_max), max(s_min, s_max)
         self.publish_time = base_time + datetime.timedelta(minutes=random.randint(spacing_min, spacing_max))
         log_placeholder.success(f"✅ Chốt xuất bản: {self.publish_time.strftime('%Y-%m-%d %H:%M')} - Web: {self.target_web.get('WS_NAME')}")
         return True
@@ -131,8 +146,20 @@ class AutoContentSEO:
         self.secondary_kws = secondary_pool.head(max(1, target_kw_count - 1))['KW_TEXT'].tolist()
         all_kws = [str(self.main_kw['KW_TEXT'])] + self.secondary_kws
 
-        word_range = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
-        word_count = random.randint(int(word_range[0]), int(word_range[1]))
+        # Xử lý WORD_COUNT_RANGE an toàn (chống nhập ngược)
+        word_range_raw = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200'))
+        try:
+            if '-' in word_range_raw:
+                w_parts = word_range_raw.split('-')
+                w_min = int(w_parts[0].strip())
+                w_max = int(w_parts[1].strip())
+            else:
+                w_min = w_max = int(word_range_raw.strip())
+        except ValueError:
+            w_min, w_max = 900, 1200
+            
+        w_min, w_max = min(w_min, w_max), max(w_min, w_max)
+        word_count = random.randint(w_min, w_max)
         if target_kw_count < 3: word_count //= 2
 
         # --- BƯỚC 3: RÁP PROMPT ---
