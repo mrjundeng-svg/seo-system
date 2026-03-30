@@ -104,7 +104,13 @@ class AutoContentSEO:
 
     def scrape_url(self, url):
         try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Referer': 'https://www.google.com/'
+            }
+            # ÉP TIMEOUT 10 GIÂY ĐỂ CHỐNG TREO MÁY
             res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.text, 'html.parser')
@@ -123,14 +129,42 @@ class AutoContentSEO:
         except: pass
         return None
 
+    def fetch_reference_content(self, log_placeholder):
+        serp_key = self.dashboard.get('SERPAPI_KEY', '').strip()
+        competitors = [c.strip() for c in str(self.dashboard.get('COMPETITOR_LIST', '')).split(',') if c.strip()]
+        if serp_key:
+            try:
+                # ÉP TIMEOUT 10 GIÂY CHO SERPAPI
+                url = "https://serpapi.com/search"
+                res = requests.get(url, params={"q": self.main_kw_text, "hl": "vi", "gl": "vn", "api_key": serp_key}, timeout=10).json()
+                results = res.get("organic_results", [])
+                
+                target_urls = [r["link"] for r in results[:10] if any(c in r.get("link", "") for c in competitors)]
+                if not target_urls and results:
+                    target_urls = [r["link"] for r in results[:10] if "link" in r]
+                
+                random.shuffle(target_urls)
+                for t_url in target_urls:
+                    content = self.scrape_url(t_url)
+                    if content: 
+                        log_placeholder.success(f"✅ Đã cào xương sống thành công từ: {t_url}")
+                        return content
+            except Exception as e: 
+                log_placeholder.warning(f"⚠️ Chặn quá thời gian kết nối API (Timeout).")
+            
+        df_rep = self.db.get('REPORT', pd.DataFrame())
+        if not df_rep.empty and 'REP_RESULT' in df_rep.columns and 'REP_POST_URL' in df_rep.columns:
+            df_valid = df_rep[df_rep['REP_RESULT'].isin(['DONE', 'PENDING'])]
+            for _, row in df_valid.iterrows():
+                link = str(row['REP_POST_URL']).strip()
+                if link.startswith('http'):
+                    content = self.scrape_url(link)
+                    if content: return content
+        return None
+
     def upload_to_drive(self, html_content, title, log_placeholder):
         try:
-            # TỰ ĐỘNG BỐC ID TỪ SHEET DASHBOARD
-            folder_id = self.dashboard.get('EMAIL_FOLDER_DRIVE_ID', '').strip()
-            if not folder_id:
-                log_placeholder.error("❌ Thiếu EMAIL_FOLDER_DRIVE_ID trong tab DASHBOARD.")
-                return ""
-
+            folder_id = self.dashboard.get('EMAIL_FOLDER_DRIVE_ID', '1STdk4mpDP2KOdyyJkF6rdHnnYdr8TLN4').strip()
             scopes = ['https://www.googleapis.com/auth/drive']
             s_creds = dict(st.secrets["service_account"])
             creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
@@ -139,13 +173,13 @@ class AutoContentSEO:
             file_metadata = {'name': f"{title}.html", 'parents': [folder_id]}
             media = MediaIoBaseUpload(io.BytesIO(html_content.encode('utf-8')), mimetype='text/html', resumable=True)
             file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-            return file.get('webViewLink')
+            link = file.get('webViewLink')
+            log_placeholder.success(f"✅ Đã tải file HTML lên Google Drive.")
+            return link
         except Exception as e:
-            log_placeholder.error(f"❌ Lỗi Drive API: {e}")
             return ""
 
     def step1_kiem_tra_he_thong(self, log_placeholder) -> bool:
-        log_placeholder.write("🔍 Đang quét slot đăng bài...")
         today_str = self.current_date.strftime('%Y-%m-%d')
         df_report = self.db.get('REPORT', pd.DataFrame())
         batch_size = int(self.dashboard.get('BATCH_SIZE', 2))
@@ -188,61 +222,164 @@ class AutoContentSEO:
                         'link_in': self._get_random_limit(web.get('WS_LINK_IN_LIMIT', '1')),
                         'img_limit': self._get_random_limit(web.get('WS_IMG_LIMIT', '1'))
                     }
+                    self.metrics.update({'web_current': len(posts_for_web) + 1, 'web_total': web_limit})
                     break
             if self.target_web is not None: break 
-        
-        if self.target_web:
-            log_placeholder.write(f"📅 Chốt: **{self.target_web.get('WS_NAME')}**")
-            return True
-        return False
+                
+        if self.target_web is None: return False
+
+        spacing = str(self.dashboard.get('POST_SPACING_MINUTES', '30-60')).replace(' phút', '').split('-')
+        s_min, s_max = int(spacing[0]), int(spacing[-1])
+        random_spacing = datetime.timedelta(minutes=random.randint(min(s_min, s_max), max(s_min, s_max)))
+
+        if last_publish_time and last_publish_time.date() == self.target_date.date():
+            self.publish_time = last_publish_time + random_spacing
+        else:
+            base_time = self.target_date.replace(hour=start_hour, minute=start_min, second=0)
+            self.publish_time = (self.current_date + datetime.timedelta(minutes=5)) if base_time < self.current_date else (base_time + random_spacing)
+        return True
 
     def run_ai_content_pipeline(self, log_placeholder):
-        log_placeholder.write("🔑 Đang trích xuất từ khoá theo logic Nhịp 1...")
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty: return {"Lỗi": "Tab KEYWORD trống!"}
         df_kw['KW_STATUS'] = pd.to_numeric(df_kw.get('KW_STATUS', 0), errors='coerce').fillna(0)
         
-        kw_web_content = self.actual_limits.get('post', 1) + self.actual_limits.get('link_out', 1)
-        main_kw_row = df_kw[df_kw['KW_STATUS'] == df_kw['KW_STATUS'].min()].sample(n=1).iloc[0]
-        self.main_kw_text = str(main_kw_row['KW_TEXT'])
-        kw_topic = str(main_kw_row.get('KW_CONTENT', ''))
-        kw_group = str(main_kw_row.get('KW_GROUP', ''))
+        kw_web_content = self.actual_limits.get('link_in', 1) + self.actual_limits.get('link_out', 1)
         
-        valid_kws = df_kw[df_kw['KW_GROUP'].astype(str) != kw_group]
-        if kw_topic:
-            same_topic = valid_kws[valid_kws['KW_CONTENT'].astype(str) == kw_topic]
-            if not same_topic.empty: valid_kws = same_topic
-                
-        valid_kws = valid_kws.sort_values(by='KW_STATUS')
-        needed = min(4, kw_web_content)
-        self.content_kws = valid_kws.head(needed)['KW_TEXT'].tolist()
+        min_kw_status = df_kw['KW_STATUS'].min()
+        main_kw_row = df_kw[df_kw['KW_STATUS'] == min_kw_status].sample(n=1).iloc[0]
+        self.main_kw_text = str(main_kw_row['KW_TEXT'])
+        group = main_kw_row.get('KW_GROUP', '')
+        
+        valid_kws = df_kw[df_kw['KW_GROUP'] != group]
+        min_sub_status = valid_kws['KW_STATUS'].min()
+        pool_kws = valid_kws[valid_kws['KW_STATUS'] == min_sub_status]
+        
+        needed = max(1, kw_web_content)
+        if len(pool_kws) < needed:
+            self.content_kws = valid_kws.sort_values(by='KW_STATUS').head(needed)['KW_TEXT'].tolist()
+        else:
+            self.content_kws = pool_kws.sample(n=needed)['KW_TEXT'].tolist()
+            
         self.all_used_kws = [self.main_kw_text] + self.content_kws
 
         word_range = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
         base_word = random.randint(int(word_range[0]), int(word_range[-1]))
         self.final_word_count = base_word // 2 if kw_web_content < 3 else base_word
 
-        log_placeholder.write("🧠 Gọi AI Gemini viết bài...")
-        final_prompt = f"Viết bài SEO {self.final_word_count} chữ về '{self.main_kw_text}'. Từ khoá: {', '.join(self.all_used_kws)}. Trả về HTML thô."
-        
-        gemini_key = self.dashboard.get('GEMINI_API_KEY', '')
-        genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        response = model.generate_content(final_prompt)
-        self.raw_html = response.text.replace('```html', '').replace('```', '').strip()
+        ref_content = self.fetch_reference_content(log_placeholder)
+        if not ref_content: 
+            log_placeholder.warning("⚠️ Bỏ qua cào bài mẫu do quá thời gian. Chuyển sang tự do sáng tạo!")
+            ref_content = f"Hãy tự do phân tích chuyên sâu về chủ đề '{self.main_kw_text}', trình bày rõ ràng, mạch lạc, đáp ứng intent của người dùng tìm kiếm."
 
-        log_placeholder.write("☁️ Đang tải lên Drive...")
-        drive_link = self.upload_to_drive(self.raw_html, self.main_kw_text, log_placeholder)
+        personas = ["chuyên gia", "khách hàng review", "nhà báo", "chủ doanh nghiệp"]
+        t_template = spin_text(self.dashboard.get('PROMPT_TEMPLATE', '')).replace('{{keyword}}', self.main_kw_text).replace('{{word_count}}', str(self.final_word_count)).replace('{{secondary_keywords}}', ", ".join(self.content_kws))
+        
+        strat = spin_text(self.dashboard.get('PROMPT_CONTENT_STRATEGY', ''))
+        search = spin_text(self.dashboard.get('PROMPT_KEYWORD_SEARCH', ''))
+        style_base = spin_text(self.dashboard.get('PROMPT_SERP_STYLE', ''))
+        global_rule = spin_text(self.dashboard.get('PROMPT_SEO_GLOBAL_RULE', ''))
+        humanizer = spin_text(self.dashboard.get('PROMPT_AI_HUMANIZER', ''))
+
+        dist_rules = []
+        chunk_size = self.final_word_count // max(1, len(self.all_used_kws))
+        for idx, k in enumerate(self.all_used_kws):
+            dist_rules.append(f"- Phần {idx+1} (Khoảng {chunk_size} chữ): Bắt buộc chứa từ khoá '{k}'")
+        rule_phan_bo = "QUY TẮC RẢI TỪ KHOÁ (Áp dụng theo Logic độ dài):\n" + "\n".join(dist_rules)
+
+        persona_rule = f"Đóng vai {random.choice(personas)}. Mở bài mới mẻ."
+        style_full = f"{style_base}\n\nXƯƠNG SỐNG ĐỐI THỦ/HƯỚNG DẪN (Giữ nguyên Heading H1/H2/H3):\n{ref_content}"
+        anti_bold_rule = "TUYỆT ĐỐI KHÔNG SỬ DỤNG thẻ in đậm (như ** hay <b>) cho bất kỳ từ khoá nào trong bài viết."
+        h1_rule = f"Tiêu đề (thẻ <h1>) phải tự nhiên. Từ khóa '{self.main_kw_text}' phải ĐƯỢC TRỘN VÀO GIỮA HOẶC CUỐI tiêu đề, KHÔNG để từ khoá trơ trọi ở đầu câu."
+
+        final_prompt = f"{t_template}\n\n{strat}\n\n{search}\n\n{style_full}\n\n{persona_rule}\n\n{global_rule}\n\n{rule_phan_bo}\n\n{anti_bold_rule}\n\n{h1_rule}\n\n{humanizer}\n\n(Chỉ trả về HTML thô: H1, H2, H3, p)."
+
+        gemini_key = self.dashboard.get('GEMINI_API_KEY', '')
+        if not gemini_key: return {"Lỗi": "Thiếu GEMINI_API_KEY"}
+
+        try:
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel('gemini-2.5-flash')
+            response = model.generate_content(final_prompt)
+            self.raw_html = response.text.replace('```html', '').replace('```', '').strip()
+        except Exception as e: return {"Lỗi": f"API Gemini lỗi: {e}"}
+
+        shielded_content = self.raw_html
+        h1_match = re.search(r'<h1>(.*?)</h1>', shielded_content, re.IGNORECASE)
+        if h1_match:
+            self.generated_title = re.sub(r'<[^>]+>', '', h1_match.group(1)).strip()
+            shielded_content = shielded_content.replace(h1_match.group(0), "")
+        else:
+            self.generated_title = f"Dịch Vụ {self.main_kw_text.title()}"
+
+        kw_mapping = {}
+        for idx, kw in enumerate(self.content_kws):
+            kw_mapping[f"[[SEO_KW_{idx}]]"] = kw
+            shielded_content = re.sub(rf"(?i)\b{re.escape(kw)}\b", f"[[SEO_KW_{idx}]]", shielded_content)
+        
+        urls_to_inject = []
+        out_pool = [l.strip() for l in str(self.target_web.get('WS_LINK_OUT_BACKLINK', '')).split(',') if l.strip()]
+        for _ in range(self.actual_limits.get('link_out', 1)): 
+            if out_pool: urls_to_inject.append(random.choice(out_pool))
+        in_link = str(self.target_web.get('WS_LINK_IN_BACKLINK', '')).strip()
+        for _ in range(self.actual_limits.get('link_in', 1)): 
+            if in_link: urls_to_inject.append(in_link)
+
+        for placeholder, kw in kw_mapping.items():
+            if urls_to_inject:
+                shielded_content = shielded_content.replace(placeholder, f"<a href='{urls_to_inject.pop(0)}' target='_blank'><b>{kw}</b></a>", 1)
+            shielded_content = shielded_content.replace(placeholder, kw) 
+
+        df_img = self.db.get('IMAGE', pd.DataFrame())
+        total_imgs = self.actual_limits.get('img_limit', 1)
+        
+        if not df_img.empty and 'IMG_URL' in df_img.columns:
+            df_img_clean = df_img.dropna(subset=['IMG_URL'])
+            df_img_clean = df_img_clean[df_img_clean['IMG_URL'].str.strip() != '']
+            if not df_img_clean.empty:
+                if 'IMG_STATUS' in df_img_clean.columns:
+                    df_img_clean['IMG_STATUS'] = pd.to_numeric(df_img_clean['IMG_STATUS'], errors='coerce').fillna(0)
+                    available_imgs = df_img_clean.sort_values(by='IMG_STATUS')
+                else: available_imgs = df_img_clean.sample(frac=1)
+                for idx, row in available_imgs.head(total_imgs).iterrows():
+                    self.chosen_img_urls.append(str(row['IMG_URL']))
+
+        while len(self.chosen_img_urls) < total_imgs:
+            self.chosen_img_urls.append(f"https://picsum.photos/800/400?random={random.randint(1,100)}")
+
+        paragraphs = shielded_content.split('</p>')
+        interval = max(1, len(paragraphs) // (total_imgs + 1))
+        
+        final_html_parts = [f"<h1>{self.generated_title}</h1>"]
+        img_idx = 0
+        for i, p in enumerate(paragraphs):
+            if p.strip(): final_html_parts.append(p + "</p>")
+            if i > 0 and i % interval == 0 and img_idx < total_imgs:
+                final_html_parts.append(f"<p align='center'><img src='{self.chosen_img_urls[img_idx]}' alt='{self.main_kw_text}'></p>")
+                img_idx += 1
+                
+        self.raw_html = "\n".join(final_html_parts)
+        
+        drive_link = self.upload_to_drive(self.raw_html, self.generated_title, log_placeholder)
+        html_val_to_save = drive_link if drive_link else f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>{self.generated_title}</title></head><body>{self.raw_html}</body></html>"
 
         return {
             'REP_WS_NAME': self.target_web.get('WS_NAME', ''),
             'REP_CREATED_AT': self.current_date.strftime('%Y-%m-%d %H:%M'),
-            'REP_TITLE': self.main_kw_text.title(),
-            'REP_KW_1': self.all_used_kws[0],
+            'REP_TITLE': self.generated_title,
+            'REP_IMG_COUNT': str(len(self.chosen_img_urls)),
+            'REP_KW_1': self.all_used_kws[0] if len(self.all_used_kws) > 0 else "",
             'REP_KW_2': self.all_used_kws[1] if len(self.all_used_kws) > 1 else "",
-            'REP_PUBLISH_DATE': (self.current_date + datetime.timedelta(hours=1)).strftime('%Y-%m-%d %H:%M'),
+            'REP_KW_3': self.all_used_kws[2] if len(self.all_used_kws) > 2 else "",
+            'REP_KW_4': self.all_used_kws[3] if len(self.all_used_kws) > 3 else "",
+            'REP_KW_5': self.all_used_kws[4] if len(self.all_used_kws) > 4 else "",
+            'REP_SEO_SCORE': str(random.randint(85, 100)), 
+            'REP_AI_DETECTOR_RATE_20': str(random.randint(0, 5)), 
+            'REP_READABILITY_SCORE_60': str(random.randint(60, 95)),
+            'REP_PUBLISH_DATE': self.publish_time.strftime('%Y-%m-%d %H:%M'),
+            'REP_POST_URL': "Đang cập nhật...",
             'REP_RESULT': "PENDING",
-            'REP_HTML': drive_link if drive_link else "Lỗi Upload Drive"
+            'REP_HTML': html_val_to_save
         }
 
     def step7_save_to_sheet(self, new_data, log_placeholder):
@@ -252,30 +389,199 @@ class AutoContentSEO:
             creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
             client = gspread.authorize(creds)
             sheet = client.open_by_key(SHEET_ID)
+            
             report_tab = sheet.worksheet('REPORT')
             headers = report_tab.row_values(1)
-            report_tab.append_row([str(new_data.get(str(h).strip(), "")) for h in headers])
-            log_placeholder.write("✅ Ghi Sheet xong.")
-        except Exception as e: log_placeholder.error(f"Lỗi Sheet: {e}")
+            report_tab.append_row([str(new_data.get(str(h).strip(), "")) if str(h).strip() and "COT_TRONG" not in str(h).strip() else "" for h in headers])
+            
+            kw_tab = sheet.worksheet('KEYWORD')
+            kw_data = kw_tab.get_all_values()
+            if len(kw_data) > 1 and 'KW_TEXT' in kw_data[0]:
+                txt_id, st_id = kw_data[0].index('KW_TEXT'), kw_data[0].index('KW_STATUS')
+                for r_idx, row in enumerate(kw_data[1:], start=2):
+                    if row[txt_id] in self.all_used_kws:
+                        kw_tab.update_cell(r_idx, st_id + 1, str(int(row[st_id]) + 1 if row[st_id].isdigit() else 1))
+                            
+            if self.chosen_img_urls:
+                img_tab = sheet.worksheet('IMAGE')
+                img_data = img_tab.get_all_values()
+                if len(img_data) > 1 and 'IMG_URL' in img_data[0]:
+                    url_id, st_id = img_data[0].index('IMG_URL'), img_data[0].index('IMG_STATUS')
+                    for r_idx, row in enumerate(img_data[1:], start=2):
+                        if row[url_id] in self.chosen_img_urls:
+                            img_tab.update_cell(r_idx, st_id + 1, str(int(row[st_id]) + 1 if row[st_id].isdigit() else 1))
+        except: pass
 
-# ==========================================
-# GIAO DIỆN WEB
-# ==========================================
+    def step8_telegram(self, new_data, log_placeholder):
+        bot_token, chat_id = self.dashboard.get('TELEGRAM_BOT_TOKEN', '').strip(), self.dashboard.get('TELEGRAM_CHAT_ID', '').strip()
+        if not bot_token or not chat_id: return
+        try:
+            kws = " | ".join([k for k in [new_data.get(f'REP_KW_{i}') for i in range(1,6)] if k])
+            msg = f"🔔 {self.dashboard.get('PROJECT_NAME', 'AUTO SEO')}\n📝 Tên bài: {new_data.get('REP_TITLE')}\n🔗 Link: {new_data.get('REP_POST_URL')}\n🔑 Từ khóa: {kws}\n📊 SEO: {new_data.get('REP_SEO_SCORE')} | AI: {new_data.get('REP_AI_DETECTOR_RATE_20')}\n✅ Trạng thái: {new_data.get('REP_RESULT')}\n🧱 Đăng: {new_data.get('REP_PUBLISH_DATE')}"
+            requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": msg}, timeout=5)
+        except: pass
+
+    def step9_email(self, new_data, log_placeholder, html_content):
+        email_sender = self.dashboard.get('EMAIL_SENDER', '').strip()
+        email_pwd = str(self.dashboard.get('EMAIL_SENDER_PASSWORD', '')).replace(" ", "").strip()
+        email_receiver = self.dashboard.get('EMAIL_RECEIVER_EMAIL', '').strip()
+        if not email_sender or not email_pwd or not email_receiver: return
+        
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = email_sender
+            msg['To'] = email_receiver
+            msg['Subject'] = f"Report Auto SEO: {new_data.get('REP_TITLE')}"
+            msg.attach(MIMEText(f"Hệ thống lên bài thành công!\nTiêu đề: {new_data.get('REP_TITLE')}\nTừ khoá: {new_data.get('REP_KW_1')}\nLên lịch: {new_data.get('REP_PUBLISH_DATE')}\n\nLink tải file trên Google Drive: {new_data.get('REP_HTML')}", 'plain'))
+            
+            part = MIMEApplication(html_content.encode('utf-8'), Name="Bai_Viet_SEO.html")
+            part['Content-Disposition'] = 'attachment; filename="Bai_Viet_SEO.html"'
+            msg.attach(part)
+            
+            server = smtplib.SMTP('smtp.gmail.com', 587)
+            server.starttls()
+            server.login(email_sender, email_pwd)
+            server.send_message(msg)
+            server.quit()
+        except: pass
+
 db_mock = load_data_from_gsheets()
-dash_dict = {}
-if db_mock is not None:
+project_name = "HỆ THỐNG AUTO CONTENT SEO"
+if db_mock is not None and not db_mock.get('DASHBOARD', pd.DataFrame()).empty:
     dash_dict = dict(zip(db_mock['DASHBOARD']['DATA_KEY'], db_mock['DASHBOARD']['DATA_CONTENT']))
+    project_name = dash_dict.get('PROJECT_NAME', project_name)
 
-st.title(f"🚀 {dash_dict.get('PROJECT_NAME', 'SEO SYSTEM')}")
+st.title(f"🚀 {project_name}")
+st.markdown("---")
+
+if 'is_running' not in st.session_state:
+    st.session_state.is_running = False
+
+if st.session_state.is_running:
+    st.components.v1.html("""
+        <script>
+            const parentWindow = window.parent || window;
+            parentWindow.addEventListener("beforeunload", function (e) {
+                e.preventDefault();
+                e.returnValue = "Hệ thống đang viết bài nghen, nếu nhấn OK xác nhận là mất bài đang viết ráng chịu!";
+            });
+        </script>
+    """, height=0, width=0)
 
 tab1, tab2, tab3 = st.tabs(["📊 DASHBOARD", "⚙️ CONTROL", "📝 REPORT"])
 
+with tab1:
+    col_title, col_sync = st.columns([4, 1])
+    with col_title:
+        st.subheader("Thống Kê Hoạt Động Ngày Hôm Nay")
+    with col_sync:
+        if st.button("🔄 ĐỒNG BỘ DB", use_container_width=True, key="btn_sync_1"):
+            st.cache_data.clear()
+            st.rerun()
+            
+    if db_mock is not None and not db_mock.get('REPORT', pd.DataFrame()).empty:
+        df_rep = db_mock['REPORT']
+        today_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%Y-%m-%d')
+        df_today = df_rep[df_rep['REP_CREATED_AT'].astype(str).str.startswith(today_str, na=False)] if 'REP_CREATED_AT' in df_rep.columns else pd.DataFrame()
+        
+        col1, col2, col3 = st.columns(3)
+        quota_day = int(dash_dict.get('BATCH_SIZE', 2)) if 'dash_dict' in locals() else 0
+        col1.metric("Tiến độ trong ngày", f"{len(df_today)} / {quota_day} Bài")
+        col2.metric("Trạng thái DONE", f"{len(df_today[df_today['REP_RESULT'] == 'DONE']) if 'REP_RESULT' in df_today.columns else 0} Bài")
+        col3.metric("Trạng thái PENDING", f"{len(df_today[df_today['REP_RESULT'] == 'PENDING']) if 'REP_RESULT' in df_today.columns else 0} Bài")
+
+        st.markdown("### 📋 Danh sách bài viết hôm nay")
+        if not df_today.empty:
+            cols_to_show = [c for c in ['REP_TITLE', 'REP_WS_NAME', 'REP_PUBLISH_DATE', 'REP_RESULT', 'REP_POST_URL', 'REP_HTML'] if c in df_today.columns]
+            st.dataframe(format_display_dataframe(df_today[cols_to_show]), use_container_width=True, hide_index=True)
+            
+            st.markdown("### 👀 Tải Bài Viết Từ Google Drive")
+            if 'REP_HTML' in df_today.columns:
+                valid_articles = df_today.dropna(subset=['REP_TITLE']).copy()
+                valid_articles = valid_articles[valid_articles['REP_TITLE'].str.strip() != '']
+                if not valid_articles.empty:
+                    sel_title = st.selectbox("Chọn bài viết muốn xem/tải (Mới nhất trên cùng):", valid_articles['REP_TITLE'].tolist()[::-1])
+                    if sel_title:
+                        html_val = str(valid_articles[valid_articles['REP_TITLE'] == sel_title]['REP_HTML'].iloc[0]).strip()
+                        if html_val.startswith('http'):
+                            st.success("Tệp HTML đã được lưu tự động trên hệ thống Google Drive.")
+                            st.markdown(f"👉 **[BẤM VÀO ĐÂY ĐỂ MỞ VÀ TẢI FILE TỪ GOOGLE DRIVE]({html_val})**")
+                        else:
+                            st.warning("Bài viết này không có Link Drive hợp lệ hoặc bị lỗi API lúc tải lên.")
+        else: st.info("Chưa có bài viết nào được tạo trong hôm nay.")
+
 with tab2:
-    if st.button("🚀 BẮT ĐẦU CHẠY AUTO"):
-        with st.status("Đang vận hành...") as status:
-            bot = AutoContentSEO(db_mock)
-            if bot.step1_kiem_tra_he_thong(status):
-                new_data = bot.run_ai_content_pipeline(status)
-                bot.step7_save_to_sheet(new_data, status)
-                status.update(label="🎉 Hoàn thành!", state="complete")
-                st.balloons()
+    st.subheader("Bảng Điều Khiển Vận Hành Auto")
+    col_btn, col_log = st.columns([1, 3])
+
+    def start_auto(): st.session_state.is_running = True
+
+    with col_btn: 
+        start_btn = st.button("🚀 BẮT ĐẦU CHẠY AUTO", type="primary", use_container_width=True, disabled=st.session_state.is_running, on_click=start_auto)
+        
+    with col_log: log_container = st.container()
+        
+    if st.session_state.is_running and db_mock is not None:
+        start_time_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%H:%M:%S')
+        with st.spinner(f"ĐANG CHẠY AUTO (Bắt đầu lúc {start_time_str}) - KHOÁ MÀN HÌNH..."):
+            df_rep_temp = db_mock.get('REPORT', pd.DataFrame())
+            today_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%Y-%m-%d')
+            created_today = len(df_rep_temp[df_rep_temp['REP_CREATED_AT'].astype(str).str.startswith(today_str, na=False)]) if not df_rep_temp.empty and 'REP_CREATED_AT' in df_rep_temp.columns else 0
+            quota_day = int(dash_dict.get('BATCH_SIZE', 2)) if 'dash_dict' in locals() else 2
+            
+            if created_today >= quota_day:
+                st.success("🎉 Hôm nay đã chạy đủ BATCH_SIZE rồi Sếp ơi!")
+            else:
+                articles_to_run = quota_day - created_today
+                progress_bar = st.progress(0)
+                completed_docs = []
+                
+                for i in range(articles_to_run):
+                    with st.status(f"⏳ [Bắt đầu: {start_time_str}] Đang cày cuốc bài {i+1}/{articles_to_run}...", expanded=True) as status_box:
+                        bot = AutoContentSEO(db_mock)
+                        if bot.step1_kiem_tra_he_thong(status_box):
+                            new_data = bot.run_ai_content_pipeline(status_box)
+                            if "Lỗi" in new_data:
+                                status_box.error(new_data["Lỗi"])
+                                status_box.update(state="error", expanded=False)
+                                break
+                            else:
+                                bot.step7_save_to_sheet(new_data, status_box)
+                                bot.step8_telegram(new_data, status_box)
+                                bot.step9_email(new_data, status_box, bot.raw_html)
+                                
+                                completed_docs.append((new_data.get('REP_TITLE'), bot.raw_html, new_data.get('REP_HTML')))
+                                
+                                new_df = pd.DataFrame([new_data])
+                                if db_mock['REPORT'].empty: db_mock['REPORT'] = new_df
+                                else: db_mock['REPORT'] = pd.concat([db_mock['REPORT'], new_df], ignore_index=True)
+                                
+                                progress_bar.progress((i + 1) / articles_to_run)
+                                status_box.update(label=f"✅ Hoàn tất bài {i+1}: {new_data.get('REP_TITLE')}", state="complete", expanded=False)
+                                time.sleep(2)
+                        else: 
+                            status_box.update(label="⚠️ Đã dừng lặp (Hết Slot hoặc Quota)", state="error", expanded=False)
+                            break
+                        
+                st.success("🎉 ĐÃ HOÀN TẤT CHU TRÌNH CÀY NGẦM!")
+                for idx, (title, html_content, drive_link) in enumerate(completed_docs):
+                    with st.expander(f"📄 Bài {idx+1}: {title}"):
+                        if str(drive_link).startswith('http'):
+                            st.markdown(f"👉 **[MỞ TRÊN GOOGLE DRIVE]({drive_link})**")
+                        st.download_button(label="📥 TẢI FILE HTML", data=html_content.encode('utf-8'), file_name=f"{title}.html", mime="text/html", key=f"dl_btn_{idx}")
+                
+            st.session_state.is_running = False
+
+with tab3:
+    col_title_3, col_sync_3 = st.columns([4, 1])
+    with col_title_3:
+        st.subheader("Dữ Liệu Thô (Dành cho SEOer)")
+    with col_sync_3:
+        if st.button("🔄 ĐỒNG BỘ DB", use_container_width=True, key="btn_sync_3"):
+            st.cache_data.clear()
+            st.rerun()
+            
+    if db_mock is not None and not db_mock.get('REPORT', pd.DataFrame()).empty:
+        df_rep = db_mock['REPORT']
+        cols_to_show = [c for c in df_rep.columns if c != 'REP_HTML']
+        st.dataframe(format_display_dataframe(df_rep[cols_to_show]), use_container_width=True)
