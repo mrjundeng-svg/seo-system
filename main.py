@@ -86,6 +86,7 @@ class AutoContentSEO:
         self.chosen_img_urls = []
         self.metrics = {}
         self.final_word_count = 0
+        self.keyword_website_content = 1
 
     def _parse_dashboard(self) -> dict:
         df = self.db.get('DASHBOARD', pd.DataFrame())
@@ -105,10 +106,12 @@ class AutoContentSEO:
     def scrape_url(self, url):
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Referer': 'https://www.google.com/'
             }
-            res = requests.get(url, headers=headers, timeout=10)
+            res = requests.get(url, headers=headers, timeout=15)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.text, 'html.parser')
                 for tag in soup(["script", "style", "nav", "footer", "header", "aside"]): tag.decompose()
@@ -135,16 +138,18 @@ class AutoContentSEO:
                 res = requests.get(url, params={"q": self.main_kw_text, "hl": "vi", "gl": "vn", "api_key": serp_key}).json()
                 results = res.get("organic_results", [])
                 
-                target_urls = [r["link"] for r in results[:5] if any(c in r.get("link", "") for c in competitors)]
+                target_urls = [r["link"] for r in results[:10] if any(c in r.get("link", "") for c in competitors)]
                 if not target_urls and results:
-                    target_urls = [r["link"] for r in results[:5] if "link" in r]
+                    target_urls = [r["link"] for r in results[:10] if "link" in r]
                 
+                random.shuffle(target_urls)
                 for t_url in target_urls:
                     content = self.scrape_url(t_url)
                     if content: 
-                        log_placeholder.success(f"✅ Cào xương sống thành công từ: {t_url}")
+                        log_placeholder.success(f"✅ Đã cào xương sống thành công từ: {t_url}")
                         return content
-            except: pass
+            except Exception as e: 
+                log_placeholder.warning(f"Lỗi truy xuất SERPAPI: {e}")
             
         df_rep = self.db.get('REPORT', pd.DataFrame())
         if not df_rep.empty and 'REP_RESULT' in df_rep.columns and 'REP_POST_URL' in df_rep.columns:
@@ -234,28 +239,49 @@ class AutoContentSEO:
         return True
 
     def run_ai_content_pipeline(self, log_placeholder):
+        # ==========================================
+        # NHỊP 1: HỆ SINH THÁI TỪ KHÓA & CHỮ
+        # ==========================================
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty: return {"Lỗi": "Tab KEYWORD trống!"}
         df_kw['KW_STATUS'] = pd.to_numeric(df_kw.get('KW_STATUS', 0), errors='coerce').fillna(0)
         
-        kw_web_content = self.actual_limits.get('link_in', 1) + self.actual_limits.get('link_out', 1)
-        main_kw_row = df_kw[df_kw['KW_STATUS'] == df_kw['KW_STATUS'].min()].sample(n=1).iloc[0]
-        self.main_kw_text = str(main_kw_row['KW_TEXT'])
-        group = main_kw_row.get('KW_GROUP', '')
+        # 1.1 Tính toán chỉ tiêu Website (Chuẩn công thức của Sếp)
+        self.keyword_website_content = self.actual_limits.get('post', 1) + self.actual_limits.get('link_out', 1)
         
-        valid_kws = df_kw[df_kw['KW_GROUP'] != group].sort_values(by='KW_STATUS')
-        self.content_kws = valid_kws.head(max(1, kw_web_content))['KW_TEXT'].tolist()
+        # 1.2 Tìm từ khóa bổ trợ
+        min_kw_status = df_kw['KW_STATUS'].min()
+        main_kw_row = df_kw[df_kw['KW_STATUS'] == min_kw_status].sample(n=1).iloc[0]
+        self.main_kw_text = str(main_kw_row['KW_TEXT'])
+        kw_topic = str(main_kw_row.get('KW_CONTENT', ''))
+        kw_group = str(main_kw_row.get('KW_GROUP', ''))
+        
+        valid_kws = df_kw[df_kw['KW_GROUP'].astype(str) != kw_group]
+        if kw_topic and 'KW_CONTENT' in df_kw.columns:
+            same_topic_kws = valid_kws[valid_kws['KW_CONTENT'].astype(str) == kw_topic]
+            if not same_topic_kws.empty: valid_kws = same_topic_kws
+                
+        valid_kws = valid_kws.sort_values(by='KW_STATUS')
+        needed_kws = min(4, self.keyword_website_content) # Giới hạn tối đa điền tới REP_KW_5
+        self.content_kws = valid_kws.head(needed_kws)['KW_TEXT'].tolist()
         self.all_used_kws = [self.main_kw_text] + self.content_kws
 
+        # 1.3 Logic định lượng chữ (Word Count Logic)
         word_range = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
         base_word = random.randint(int(word_range[0]), int(word_range[-1]))
-        self.final_word_count = base_word // 2 if kw_web_content < 3 else base_word
+        
+        if self.keyword_website_content < 3:
+            self.final_word_count = base_word // 2
+        else:
+            self.final_word_count = base_word
 
-        # XỬ LÝ FALLBACK NẾU CÀO BÀI ĐỐI THỦ THẤT BẠI
+        # ==========================================
+        # NHỊP 2 & 3: XÂY DỰNG PROMPT & GỌI AI
+        # ==========================================
         ref_content = self.fetch_reference_content(log_placeholder)
         if not ref_content: 
-            log_placeholder.warning("⚠️ Không tìm được bài mẫu. Tự động chuyển sang chế độ tự sáng tạo.")
-            ref_content = f"Hãy viết một bài viết thật chi tiết, phân tích sâu sắc về chủ đề '{self.main_kw_text}', đảm bảo chuẩn SEO và mang lại giá trị cao cho người đọc."
+            log_placeholder.warning("⚠️ Không cào được bài mẫu. Tự động chuyển sang chế độ tự do sáng tạo!")
+            ref_content = f"Hãy tự do phân tích chuyên sâu về chủ đề '{self.main_kw_text}', trình bày rõ ràng, mạch lạc, đáp ứng intent của người dùng tìm kiếm."
 
         personas = ["chuyên gia", "khách hàng review", "nhà báo", "chủ doanh nghiệp"]
         t_template = spin_text(self.dashboard.get('PROMPT_TEMPLATE', '')).replace('{{keyword}}', self.main_kw_text).replace('{{word_count}}', str(self.final_word_count)).replace('{{secondary_keywords}}', ", ".join(self.content_kws))
@@ -270,10 +296,10 @@ class AutoContentSEO:
         chunk_size = self.final_word_count // max(1, len(self.all_used_kws))
         for idx, k in enumerate(self.all_used_kws):
             dist_rules.append(f"- Phần {idx+1} (Khoảng {chunk_size} chữ): Bắt buộc chứa từ khoá '{k}'")
-        rule_phan_bo = "QUY TẮC RẢI TỪ KHOÁ:\n" + "\n".join(dist_rules)
+        rule_phan_bo = "QUY TẮC RẢI TỪ KHOÁ (Áp dụng theo Logic độ dài):\n" + "\n".join(dist_rules)
 
         persona_rule = f"Đóng vai {random.choice(personas)}. Mở bài mới mẻ."
-        style_full = f"{style_base}\n\nXƯƠNG SỐNG ĐỐI THỦ/ĐỊNH HƯỚNG (Giữ nguyên Heading H1/H2/H3):\n{ref_content}"
+        style_full = f"{style_base}\n\nXƯƠNG SỐNG ĐỐI THỦ/HƯỚNG DẪN (Giữ nguyên Heading H1/H2/H3):\n{ref_content}"
         anti_bold_rule = "TUYỆT ĐỐI KHÔNG SỬ DỤNG thẻ in đậm (như ** hay <b>) cho bất kỳ từ khoá nào trong bài viết."
         h1_rule = f"Tiêu đề (thẻ <h1>) phải tự nhiên. Từ khóa '{self.main_kw_text}' phải ĐƯỢC TRỘN VÀO GIỮA HOẶC CUỐI tiêu đề, KHÔNG để từ khoá trơ trọi ở đầu câu."
 
@@ -297,6 +323,7 @@ class AutoContentSEO:
         else:
             self.generated_title = f"Dịch Vụ {self.main_kw_text.title()}"
 
+        # Đóng gói rải từ khoá & Backlink (Ưu tiên link out trước)
         kw_mapping = {}
         for idx, kw in enumerate(self.content_kws):
             kw_mapping[f"[[SEO_KW_{idx}]]"] = kw
@@ -356,6 +383,8 @@ class AutoContentSEO:
             'REP_KW_1': self.all_used_kws[0] if len(self.all_used_kws) > 0 else "",
             'REP_KW_2': self.all_used_kws[1] if len(self.all_used_kws) > 1 else "",
             'REP_KW_3': self.all_used_kws[2] if len(self.all_used_kws) > 2 else "",
+            'REP_KW_4': self.all_used_kws[3] if len(self.all_used_kws) > 3 else "",
+            'REP_KW_5': self.all_used_kws[4] if len(self.all_used_kws) > 4 else "",
             'REP_SEO_SCORE': str(random.randint(85, 100)), 
             'REP_AI_DETECTOR_RATE_20': str(random.randint(0, 5)), 
             'REP_READABILITY_SCORE_60': str(random.randint(60, 95)),
@@ -399,7 +428,7 @@ class AutoContentSEO:
         bot_token, chat_id = self.dashboard.get('TELEGRAM_BOT_TOKEN', '').strip(), self.dashboard.get('TELEGRAM_CHAT_ID', '').strip()
         if not bot_token or not chat_id: return
         try:
-            kws = " | ".join([k for k in [new_data.get(f'REP_KW_{i}') for i in range(1,4)] if k])
+            kws = " | ".join([k for k in [new_data.get(f'REP_KW_{i}') for i in range(1,6)] if k])
             msg = f"🔔 {self.dashboard.get('PROJECT_NAME', 'AUTO SEO')}\n📝 Tên bài: {new_data.get('REP_TITLE')}\n🔗 Link: {new_data.get('REP_POST_URL')}\n🔑 Từ khóa: {kws}\n📊 SEO: {new_data.get('REP_SEO_SCORE')} | AI: {new_data.get('REP_AI_DETECTOR_RATE_20')}\n✅ Trạng thái: {new_data.get('REP_RESULT')}\n🧱 Đăng: {new_data.get('REP_PUBLISH_DATE')}"
             requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": msg})
         except: pass
@@ -437,7 +466,6 @@ if db_mock is not None and not db_mock.get('DASHBOARD', pd.DataFrame()).empty:
 st.title(f"🚀 {project_name}")
 st.markdown("---")
 
-# MÃ INJECT JAVASCRIPT KHOÁ F5 TRÌNH DUYỆT NẾU ĐANG CHẠY
 if 'is_running' not in st.session_state:
     st.session_state.is_running = False
 
@@ -482,20 +510,11 @@ with tab1:
                         html_val = str(valid_articles[valid_articles['REP_TITLE'] == sel_title]['REP_HTML'].iloc[0]).strip()
                         
                         if html_val.startswith('http'):
-                            st.success("Tệp HTML đã được lưu tự động trên hệ thống Google Drive.")
                             st.markdown(f"👉 **[BẤM VÀO ĐÂY ĐỂ MỞ VÀ TẢI FILE TỪ GOOGLE DRIVE]({html_val})**")
                         elif html_val.startswith('<'):
-                            st.download_button(
-                                label="📥 TẢI FILE HTML VỀ MÁY", 
-                                data=html_val.encode('utf-8'), 
-                                file_name=f"{sel_title}.html", 
-                                mime="text/html", 
-                                type="primary"
-                            )
+                            st.download_button(label="📥 TẢI FILE HTML VỀ MÁY", data=html_val.encode('utf-8'), file_name=f"{sel_title}.html", mime="text/html", type="primary")
                             with st.expander("Nhấp vào đây để xem trước nội dung"):
                                 st.components.v1.html(html_val, height=500, scrolling=True)
-                        else:
-                            st.warning("Bài viết này chưa có dữ liệu nội dung.")
         else: st.info("Chưa có bài viết nào được tạo trong hôm nay.")
 
 with tab2:
@@ -555,8 +574,11 @@ with tab2:
                         if str(drive_link).startswith('http'):
                             st.markdown(f"👉 **[MỞ TRÊN GOOGLE DRIVE]({drive_link})**")
                         st.download_button(label="📥 TẢI FILE HTML", data=html_content.encode('utf-8'), file_name=f"{title}.html", mime="text/html", key=f"dl_btn_{idx}")
-            
-            st.session_state.is_running = False
+                
+                if st.button("🔄 HOÀN TẤT! BẤM VÀO ĐÂY ĐỂ CẬP NHẬT BẢNG DASHBOARD", use_container_width=True):
+                    st.cache_data.clear()
+                    st.session_state.is_running = False
+                    st.rerun()
 
 with tab3:
     st.subheader("Dữ Liệu Thô (Dành cho SEOer)")
