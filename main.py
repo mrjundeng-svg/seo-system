@@ -10,7 +10,6 @@ import datetime
 st.set_page_config(page_title="Hệ Thống Auto Content SEO", layout="wide")
 
 # --- ID CỦA FILE GOOGLE SHEET ---
-# Bạn thay bằng ID file Google Sheet của bạn vào đây
 SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw' 
 
 # ==========================================
@@ -24,15 +23,13 @@ def load_data_from_gsheets():
             'https://www.googleapis.com/auth/drive'
         ]
         
-        # Đọc cấu hình bảo mật từ Streamlit Secrets
+        # Đã khớp tên với Secrets của bạn
         s_creds = dict(st.secrets["service_account"])
         creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
         client = gspread.authorize(creds)
         
-        # Mở file Sheet
         spreadsheet = client.open_by_key(SHEET_ID)
         
-        # Lấy tất cả các tab cần thiết
         db = {}
         tabs_to_fetch = ['DASHBOARD', 'WEBSITE', 'IMAGE', 'SPIN', 'KEYWORD', 'REPORT']
         
@@ -65,8 +62,6 @@ class AutoContentSEO:
         self.target_date = None
         self.target_web = None
         self.main_kw = None
-        self.secondary_kws = []
-        self.publish_time = None
         self.actual_limits = {} 
 
     def _parse_dashboard(self) -> dict:
@@ -87,7 +82,7 @@ class AutoContentSEO:
             except ValueError: return 1
 
     def step1_kiem_tra_he_thong(self, log_placeholder) -> bool:
-        log_placeholder.info("--- BƯỚC 1: KIỂM TRA HỆ THỐNG ---")
+        log_placeholder.info("--- BƯỚC 1: ĐANG KIỂM TRA HỆ THỐNG ---")
         max_days = int(self.dashboard.get('MAX_SCHEDULE_DAYS', 7))
         batch_size = int(self.dashboard.get('BATCH_SIZE', 2))
         
@@ -134,7 +129,6 @@ class AutoContentSEO:
 
         run_time_raw = str(self.dashboard.get('AUTO_RUN_TIME', '09:30-19:30'))
         run_time_start, run_time_end = run_time_raw.split('-') if '-' in run_time_raw else ('09:30', '19:30')
-        
         base_time = self.target_date.replace(hour=int(run_time_start[:2]), minute=int(run_time_start[3:]))
 
         spacing_raw = str(self.dashboard.get('POST_SPACING_MINUTES', '30-90')).replace(' phút', '')
@@ -145,7 +139,7 @@ class AutoContentSEO:
         return True
 
     def step2_to_step6_mock(self, log_placeholder):
-        log_placeholder.info("Đang xử lý Bước 2 -> Bước 6 (Tìm Keyword, Spin Content, Check KCS...)")
+        log_placeholder.info("Đang xử lý Bước 2 -> Bước 6...")
         df_kw = self.db.get('KEYWORD', pd.DataFrame())
         
         if df_kw.empty or 'KW_TEXT' not in df_kw.columns:
@@ -153,7 +147,6 @@ class AutoContentSEO:
             
         df_kw_clean = df_kw.dropna(subset=['KW_TEXT'])
         if 'KW_STATUS' in df_kw_clean.columns:
-            # Ép kiểu KW_STATUS về số để tìm từ khóa dùng ít nhất (min)
             df_kw_clean['KW_STATUS'] = pd.to_numeric(df_kw_clean['KW_STATUS'], errors='coerce').fillna(0)
             min_status = df_kw_clean['KW_STATUS'].min()
             candidate_kws = df_kw_clean[df_kw_clean['KW_STATUS'] == min_status]
@@ -161,69 +154,66 @@ class AutoContentSEO:
             candidate_kws = df_kw_clean
             
         self.main_kw = candidate_kws.sample(n=1).iloc[0]
-        
-        time.sleep(2) # Giả lập chờ AI viết bài
+        time.sleep(1.5) 
         
         return {
             'REP_WS_NAME': self.target_web.get('WS_NAME', ''),
-            'REP_TITLE': f"{str(self.main_kw['KW_TEXT']).title()} - Thông tin cập nhật",
+            'REP_TITLE': f"{str(self.main_kw['KW_TEXT']).title()} - Bài viết mới",
             'REP_KW_1': self.main_kw['KW_TEXT'],
             'REP_SEO_SCORE': str(random.randint(75, 100)),
             'AI_DETECTOR_RATE': str(random.randint(0, 15)),
-            'READABILITY_SCORE': str(random.randint(60, 90)),
             'REP_PUBLISH_DATE': self.publish_time.strftime('%Y-%m-%d %H:%M'),
-            'REP_POST_URL': "https://pending...",
             'REP_RESULT': "PENDING"
         }
 
 # ==========================================
-# GIAO DIỆN WEB (UI)
+# GIAO DIỆN WEB (UI) - CHIA TABS
 # ==========================================
 st.title("🚀 HỆ THỐNG AUTO CONTENT SEO")
 st.markdown("---")
 
-# 1. KÉO DỮ LIỆU TỪ GOOGLE SHEETS
+# Kéo dữ liệu
 db_mock = load_data_from_gsheets()
 
-# 2. KHU VỰC BẢNG REPORT
-st.subheader("📊 BẢNG REPORT DỮ LIỆU (CHỈ XEM)")
-if db_mock is not None and not db_mock.get('REPORT', pd.DataFrame()).empty:
-    st.dataframe(db_mock['REPORT'], use_container_width=True, hide_index=True)
-else:
-    st.info("Bảng Report hiện đang trống hoặc chưa có dữ liệu bài viết.")
+# Tạo 2 Tabs
+tab1, tab2 = st.tabs(["⚙️ CONTROL", "📊 REPORT (Viewer)"])
 
-st.markdown("---")
-
-# 3. KHU VỰC ĐIỀU KHIỂN
-st.subheader("⚙️ ĐIỀU KHIỂN HỆ THỐNG")
-
-col1, col2 = st.columns([1, 3])
-
-with col1:
-    start_btn = st.button("🚀 BẮT ĐẦU CHẠY", type="primary", use_container_width=True)
-
-with col2:
-    log_container = st.container()
+# ----------------- TAB 1: CONTROL -----------------
+with tab1:
+    st.subheader("Bảng Điều Khiển Hệ Thống")
     
-# Logic khi bấm nút Bắt Đầu Chạy
-if start_btn:
-    if db_mock is None:
-        st.error("Dữ liệu lỗi hoặc chưa kết nối được Google Sheets. Không thể khởi động!")
+    col_btn, col_log = st.columns([1, 3])
+    
+    with col_btn:
+        start_btn = st.button("🚀 BẮT ĐẦU CHẠY", type="primary", use_container_width=True)
+        
+    with col_log:
+        log_container = st.container()
+        
+    if start_btn:
+        if db_mock is None:
+            st.error("Dữ liệu lỗi hoặc chưa kết nối được Google Sheets.")
+        else:
+            with log_container:
+                status_text = st.empty()
+                status_text.info("Đang khởi động tiến trình...")
+                
+                bot = AutoContentSEO(db_mock)
+                
+                if bot.step1_kiem_tra_he_thong(status_text):
+                    new_data = bot.step2_to_step6_mock(status_text)
+                    if "Lỗi" in new_data:
+                        status_text.error(new_data["Lỗi"])
+                    else:
+                        status_text.success(f"✅ Đã tạo thành công bài: {new_data.get('REP_TITLE', '')}")
+                        st.json(new_data)
+                        st.balloons()
+
+# ----------------- TAB 2: REPORT -----------------
+with tab2:
+    st.subheader("Dữ Liệu Bài Viết Đã Lên Lịch")
+    
+    if db_mock is not None and not db_mock.get('REPORT', pd.DataFrame()).empty:
+        st.dataframe(db_mock['REPORT'], use_container_width=True, hide_index=True)
     else:
-        with log_container:
-            status_text = st.empty()
-            status_text.info("Đang khởi động tiến trình...")
-            
-            bot = AutoContentSEO(db_mock)
-            
-            if bot.step1_kiem_tra_he_thong(status_text):
-                new_data = bot.step2_to_step6_mock(status_text)
-                if "Lỗi" in new_data:
-                    status_text.error(new_data["Lỗi"])
-                else:
-                    status_text.success(f"✅ Đã tạo thành công bài: {new_data.get('REP_TITLE', '')}")
-                    
-                    st.write("Dữ liệu bài viết mới sinh ra (Sẵn sàng chờ hàm ghi vào Sheet):")
-                    st.json(new_data)
-                    
-                    st.balloons()
+        st.info("Bảng Report hiện đang trống. Hãy chạy hệ thống để tạo bài viết đầu tiên!")
