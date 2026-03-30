@@ -243,16 +243,14 @@ class AutoContentSEO:
         return True
 
     def run_ai_content_pipeline(self, log_placeholder):
-        # NHỊP 1.1
         log_placeholder.write("⚙️ **NHỊP 1.1: Đọc chỉ tiêu Website**")
         kw_web_content = self.actual_limits.get('link_in', 1) + self.actual_limits.get('link_out', 1)
-        log_placeholder.write(f" ↳ Web yêu cầu: {self.actual_limits.get('link_in', 1)} Link In + {self.actual_limits.get('link_out', 1)} Link Out = **{kw_web_content} Từ khoá**")
+        log_placeholder.write(f" ↳ Yêu cầu: **{kw_web_content} Từ khoá**")
 
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty: return {"Lỗi": "Tab KEYWORD trống!"}
         df_kw['KW_STATUS'] = pd.to_numeric(df_kw.get('KW_STATUS', 0), errors='coerce').fillna(0)
         
-        # NHỊP 1.2
         log_placeholder.write("⚙️ **NHỊP 1.2: Bốc Từ khoá từ Kho**")
         min_kw_status = df_kw['KW_STATUS'].min()
         main_kw_row = df_kw[df_kw['KW_STATUS'] == min_kw_status].sample(n=1).iloc[0]
@@ -270,30 +268,19 @@ class AutoContentSEO:
             self.content_kws = pool_kws.sample(n=needed)['KW_TEXT'].tolist()
             
         self.all_used_kws = [self.main_kw_text] + self.content_kws
-        log_placeholder.write(f" ↳ Từ khoá chính (H1): **'{self.main_kw_text}'**")
-        log_placeholder.write(f" ↳ Từ khoá phụ: {', '.join(self.content_kws)}")
 
-        # NHỊP 1.3
         log_placeholder.write("⚙️ **NHỊP 1.3: Tính toán Word Count**")
         word_range = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
         base_word = random.randint(int(word_range[0]), int(word_range[-1]))
-        log_placeholder.write(f" ↳ Bốc ngẫu nhiên định mức: {base_word} chữ.")
-        
-        if kw_web_content < 3:
-            self.final_word_count = base_word // 2
-            log_placeholder.write(f" ↳ **Rule:** Tổng Từ khoá ({kw_web_content}) < 3 ➔ Phạt giảm nửa số chữ. **Chốt: {self.final_word_count} chữ**")
-        else:
-            self.final_word_count = base_word
-            log_placeholder.write(f" ↳ **Rule:** Tổng Từ khoá ({kw_web_content}) >= 3 ➔ Giữ nguyên. **Chốt: {self.final_word_count} chữ**")
+        self.final_word_count = base_word // 2 if kw_web_content < 3 else base_word
+        log_placeholder.write(f" ↳ Chốt số chữ: **{self.final_word_count} chữ**")
 
-        # NHỊP 2
         log_placeholder.write("⚙️ **NHỊP 2: Đi săn Xương sống Đối thủ**")
         ref_content = self.fetch_reference_content(log_placeholder)
         if not ref_content: 
             log_placeholder.warning(" ↳ Bỏ qua cào bài. Tự động chuyển sang chế độ tự do sáng tạo!")
             ref_content = f"Hãy tự do phân tích chuyên sâu về chủ đề '{self.main_kw_text}', trình bày rõ ràng, mạch lạc, đáp ứng intent của người dùng tìm kiếm."
 
-        # NHỊP 3
         log_placeholder.write("⚙️ **NHỊP 3: Đóng gói Prompt & Ép Rule**")
         personas = ["chuyên gia", "khách hàng review", "nhà báo", "chủ doanh nghiệp"]
         t_template = spin_text(self.dashboard.get('PROMPT_TEMPLATE', '')).replace('{{keyword}}', self.main_kw_text).replace('{{word_count}}', str(self.final_word_count)).replace('{{secondary_keywords}}', ", ".join(self.content_kws))
@@ -316,7 +303,6 @@ class AutoContentSEO:
         h1_rule = f"Tiêu đề (thẻ <h1>) phải tự nhiên. Từ khóa '{self.main_kw_text}' phải ĐƯỢC TRỘN VÀO GIỮA HOẶC CUỐI tiêu đề, KHÔNG để từ khoá trơ trọi ở đầu câu."
 
         final_prompt = f"{t_template}\n\n{strat}\n\n{search}\n\n{style_full}\n\n{persona_rule}\n\n{global_rule}\n\n{rule_phan_bo}\n\n{anti_bold_rule}\n\n{h1_rule}\n\n{humanizer}\n\n(Chỉ trả về HTML thô: H1, H2, H3, p)."
-        log_placeholder.write(" ↳ Trộn Spin Text xong. Ép Rule: Cấm in đậm, rải đều Đầu-Giữa-Cuối, giấu từ khoá H1.")
 
         gemini_key = self.dashboard.get('GEMINI_API_KEY', '')
         if not gemini_key: return {"Lỗi": "Thiếu GEMINI_API_KEY"}
@@ -337,7 +323,7 @@ class AutoContentSEO:
         else:
             self.generated_title = f"Dịch Vụ {self.main_kw_text.title()}"
 
-        log_placeholder.write("🔗 **Đang bọc Backlink vào đúng vị trí...**")
+        log_placeholder.write("🔗 **Đang bọc Backlink...**")
         kw_mapping = {}
         for idx, kw in enumerate(self.content_kws):
             kw_mapping[f"[[SEO_KW_{idx}]]"] = kw
@@ -356,7 +342,7 @@ class AutoContentSEO:
                 shielded_content = shielded_content.replace(placeholder, f"<a href='{urls_to_inject.pop(0)}' target='_blank'><b>{kw}</b></a>", 1)
             shielded_content = shielded_content.replace(placeholder, kw) 
 
-        log_placeholder.write("🖼️ **Đang chèn hình ảnh rải rác...**")
+        log_placeholder.write("🖼️ **Đang chèn hình ảnh...**")
         df_img = self.db.get('IMAGE', pd.DataFrame())
         total_imgs = self.actual_limits.get('img_limit', 1)
         
@@ -387,8 +373,9 @@ class AutoContentSEO:
                 
         self.raw_html = "\n".join(final_html_parts)
         
+        log_placeholder.write("☁️ **Lưu lên Drive...**")
         drive_link = self.upload_to_drive(self.raw_html, self.generated_title, log_placeholder)
-        html_val_to_save = drive_link if drive_link else f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>{self.generated_title}</title></head><body>{self.raw_html}</body></html>"
+        html_val_to_save = drive_link if drive_link else "Lỗi Upload Drive"
 
         return {
             'REP_WS_NAME': self.target_web.get('WS_NAME', ''),
@@ -549,9 +536,8 @@ with tab2:
     with col_btn: 
         start_btn = st.button("🚀 BẮT ĐẦU CHẠY AUTO", type="primary", use_container_width=True, disabled=st.session_state.is_running, on_click=start_auto)
         
-        # NÚT THOÁT HIỂM LUÔN HIỆN KHI ĐANG KHOÁ
         if st.session_state.is_running:
-            st.button("❌ ĐÓNG / LÀM MỚI BẢNG ĐIỀU KHIỂN", type="secondary", use_container_width=True, on_click=stop_auto)
+            st.button("❌ ĐÓNG / RESET TẠM DỪNG", type="secondary", use_container_width=True, on_click=stop_auto)
         
     with col_log: log_container = st.container()
         
@@ -608,11 +594,36 @@ with tab2:
                             st.markdown(f"👉 **[MỞ TRÊN GOOGLE DRIVE]({drive_link})**")
                         st.download_button(label="📥 TẢI FILE HTML", data=html_content.encode('utf-8'), file_name=f"{title}.html", mime="text/html", key=f"dl_btn_{idx}")
                 
-                # NÚT NHẢ KHOÁ KHI CÀY XONG
                 st.session_state.is_running = False
-                if st.button("🔄 LÀM MỚI BẢNG ĐIỀU KHIỂN", type="primary", use_container_width=True):
+                if st.button("🔄 HOÀN TẤT! BẤM VÀO ĐÂY ĐỂ LÀM MỚI TRANG", type="primary", use_container_width=True):
                     st.cache_data.clear()
                     st.rerun()
+
+    # KHU VỰC XEM LOG BÀI VIẾT TRONG NGÀY (SỐNG QUA F5)
+    if not st.session_state.is_running and db_mock is not None and not db_mock.get('REPORT', pd.DataFrame()).empty:
+        st.markdown("---")
+        st.markdown("### 🕒 Nhật Ký Cày Cuốc Hôm Nay (Đã lưu)")
+        df_rep = db_mock['REPORT']
+        today_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%Y-%m-%d')
+        df_today_log = df_rep[df_rep['REP_CREATED_AT'].astype(str).str.startswith(today_str, na=False)]
+
+        if not df_today_log.empty:
+            for idx, row in df_today_log.iterrows():
+                with st.expander(f"✅ {row['REP_CREATED_AT']} - {row['REP_TITLE']}"):
+                    st.write(f"- **Website đăng:** {row.get('REP_WS_NAME', '')}")
+                    
+                    kws = [str(row.get(f'REP_KW_{i}', '')) for i in range(1, 6) if str(row.get(f'REP_KW_{i}', '')).strip()]
+                    st.write(f"- **Từ khoá đã dùng:** {', '.join(kws)}")
+                    
+                    st.write(f"- **Lên lịch đăng lúc:** {row.get('REP_PUBLISH_DATE', '')}")
+                    
+                    drive_link = str(row.get('REP_HTML', '')).strip()
+                    if drive_link.startswith('http'):
+                        st.markdown(f"👉 **[MỞ FILE HTML TRÊN DRIVE]({drive_link})**")
+                    else:
+                        st.write(f"- **Trạng thái lưu file:** {drive_link}")
+        else:
+            st.info("Hôm nay chưa cày được bài nào hoặc dữ liệu đã bị xoá.")
 
 with tab3:
     col_title_3, col_sync_3 = st.columns([4, 1])
