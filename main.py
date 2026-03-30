@@ -86,7 +86,6 @@ class AutoContentSEO:
         self.chosen_img_urls = []
         self.metrics = {}
         self.final_word_count = 0
-        self.keyword_website_content = 1
 
     def _parse_dashboard(self) -> dict:
         df = self.db.get('DASHBOARD', pd.DataFrame())
@@ -239,45 +238,33 @@ class AutoContentSEO:
         return True
 
     def run_ai_content_pipeline(self, log_placeholder):
-        # ==========================================
-        # NHỊP 1: HỆ SINH THÁI TỪ KHÓA & CHỮ
-        # ==========================================
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty: return {"Lỗi": "Tab KEYWORD trống!"}
         df_kw['KW_STATUS'] = pd.to_numeric(df_kw.get('KW_STATUS', 0), errors='coerce').fillna(0)
         
-        # 1.1 Tính toán chỉ tiêu Website (Chuẩn công thức của Sếp)
-        self.keyword_website_content = self.actual_limits.get('post', 1) + self.actual_limits.get('link_out', 1)
+        kw_web_content = self.actual_limits.get('link_in', 1) + self.actual_limits.get('link_out', 1)
         
-        # 1.2 Tìm từ khóa bổ trợ
         min_kw_status = df_kw['KW_STATUS'].min()
         main_kw_row = df_kw[df_kw['KW_STATUS'] == min_kw_status].sample(n=1).iloc[0]
         self.main_kw_text = str(main_kw_row['KW_TEXT'])
-        kw_topic = str(main_kw_row.get('KW_CONTENT', ''))
-        kw_group = str(main_kw_row.get('KW_GROUP', ''))
+        group = main_kw_row.get('KW_GROUP', '')
         
-        valid_kws = df_kw[df_kw['KW_GROUP'].astype(str) != kw_group]
-        if kw_topic and 'KW_CONTENT' in df_kw.columns:
-            same_topic_kws = valid_kws[valid_kws['KW_CONTENT'].astype(str) == kw_topic]
-            if not same_topic_kws.empty: valid_kws = same_topic_kws
-                
-        valid_kws = valid_kws.sort_values(by='KW_STATUS')
-        needed_kws = min(4, self.keyword_website_content) # Giới hạn tối đa điền tới REP_KW_5
-        self.content_kws = valid_kws.head(needed_kws)['KW_TEXT'].tolist()
+        valid_kws = df_kw[df_kw['KW_GROUP'] != group]
+        min_sub_status = valid_kws['KW_STATUS'].min()
+        pool_kws = valid_kws[valid_kws['KW_STATUS'] == min_sub_status]
+        
+        needed = max(1, kw_web_content)
+        if len(pool_kws) < needed:
+            self.content_kws = valid_kws.sort_values(by='KW_STATUS').head(needed)['KW_TEXT'].tolist()
+        else:
+            self.content_kws = pool_kws.sample(n=needed)['KW_TEXT'].tolist()
+            
         self.all_used_kws = [self.main_kw_text] + self.content_kws
 
-        # 1.3 Logic định lượng chữ (Word Count Logic)
         word_range = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
         base_word = random.randint(int(word_range[0]), int(word_range[-1]))
-        
-        if self.keyword_website_content < 3:
-            self.final_word_count = base_word // 2
-        else:
-            self.final_word_count = base_word
+        self.final_word_count = base_word // 2 if kw_web_content < 3 else base_word
 
-        # ==========================================
-        # NHỊP 2 & 3: XÂY DỰNG PROMPT & GỌI AI
-        # ==========================================
         ref_content = self.fetch_reference_content(log_placeholder)
         if not ref_content: 
             log_placeholder.warning("⚠️ Không cào được bài mẫu. Tự động chuyển sang chế độ tự do sáng tạo!")
@@ -323,7 +310,6 @@ class AutoContentSEO:
         else:
             self.generated_title = f"Dịch Vụ {self.main_kw_text.title()}"
 
-        # Đóng gói rải từ khoá & Backlink (Ưu tiên link out trước)
         kw_mapping = {}
         for idx, kw in enumerate(self.content_kws):
             kw_mapping[f"[[SEO_KW_{idx}]]"] = kw
@@ -372,8 +358,9 @@ class AutoContentSEO:
                 
         self.raw_html = "\n".join(final_html_parts)
         
+        # --- FIX CỘT REP_HTML: CHỈ LƯU LINK DRIVE (KHÔNG LƯU RAW HTML) ---
         drive_link = self.upload_to_drive(self.raw_html, self.generated_title, log_placeholder)
-        html_val_to_save = drive_link if drive_link else f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>{self.generated_title}</title></head><body>{self.raw_html}</body></html>"
+        html_val_to_save = drive_link if drive_link else "Lỗi Upload Drive (Vui lòng kiểm tra API)"
 
         return {
             'REP_WS_NAME': self.target_web.get('WS_NAME', ''),
@@ -500,7 +487,7 @@ with tab1:
             cols_to_show = [c for c in ['REP_TITLE', 'REP_WS_NAME', 'REP_PUBLISH_DATE', 'REP_RESULT', 'REP_POST_URL', 'REP_HTML'] if c in df_today.columns]
             st.dataframe(format_display_dataframe(df_today[cols_to_show]), use_container_width=True, hide_index=True)
             
-            st.markdown("### 👀 Xem & Tải Bài Viết")
+            st.markdown("### 👀 Tải Bài Viết Từ Google Drive")
             if 'REP_HTML' in df_today.columns:
                 valid_articles = df_today.dropna(subset=['REP_TITLE']).copy()
                 valid_articles = valid_articles[valid_articles['REP_TITLE'].str.strip() != '']
@@ -508,13 +495,11 @@ with tab1:
                     sel_title = st.selectbox("Chọn bài viết muốn xem/tải (Mới nhất trên cùng):", valid_articles['REP_TITLE'].tolist()[::-1])
                     if sel_title:
                         html_val = str(valid_articles[valid_articles['REP_TITLE'] == sel_title]['REP_HTML'].iloc[0]).strip()
-                        
                         if html_val.startswith('http'):
+                            st.success("Tệp HTML đã được lưu tự động trên hệ thống Google Drive.")
                             st.markdown(f"👉 **[BẤM VÀO ĐÂY ĐỂ MỞ VÀ TẢI FILE TỪ GOOGLE DRIVE]({html_val})**")
-                        elif html_val.startswith('<'):
-                            st.download_button(label="📥 TẢI FILE HTML VỀ MÁY", data=html_val.encode('utf-8'), file_name=f"{sel_title}.html", mime="text/html", type="primary")
-                            with st.expander("Nhấp vào đây để xem trước nội dung"):
-                                st.components.v1.html(html_val, height=500, scrolling=True)
+                        else:
+                            st.warning("Bài viết này không có Link Drive hợp lệ hoặc bị lỗi API lúc tải lên.")
         else: st.info("Chưa có bài viết nào được tạo trong hôm nay.")
 
 with tab2:
@@ -573,6 +558,7 @@ with tab2:
                     with st.expander(f"📄 Bài {idx+1}: {title}"):
                         if str(drive_link).startswith('http'):
                             st.markdown(f"👉 **[MỞ TRÊN GOOGLE DRIVE]({drive_link})**")
+                        # Cập nhật Nút tải thẳng từ bộ nhớ tạm để Sếp check nhanh (Không làm nặng Sheet)
                         st.download_button(label="📥 TẢI FILE HTML", data=html_content.encode('utf-8'), file_name=f"{title}.html", mime="text/html", key=f"dl_btn_{idx}")
                 
                 if st.button("🔄 HOÀN TẤT! BẤM VÀO ĐÂY ĐỂ CẬP NHẬT BẢNG DASHBOARD", use_container_width=True):
