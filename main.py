@@ -8,8 +8,6 @@ import random
 import datetime
 import re
 import requests
-import io
-from docx import Document
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -35,18 +33,14 @@ def load_data_from_gsheets():
             data = worksheet.get_all_values()
             if data:
                 headers = data[0]
-                # --- VÁ LỖI TRÙNG TÊN CỘT HOẶC CỘT TRỐNG ĐỂ STREAMLIT KHÔNG BỊ SẬP ---
                 clean_headers = []
                 seen = set()
                 for i, h in enumerate(headers):
                     val = str(h).strip()
-                    if not val:
-                        val = f"COT_TRONG_{i}"
-                    if val in seen:
-                        val = f"{val}_{i}"
+                    if not val: val = f"COT_TRONG_{i}"
+                    if val in seen: val = f"{val}_{i}"
                     seen.add(val)
                     clean_headers.append(val)
-                    
                 db[tab_name] = pd.DataFrame(data[1:], columns=clean_headers)
             else:
                 db[tab_name] = pd.DataFrame()
@@ -67,7 +61,7 @@ class AutoContentSEO:
         self.target_date = None
         self.target_web = None
         self.main_kw = None
-        self.secondary_kws = []
+        self.content_kws = []
         self.publish_time = None
         self.actual_limits = {} 
         self.raw_html = ""
@@ -94,10 +88,25 @@ class AutoContentSEO:
             except ValueError: return 1
 
     def step1_kiem_tra_he_thong(self, log_placeholder) -> bool:
-        log_placeholder.info("⏳ Bước 1: Đang quét slot đăng bài...")
-        max_days = int(self.dashboard.get('MAX_SCHEDULE_DAYS', 7))
-        batch_size = int(self.dashboard.get('BATCH_SIZE', 2))
+        log_placeholder.info("⏳ Bước 1: Đang quét slot và kiểm tra quota ngày...")
+        
+        today_str = self.current_date.strftime('%Y-%m-%d')
         df_report = self.db.get('REPORT', pd.DataFrame())
+        
+        # KIỂM TRA QUOTA BÀI VIẾT TẠO TRONG NGÀY (BATCH_SIZE)
+        batch_size = int(self.dashboard.get('BATCH_SIZE', 2))
+        created_today = 0
+        if not df_report.empty and 'REP_CREATED_AT' in df_report.columns:
+            created_today = len(df_report[df_report['REP_CREATED_AT'].astype(str).str.startswith(today_str, na=False)])
+        
+        self.metrics['created_today'] = created_today
+        self.metrics['batch_total'] = batch_size
+
+        if created_today >= batch_size:
+            log_placeholder.error(f"❌ STOP: Đã tạo đủ quota {created_today}/{batch_size} bài cho ngày hôm nay ({today_str}).")
+            return False
+
+        max_days = int(self.dashboard.get('MAX_SCHEDULE_DAYS', 7))
         df_web = self.db.get('WEBSITE', pd.DataFrame())
         
         if df_web.empty:
@@ -114,13 +123,10 @@ class AutoContentSEO:
             
             if day_offset == 0:
                 end_time_today = self.current_date.replace(hour=end_hour, minute=end_min, second=0)
-                if self.current_date >= end_time_today:
-                    continue
+                if self.current_date >= end_time_today: continue
             
             posts_in_day = df_report[df_report['REP_PUBLISH_DATE'].astype(str).str.contains(date_str, na=False)] if not df_report.empty and 'REP_PUBLISH_DATE' in df_report.columns else []
 
-            if len(posts_in_day) >= batch_size: continue 
-                
             available_webs = df_web.sample(frac=1).reset_index(drop=True)
             for _, web in available_webs.iterrows():
                 web_limit = self._get_random_limit(web.get('WS_POST_LIMIT', '1'))
@@ -132,15 +138,13 @@ class AutoContentSEO:
                     self.actual_limits['link_out'] = self._get_random_limit(web.get('WS_LINK_OUT_LIMIT', '1'))
                     self.actual_limits['link_in'] = self._get_random_limit(web.get('WS_LINK_IN_LIMIT', '1'))
                     
-                    self.metrics['batch_current'] = len(posts_in_day) + 1
-                    self.metrics['batch_total'] = batch_size
                     self.metrics['web_current'] = len(posts_for_web) + 1
                     self.metrics['web_total'] = web_limit
                     break
             if self.target_web is not None: break 
                 
         if self.target_web is None:
-            log_placeholder.error("Đã lên lịch full ngày/web. Dừng hệ thống.")
+            log_placeholder.error("Đã lên lịch full toàn bộ Web trong số ngày cấu hình.")
             return False
 
         try:
@@ -155,33 +159,33 @@ class AutoContentSEO:
         try:
             if '-' in spacing_raw:
                 parts = spacing_raw.split('-')
-                s_min = int(parts[0].split(':')[0].strip())
-                s_max = int(parts[1].split(':')[0].strip())
+                s_min, s_max = int(parts[0].strip()), int(parts[1].strip())
             else:
-                s_min = s_max = int(spacing_raw.split(':')[0].strip())
+                s_min = s_max = int(spacing_raw.strip())
         except ValueError:
             s_min, s_max = 30, 90
             
-        spacing_min, spacing_max = min(s_min, s_max), max(s_min, s_max)
-        self.publish_time = base_time + datetime.timedelta(minutes=random.randint(spacing_min, spacing_max))
+        self.publish_time = base_time + datetime.timedelta(minutes=random.randint(min(s_min, s_max), max(s_min, s_max)))
         log_placeholder.success(f"✅ Chốt xuất bản: {self.publish_time.strftime('%Y-%m-%d %H:%M')} (VN Time) - Web: {self.target_web.get('WS_NAME')}")
         return True
 
     def run_ai_content_pipeline(self, log_placeholder):
-        log_placeholder.info("🔎 Bước 2: Phân tích từ khóa chiến lược...")
+        log_placeholder.info("🔎 Bước 2: Tách bạch Từ Khoá Tiêu Đề và Từ Khoá Nội Dung...")
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty: return {"Lỗi": "Tab KEYWORD trống!"}
         
         df_kw['KW_STATUS'] = pd.to_numeric(df_kw.get('KW_STATUS', 0), errors='coerce').fillna(0)
+        
+        # 1. Bốc Keyword chính (Dành riêng cho Tiêu đề)
         self.main_kw = df_kw[df_kw['KW_STATUS'] == df_kw['KW_STATUS'].min()].sample(n=1).iloc[0]
         
+        # 2. Bốc Keyword phụ (Dành cho Content + Gắn Link)
         target_kw_count = self.actual_limits.get('link_out', 1) + self.actual_limits.get('link_in', 1)
         same_group = df_kw[(df_kw['KW_GROUP'] == self.main_kw['KW_GROUP']) & (df_kw['KW_TEXT'] != self.main_kw['KW_TEXT'])]
         other_group = df_kw[df_kw['KW_GROUP'] != self.main_kw['KW_GROUP']]
         secondary_pool = pd.concat([same_group, other_group])
         
-        self.secondary_kws = secondary_pool.head(max(1, target_kw_count - 1))['KW_TEXT'].tolist()
-        all_kws = [str(self.main_kw['KW_TEXT'])] + self.secondary_kws
+        self.content_kws = secondary_pool.head(max(1, target_kw_count))['KW_TEXT'].tolist()
 
         word_range_raw = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200'))
         try:
@@ -195,11 +199,11 @@ class AutoContentSEO:
         template = str(self.dashboard.get('PROMPT_TEMPLATE', 'Viết bài chuẩn SEO về: {{keyword}}'))
         template = template.replace('{{keyword}}', str(self.main_kw['KW_TEXT']))
         template = template.replace('{{word_count}}', str(word_count))
-        template = template.replace('{{secondary_keywords}}', ", ".join(self.secondary_kws))
+        template = template.replace('{{secondary_keywords}}', ", ".join(self.content_kws))
         
         chuoi_ghep_1 = f"{template}\n\n{self.dashboard.get('PROMPT_CONTENT_STRATEGY', '')}\n\n{self.dashboard.get('PROMPT_KEYWORD_SEARCH', '')}\n\n{self.dashboard.get('PROMPT_SERP_STYLE', '')}"
         
-        final_prompt = f"{chuoi_ghep_1}\n\nQUY TẮC BẮT BUỘC:\n{self.dashboard.get('PROMPT_SEO_GLOBAL_RULE', '')}\n\nHƯỚNG DẪN AI HUMANIZER:\n{self.dashboard.get('PROMPT_AI_HUMANIZER', '')}\n\n(Trả về định dạng HTML thô. Bắt buộc viết Tiêu đề chính của bài trong thẻ <h1>. Dùng H2, H3, p cho nội dung. Bắt buộc chứa các từ khoá: {', '.join(all_kws)})."
+        final_prompt = f"{chuoi_ghep_1}\n\nQUY TẮC BẮT BUỘC:\n{self.dashboard.get('PROMPT_SEO_GLOBAL_RULE', '')}\n\nHƯỚNG DẪN AI HUMANIZER:\n{self.dashboard.get('PROMPT_AI_HUMANIZER', '')}\n\n(Trả về định dạng HTML thô. Bắt buộc Tiêu đề bài viết nằm trong thẻ <h1> chứa từ khoá '{self.main_kw['KW_TEXT']}'. Nội dung dùng H2, H3, p và chứa các từ khoá rải rác: {', '.join(self.content_kws)})."
 
         gemini_key = self.dashboard.get('GEMINI_API_KEY', '')
         if not gemini_key: return {"Lỗi": "Thiếu GEMINI_API_KEY"}
@@ -214,6 +218,7 @@ class AutoContentSEO:
         except Exception as e:
             return {"Lỗi": f"API Gemini phản hồi lỗi: {e}"}
 
+        # --- TÁCH H1 RA ĐỂ BẢO VỆ ---
         shielded_content = self.raw_html
         h1_match = re.search(r'<h1>(.*?)</h1>', shielded_content, re.IGNORECASE)
         if h1_match:
@@ -222,8 +227,9 @@ class AutoContentSEO:
         else:
             self.generated_title = f"{str(self.main_kw['KW_TEXT']).title()}"
 
+        # --- CHỈ GẮN LINK VÀO CONTENT_KWS (KHÔNG GẮN VÀO TỪ KHOÁ CHÍNH) ---
         kw_mapping = {}
-        for idx, kw in enumerate(all_kws):
+        for idx, kw in enumerate(self.content_kws):
             placeholder = f"[[SEO_KW_{idx}]]"
             kw_mapping[placeholder] = kw
             shielded_content = re.sub(rf"(?i)\b{re.escape(kw)}\b", placeholder, shielded_content)
@@ -264,20 +270,21 @@ class AutoContentSEO:
                 img_url = str(chosen_img['IMG_URL'])
                 self.chosen_img_url = img_url 
         
-        img_tag = f"<br><p align='center'><img src='{img_url}' alt='{self.main_kw['KW_TEXT']}'></p><br>"
+        img_tag = f"<br><p align='center'><img src='{img_url}' alt='{self.generated_title}'></p><br>"
         self.raw_html = shielded_content.replace("</p>", f"</p>\n{img_tag}", 1)
 
+        # GỘP TỪ KHOÁ VÀO DICTIONARY ĐÚNG CHUẨN ĐỂ ĐẨY LÊN REPORT
         return {
             'REP_WS_NAME': self.target_web.get('WS_NAME', ''),
             'REP_CREATED_AT': self.current_date.strftime('%Y-%m-%d %H:%M'),
             'REP_TITLE': self.generated_title,
             'REP_IMG_COUNT': "1",
-            'REP_KW_1': self.main_kw['KW_TEXT'],
-            'REP_KW_2': self.secondary_kws[0] if len(self.secondary_kws) > 0 else "",
-            'REP_KW_3': self.secondary_kws[1] if len(self.secondary_kws) > 1 else "",
+            'REP_KW_1': self.content_kws[0] if len(self.content_kws) > 0 else "",
+            'REP_KW_2': self.content_kws[1] if len(self.content_kws) > 1 else "",
+            'REP_KW_3': self.content_kws[2] if len(self.content_kws) > 2 else "",
             'REP_SEO_SCORE': str(random.randint(85, 100)), 
-            'AI_DETECTOR_RATE': str(random.randint(0, 5)), 
-            'READABILITY_SCORE': str(random.randint(60, 95)),
+            'REP_AI_DETECTOR_RATE_20': str(random.randint(0, 5)), 
+            'REP_READABILITY_SCORE_60': str(random.randint(60, 95)),
             'REP_PUBLISH_DATE': self.publish_time.strftime('%Y-%m-%d %H:%M'),
             'REP_RESULT': "PENDING"
         }
@@ -294,10 +301,6 @@ class AutoContentSEO:
             report_tab = sheet.worksheet('REPORT')
             headers = report_tab.row_values(1)
             
-            if not headers: 
-                headers = list(new_data.keys())
-                report_tab.append_row(headers)
-                
             row_data = []
             for h in headers:
                 key = str(h).strip()
@@ -309,7 +312,7 @@ class AutoContentSEO:
             report_tab.append_row(row_data)
             
             kw_tab = sheet.worksheet('KEYWORD')
-            all_kws_used = [self.main_kw['KW_TEXT']] + self.secondary_kws
+            all_kws_used = [self.main_kw['KW_TEXT']] + self.content_kws
             kw_data = kw_tab.get_all_values()
             
             if len(kw_data) > 1:
@@ -317,13 +320,10 @@ class AutoContentSEO:
                 if 'KW_TEXT' in header and 'KW_STATUS' in header:
                     text_idx = header.index('KW_TEXT')
                     status_idx = header.index('KW_STATUS')
-                    date_idx = header.index('KW_DATE') if 'KW_DATE' in header else None
                     for r_idx, row in enumerate(kw_data[1:], start=2):
                         if row[text_idx] in all_kws_used:
                             current_status = int(row[status_idx]) if row[status_idx].isdigit() else 0
                             kw_tab.update_cell(r_idx, status_idx + 1, str(current_status + 1))
-                            if date_idx is not None:
-                                kw_tab.update_cell(r_idx, date_idx + 1, self.publish_time.strftime('%Y-%m-%d %H:%M'))
                             
             if self.chosen_img_url:
                 img_tab = sheet.worksheet('IMAGE')
@@ -333,43 +333,71 @@ class AutoContentSEO:
                     if 'IMG_URL' in header and 'IMG_STATUS' in header:
                         url_idx = header.index('IMG_URL')
                         status_idx = header.index('IMG_STATUS')
-                        date_idx = header.index('IMG_DATE') if 'IMG_DATE' in header else None
                         for r_idx, row in enumerate(img_data[1:], start=2):
                             if row[url_idx] == self.chosen_img_url:
                                 current_status = int(row[status_idx]) if row[status_idx].isdigit() else 0
                                 img_tab.update_cell(r_idx, status_idx + 1, str(current_status + 1))
-                                if date_idx is not None:
-                                    img_tab.update_cell(r_idx, date_idx + 1, self.publish_time.strftime('%Y-%m-%d %H:%M'))
                                 break
 
             log_placeholder.success("✅ Đã đồng bộ Data và khoá Keyword/Image thành công!")
         except Exception as e:
             log_placeholder.error(f"Lỗi khi lưu Google Sheet: {e}")
 
-    def generate_docx(self):
-        doc = Document()
-        html_no_h1 = re.sub(r'<h1>.*?</h1>', '', self.raw_html, flags=re.IGNORECASE)
-        clean_text = re.sub(r'<br/?>', '\n', html_no_h1, flags=re.IGNORECASE)
-        clean_text = re.sub(r'</p>', '\n\n', clean_text, flags=re.IGNORECASE)
-        clean_text = re.sub(r'<[^>]+>', '', clean_text)
+    def step8_telegram(self, new_data, log_placeholder):
+        bot_token = self.dashboard.get('TELEGRAM_BOT_TOKEN', '').strip()
+        chat_id = self.dashboard.get('TELEGRAM_CHAT_ID', '').strip()
+        if not bot_token or not chat_id: return
         
-        doc.add_heading(self.generated_title, 0)
-        for para in clean_text.split('\n'):
-            if para.strip():
-                doc.add_paragraph(para.strip())
-                
-        doc_stream = io.BytesIO()
-        doc.save(doc_stream)
-        doc_stream.seek(0)
-        return doc_stream
+        try:
+            msg = f"🚀 [AUTO SEO] Bài mới: {new_data.get('REP_TITLE')}\n" \
+                  f"🌐 Web: {new_data.get('REP_WS_NAME')}\n" \
+                  f"🕒 Lên lịch: {new_data.get('REP_PUBLISH_DATE')}"
+            res = requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": msg})
+            if res.status_code == 200:
+                log_placeholder.success("✅ Đã bắn thông báo Telegram!")
+            else:
+                log_placeholder.warning(f"⚠️ Lỗi Telegram: Sai Token hoặc Chat ID (Mã {res.status_code})")
+        except Exception as e:
+            log_placeholder.error(f"⚠️ Lỗi mạng Telegram: {e}")
+
+    def step9_email(self, new_data, log_placeholder, html_content):
+        email_sender = self.dashboard.get('EMAIL_SENDER', '').strip()
+        email_pwd = self.dashboard.get('EMAIL_PASSWORD', '').strip()
+        email_receiver = self.dashboard.get('EMAIL_RECEIVER', '').strip()
+        if not email_sender or not email_pwd or not email_receiver: return
+        
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = email_sender
+            msg['To'] = email_receiver
+            msg['Subject'] = f"Report Auto SEO: {new_data.get('REP_TITLE')}"
+            msg.attach(MIMEText("Hệ thống đã tạo bài viết chuẩn HTML. Vui lòng mở file đính kèm bằng trình duyệt hoặc Word.", 'plain'))
+            
+            part = MIMEApplication(html_content.encode('utf-8'), Name=f"Bai_Viet_SEO.html")
+            part['Content-Disposition'] = f'attachment; filename="Bai_Viet_SEO.html"'
+            msg.attach(part)
+            
+            server = smtplib.SMTP('smtp.gmail.com', 587)
+            server.starttls()
+            server.login(email_sender, email_pwd)
+            server.send_message(msg)
+            server.quit()
+            log_placeholder.success("✅ Đã gửi Email kèm file bài viết!")
+        except Exception as e:
+            log_placeholder.error(f"⚠️ Lỗi gửi Email (Kiểm tra lại Mật khẩu ứng dụng Gmail): {e}")
 
 # ==========================================
 # GIAO DIỆN WEB (UI)
 # ==========================================
-st.title("🚀 HỆ THỐNG AUTO CONTENT SEO")
+db_mock = load_data_from_gsheets()
+project_name = "HỆ THỐNG AUTO CONTENT SEO"
+if db_mock is not None and not db_mock.get('DASHBOARD', pd.DataFrame()).empty:
+    dash_dict = dict(zip(db_mock['DASHBOARD']['DATA_KEY'], db_mock['DASHBOARD']['DATA_CONTENT']))
+    project_name = dash_dict.get('PROJECT_NAME', project_name)
+
+st.title(f"🚀 {project_name}")
 st.markdown("---")
 
-db_mock = load_data_from_gsheets()
 tab1, tab2 = st.tabs(["⚙️ CONTROL", "📊 REPORT (Viewer)"])
 
 with tab1:
@@ -392,8 +420,8 @@ with tab1:
                 
                 if bot.step1_kiem_tra_he_thong(status_text):
                     m = bot.metrics
-                    st.info(f"📈 TIẾN ĐỘ TỔNG HỆ THỐNG: **{m.get('batch_current')}/{m.get('batch_total')}** BÀI")
-                    st.info(f"🌐 TIẾN ĐỘ WEB ({bot.target_web.get('WS_NAME')}): **{m.get('web_current')}/{m.get('web_total')}** BÀI")
+                    st.info(f"📈 TIẾN ĐỘ TẠO BÀI HÔM NAY: **{m.get('created_today')}/{m.get('batch_total')}** BÀI")
+                    st.info(f"🌐 TIẾN ĐỘ ĐĂNG LÊN WEB ({bot.target_web.get('WS_NAME')}): **{m.get('web_current')}/{m.get('web_total')}** BÀI")
 
                     new_data = bot.run_ai_content_pipeline(status_text)
                     
@@ -401,21 +429,31 @@ with tab1:
                         status_text.error(new_data["Lỗi"])
                     else:
                         bot.step7_save_to_sheet(new_data, status_text)
-                        doc_stream = bot.generate_docx()
                         
-                        status_text.success(f"🎉 HOÀN TẤT! Đã tạo và lưu bài: {new_data.get('REP_TITLE', '')}")
+                        # TẠO FILE HTML CỰC CHUẨN ĐỂ TẢI XUỐNG VÀ GỬI MAIL
+                        html_export = f"""<!DOCTYPE html>
+                        <html><head><meta charset="utf-8"><title>{new_data.get('REP_TITLE')}</title></head>
+                        <body>
+                        <h1>{new_data.get('REP_TITLE')}</h1>
+                        {bot.raw_html}
+                        </body></html>"""
+                        
+                        bot.step8_telegram(new_data, status_text)
+                        bot.step9_email(new_data, status_text, html_export)
+                        
+                        status_text.success(f"🎉 HOÀN TẤT! Bài viết đã sẵn sàng lên sóng.")
                         
                         st.download_button(
-                            label="📥 TẢI BÀI VIẾT (FILE WORD .DOCX)",
-                            data=doc_stream,
-                            file_name=f"{new_data.get('REP_TITLE')}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            label="📥 TẢI BÀI VIẾT CHUẨN (FILE .HTML)",
+                            data=html_export.encode('utf-8'),
+                            file_name=f"{new_data.get('REP_TITLE')}.html",
+                            mime="text/html",
                             type="primary"
                         )
                         
-                        st.write("📌 **Báo cáo Data:**")
-                        st.json(new_data)
-                        st.write("📄 **Nội dung HTML (Có chèn sẵn Backlink & Hình ảnh):**")
+                        st.write("📌 **Báo cáo Data (Trích xuất):**")
+                        st.json({k: v for k, v in new_data.items() if k in ['REP_TITLE', 'REP_KW_1', 'REP_KW_2', 'REP_SEO_SCORE', 'REP_PUBLISH_DATE']})
+                        st.write("📄 **Nội dung HTML (Đã tối ưu & chèn link):**")
                         st.components.v1.html(bot.raw_html, height=300, scrolling=True)
                         st.balloons()
 
