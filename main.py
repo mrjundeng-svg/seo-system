@@ -9,10 +9,12 @@ import datetime
 import re
 import requests
 import smtplib
+import io
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 from email.mime.text import MIMEText
 from bs4 import BeautifulSoup
+from googleapiclient.discovery import build
 
 st.set_page_config(page_title="Hệ Thống Auto Content SEO", layout="wide", page_icon="🚀")
 SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw' 
@@ -20,7 +22,7 @@ SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw'
 @st.cache_data(ttl=5)
 def load_data_from_gsheets():
     try:
-        scopes = ['https://www.googleapis.com/auth/spreadsheets']
+        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         s_creds = dict(st.secrets["service_account"])
         creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
         client = gspread.authorize(creds)
@@ -152,7 +154,7 @@ class AutoContentSEO:
                 for t_url in target_urls:
                     content = self.scrape_url(t_url)
                     if content: 
-                        self.add_log(log_placeholder, f"Cào xương sống thành công từ: {t_url}", "success")
+                        self.add_log(log_placeholder, f"Đã cào xương sống thành công từ: {t_url}", "success")
                         return content
             except Exception as e: 
                 self.add_log(log_placeholder, "Lỗi/Timeout gọi SERPAPI. Đang thử cách khác...", "warning")
@@ -168,6 +170,42 @@ class AutoContentSEO:
                         self.add_log(log_placeholder, f"Cào xương sống từ bài nội bộ: {link}", "success")
                         return content
         return None
+
+    # TÍNH NĂNG MỚI: GHI TRỰC TIẾP VÀO GOOGLE DOC
+    def append_to_google_doc(self, html_content, title, log_placeholder):
+        try:
+            # Lấy ID mà Sếp cung cấp
+            doc_id = '1dGdj-Oyvm2CS4lKYn8uDnAzPqdYnlGTInxyGLnzhE-8'
+            
+            # Khởi tạo API Google Docs
+            scopes = ['https://www.googleapis.com/auth/documents', 'https://www.googleapis.com/auth/drive']
+            s_creds = dict(st.secrets["service_account"])
+            creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
+            docs_service = build('docs', 'v1', credentials=creds)
+            
+            # Tạo bộ khung bài viết để dễ copy
+            separator = "=" * 50
+            time_now = self.current_date.strftime('%Y-%m-%d %H:%M:%S')
+            text_to_insert = f"\n\n{separator}\nBÀI VIẾT: {title}\nNGÀY TẠO: {time_now}\n{separator}\n\n{html_content}\n\n"
+            
+            # Dùng lệnh endOfSegmentLocation để chèn xuống cuối cùng của file Doc
+            requests_body = [
+                {
+                    'insertText': {
+                        'endOfSegmentLocation': {'segmentId': ''},
+                        'text': text_to_insert
+                    }
+                }
+            ]
+            
+            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
+            
+            doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
+            self.add_log(log_placeholder, f"✅ Đã ghi mã HTML vào Google Doc tập trung thành công.", "success")
+            return doc_url
+        except Exception as e:
+            self.add_log(log_placeholder, f"❌ Lỗi ghi Google Doc API: {e}", "error")
+            return ""
 
     def step1_kiem_tra_he_thong(self, log_placeholder) -> bool:
         self.add_log(log_placeholder, "Đang quét slot đăng bài...", "info")
@@ -365,7 +403,11 @@ class AutoContentSEO:
                 img_idx += 1
                 
         self.raw_html = "\n".join(final_html_parts)
-        self.add_log(log_placeholder, "Hoàn thành bài viết, chuẩn bị xuất data.", "success")
+        
+        self.add_log(log_placeholder, "Đang xuất file sang Google Doc...", "info")
+        doc_link = self.append_to_google_doc(self.raw_html, self.generated_title, log_placeholder)
+        
+        self.add_log(log_placeholder, "Hoàn thành chu trình bài viết.", "success")
 
         return {
             'REP_WS_NAME': self.target_web.get('WS_NAME', ''),
@@ -384,7 +426,7 @@ class AutoContentSEO:
             'REP_POST_URL': "Đang cập nhật...",
             'REP_RESULT': "PENDING",
             'REP_LOG': "\n".join(self.history_log), 
-            'REP_HTML': self.raw_html 
+            'REP_HTML': doc_link 
         }
 
     def step7_save_to_sheet(self, new_data, log_placeholder):
@@ -436,23 +478,18 @@ class AutoContentSEO:
         if not email_sender or not email_pwd or not email_receiver: return
         
         try:
-            self.add_log(log_placeholder, "Đang gửi Email kèm file HTML...", "info")
+            self.add_log(log_placeholder, "Đang gửi Email thông báo...", "info")
             msg = MIMEMultipart()
             msg['From'] = email_sender
             msg['To'] = email_receiver
             msg['Subject'] = f"Report Auto SEO: {new_data.get('REP_TITLE')}"
-            msg.attach(MIMEText(f"Hệ thống lên bài thành công!\nTiêu đề: {new_data.get('REP_TITLE')}\nTừ khoá: {new_data.get('REP_KW_1')}\nLên lịch: {new_data.get('REP_PUBLISH_DATE')}\n\nVui lòng tải file HTML đính kèm để xem chi tiết.", 'plain'))
-            
-            part = MIMEApplication(html_content.encode('utf-8'), Name="Bai_Viet_SEO.html")
-            part['Content-Disposition'] = 'attachment; filename="Bai_Viet_SEO.html"'
-            msg.attach(part)
+            msg.attach(MIMEText(f"Hệ thống lên bài thành công!\nTiêu đề: {new_data.get('REP_TITLE')}\nTừ khoá: {new_data.get('REP_KW_1')}\nLên lịch: {new_data.get('REP_PUBLISH_DATE')}\n\nXem nội dung bài viết trong Google Doc.", 'plain'))
             
             server = smtplib.SMTP('smtp.gmail.com', 587)
             server.starttls()
             server.login(email_sender, email_pwd)
             server.send_message(msg)
             server.quit()
-            self.add_log(log_placeholder, "Đã gửi Email hoàn tất.", "success")
         except: pass
 
 db_mock = load_data_from_gsheets()
@@ -505,31 +542,19 @@ with tab1:
             cols_to_show = [c for c in df_today.columns if c not in ['REP_LOG', 'REP_HTML']]
             st.dataframe(format_display_dataframe(df_today[cols_to_show]), use_container_width=True, hide_index=True)
             
-            st.markdown("### 🔍 Tra Cứu Nhật Ký & Tải Bài Viết")
+            st.markdown("### 👀 Xem Code HTML Bài Viết")
+            st.info("💡 Toàn bộ bài viết đã được lưu tập trung vào 1 file Google Doc. Bấm nút dưới đây để mở file và copy mã HTML.")
+            st.markdown(f"👉 **[MỞ GOOGLE DOC COPY CODE](https://docs.google.com/document/d/1dGdj-Oyvm2CS4lKYn8uDnAzPqdYnlGTInxyGLnzhE-8/edit)**")
+
+            st.markdown("### 🔍 Tra Cứu Nhật Ký")
             valid_articles = df_today.dropna(subset=['REP_TITLE']).copy()
             valid_articles = valid_articles[valid_articles['REP_TITLE'].str.strip() != '']
             if not valid_articles.empty:
-                sel_title = st.selectbox("Chọn bài viết muốn thao tác (Mới nhất trên cùng):", valid_articles['REP_TITLE'].tolist()[::-1])
+                sel_title = st.selectbox("Chọn bài viết muốn xem Log (Mới nhất trên cùng):", valid_articles['REP_TITLE'].tolist()[::-1])
                 if sel_title:
                     row_data = valid_articles[valid_articles['REP_TITLE'] == sel_title].iloc[0]
-                    html_val = str(row_data.get('REP_HTML', '')).strip()
                     log_val = str(row_data.get('REP_LOG', '')).strip()
-                    
-                    if html_val and html_val.startswith('<'):
-                        st.download_button(
-                            label="📥 TẢI FILE BÀI VIẾT (.HTML)", 
-                            data=html_val.encode('utf-8'), 
-                            file_name=f"{sel_title}.html", 
-                            mime="text/html", 
-                            type="primary"
-                        )
-                        with st.expander("👀 Xem trước Giao diện bài viết"):
-                            st.components.v1.html(html_val, height=500, scrolling=True)
-                    else:
-                        st.warning("Bài viết này chưa ghi nhận được HTML.")
-                        
                     st.text_area("📜 Lịch sử thao tác của AI (Log):", value=log_val if log_val else "Chưa ghi nhận Log.", height=200)
-            else: st.warning("Hãy tạo cột REP_HTML và REP_LOG trong Google Sheet để sử dụng tính năng này.")
         else: st.info("Chưa có bài viết nào được tạo trong hôm nay.")
 
 with tab2:
