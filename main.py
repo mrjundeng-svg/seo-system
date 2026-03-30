@@ -25,7 +25,7 @@ def load_data_from_gsheets():
         ]
         
         # Đọc cấu hình bảo mật từ Streamlit Secrets
-        s_creds = dict(st.secrets["gcp_service_account"])
+        s_creds = dict(st.secrets["service_account"])
         creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
         client = gspread.authorize(creds)
         
