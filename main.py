@@ -53,13 +53,13 @@ def format_display_dataframe(df):
     if df.empty: return df
     df_show = df.copy()
     df_show.insert(0, 'STT', range(1, len(df_show) + 1))
+    # Tuyệt đối không map cột REP_HTML vào bảng để tránh sập web
     rename_dict = {
         'REP_TITLE': 'Tiêu đề bài viết',
         'REP_WS_NAME': 'Tên trang web',
         'REP_PUBLISH_DATE': 'Ngày đăng bài',
         'REP_RESULT': 'Trạng thái',
-        'REP_POST_URL': 'Đường dẫn',
-        'REP_HTML': 'Link File (Drive)'
+        'REP_POST_URL': 'Đường dẫn'
     }
     return df_show.rename(columns={k: v for k, v in rename_dict.items() if k in df_show.columns})
 
@@ -135,14 +135,10 @@ class AutoContentSEO:
                 res = requests.get(url, params={"q": self.main_kw_text, "hl": "vi", "gl": "vn", "api_key": serp_key}).json()
                 results = res.get("organic_results", [])
                 
-                # BƯỚC 1: TÌM ĐỐI THỦ TRONG TOP 5
                 target_urls = [r["link"] for r in results[:5] if any(c in r.get("link", "") for c in competitors)]
-                
-                # BƯỚC 2 (FALLBACK): NẾU KHÔNG CÓ ĐỐI THỦ -> BỐC BÀI BẤT KỲ TRONG TOP 5
                 if not target_urls and results:
                     target_urls = [r["link"] for r in results[:5] if "link" in r]
                 
-                # Quét lần lượt các URL đến khi có nội dung
                 for t_url in target_urls:
                     content = self.scrape_url(t_url)
                     if content: 
@@ -175,7 +171,6 @@ class AutoContentSEO:
             log_placeholder.success(f"✅ Đã tải file HTML lên Google Drive.")
             return link
         except Exception as e:
-            # Thông báo lỗi gọn gàng, nhắc user bật API
             log_placeholder.warning(f"⚠️ Chưa lưu được lên Drive! Vui lòng làm theo thông báo màu vàng bên trên màn hình nếu có lỗi 403.")
             return ""
 
@@ -350,6 +345,7 @@ class AutoContentSEO:
         
         # LƯU FILE LÊN DRIVE
         drive_link = self.upload_to_drive(self.raw_html, self.generated_title, log_placeholder)
+        html_val_to_save = drive_link if drive_link else f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>{self.generated_title}</title></head><body>{self.raw_html}</body></html>"
 
         return {
             'REP_WS_NAME': self.target_web.get('WS_NAME', ''),
@@ -365,7 +361,7 @@ class AutoContentSEO:
             'REP_PUBLISH_DATE': self.publish_time.strftime('%Y-%m-%d %H:%M'),
             'REP_POST_URL': "Đang cập nhật...",
             'REP_RESULT': "PENDING",
-            'REP_HTML': drive_link
+            'REP_HTML': html_val_to_save
         }
 
     def step7_save_to_sheet(self, new_data, log_placeholder):
@@ -440,7 +436,7 @@ if db_mock is not None and not db_mock.get('DASHBOARD', pd.DataFrame()).empty:
 st.title(f"🚀 {project_name}")
 st.markdown("---")
 
-tab1, tab2, tab3 = st.tabs(["📊 DASHBOARD (Sếp)", "⚙️ CONTROL (Auto Run)", "📝 REPORT (Viewer)"])
+tab1, tab2, tab3 = st.tabs(["📊 DASHBOARD", "⚙️ CONTROL", "📝 REPORT"])
 
 with tab1:
     st.subheader("Thống Kê Hoạt Động Ngày Hôm Nay")
@@ -457,16 +453,40 @@ with tab1:
 
         st.markdown("### 📋 Danh sách bài viết hôm nay")
         if not df_today.empty:
-            cols_to_show = [c for c in ['REP_TITLE', 'REP_WS_NAME', 'REP_PUBLISH_DATE', 'REP_RESULT', 'REP_POST_URL', 'REP_HTML'] if c in df_today.columns]
+            cols_to_show = [c for c in ['REP_TITLE', 'REP_WS_NAME', 'REP_PUBLISH_DATE', 'REP_RESULT', 'REP_POST_URL'] if c in df_today.columns]
             st.dataframe(format_display_dataframe(df_today[cols_to_show]), use_container_width=True, hide_index=True)
-            st.info("💡 File bài viết đã tự động được lưu vào thư mục Google Drive của bạn. Copy link ở cột cuối dán vào trình duyệt để tải xuống nha Sếp!")
+            
+            st.markdown("### 👀 Xem & Tải Bài Viết")
+            if 'REP_HTML' in df_rep.columns:
+                valid_articles = df_rep.dropna(subset=['REP_TITLE']).copy()
+                valid_articles = valid_articles[valid_articles['REP_TITLE'].str.strip() != '']
+                if not valid_articles.empty:
+                    sel_title = st.selectbox("Chọn bài viết muốn xem/tải (Mới nhất trên cùng):", valid_articles['REP_TITLE'].tolist()[::-1])
+                    if sel_title:
+                        html_val = str(valid_articles[valid_articles['REP_TITLE'] == sel_title]['REP_HTML'].iloc[0]).strip()
+                        
+                        if html_val.startswith('http'):
+                            st.success("Tệp HTML đã được lưu tự động trên hệ thống Google Drive.")
+                            st.markdown(f"👉 **[BẤM VÀO ĐÂY ĐỂ MỞ VÀ TẢI FILE TỪ GOOGLE DRIVE]({html_val})**")
+                        elif html_val.startswith('<'):
+                            st.download_button(
+                                label="📥 TẢI FILE HTML VỀ MÁY", 
+                                data=html_val.encode('utf-8'), 
+                                file_name=f"{sel_title}.html", 
+                                mime="text/html", 
+                                type="primary"
+                            )
+                            with st.expander("Nhấp vào đây để xem trước nội dung"):
+                                st.components.v1.html(html_val, height=500, scrolling=True)
+                        else:
+                            st.warning("Bài viết này chưa có dữ liệu nội dung.")
+            else: st.warning("Hệ thống chưa ghi nhận dữ liệu HTML.")
         else: st.info("Chưa có bài viết nào được tạo trong hôm nay.")
 
 with tab2:
     st.subheader("Bảng Điều Khiển Vận Hành Auto")
     col_btn, col_log = st.columns([1, 3])
     
-    # 💥 KHOÁ GIAO DIỆN BẰNG NÚT DISABLE (CHỐNG BẤM NHIỀU LẦN)
     if 'is_running' not in st.session_state:
         st.session_state.is_running = False
 
@@ -518,4 +538,6 @@ with tab2:
 with tab3:
     st.subheader("Dữ Liệu Thô (Dành cho SEOer)")
     if db_mock is not None and not db_mock.get('REPORT', pd.DataFrame()).empty:
-        st.dataframe(db_mock['REPORT'], use_container_width=True)
+        df_rep = db_mock['REPORT']
+        cols_to_show = [c for c in df_rep.columns if c != 'REP_HTML']
+        st.dataframe(format_display_dataframe(df_rep[cols_to_show]), use_container_width=True)
