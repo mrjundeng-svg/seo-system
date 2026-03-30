@@ -35,7 +35,19 @@ def load_data_from_gsheets():
             data = worksheet.get_all_values()
             if data:
                 headers = data[0]
-                db[tab_name] = pd.DataFrame(data[1:], columns=headers)
+                # --- VÁ LỖI TRÙNG TÊN CỘT HOẶC CỘT TRỐNG ĐỂ STREAMLIT KHÔNG BỊ SẬP ---
+                clean_headers = []
+                seen = set()
+                for i, h in enumerate(headers):
+                    val = str(h).strip()
+                    if not val:
+                        val = f"COT_TRONG_{i}"
+                    if val in seen:
+                        val = f"{val}_{i}"
+                    seen.add(val)
+                    clean_headers.append(val)
+                    
+                db[tab_name] = pd.DataFrame(data[1:], columns=clean_headers)
             else:
                 db[tab_name] = pd.DataFrame()
         return db
@@ -61,7 +73,7 @@ class AutoContentSEO:
         self.raw_html = ""
         self.generated_title = ""
         self.chosen_img_url = None
-        self.metrics = {} # Lưu trữ thông số báo cáo tiến độ
+        self.metrics = {}
 
     def _parse_dashboard(self) -> dict:
         df = self.db.get('DASHBOARD', pd.DataFrame())
@@ -120,7 +132,6 @@ class AutoContentSEO:
                     self.actual_limits['link_out'] = self._get_random_limit(web.get('WS_LINK_OUT_LIMIT', '1'))
                     self.actual_limits['link_in'] = self._get_random_limit(web.get('WS_LINK_IN_LIMIT', '1'))
                     
-                    # Lưu trữ Metrics cho Báo cáo Tiến độ
                     self.metrics['batch_current'] = len(posts_in_day) + 1
                     self.metrics['batch_total'] = batch_size
                     self.metrics['web_current'] = len(posts_for_web) + 1
@@ -234,10 +245,9 @@ class AutoContentSEO:
         if h1_match:
             shielded_content = shielded_content.replace("[[H1_PLACEHOLDER]]", h1_match.group(0))
 
-        # --- LẤY ẢNH TỪ TAB IMAGE ---
         log_placeholder.info("🖼️ Bước 5: Đang trích xuất Hình ảnh từ Database...")
         df_img = self.db.get('IMAGE', pd.DataFrame())
-        img_url = "https://picsum.photos/800/400?random=1" # Fallback
+        img_url = "https://picsum.photos/800/400?random=1" 
         
         if not df_img.empty and 'IMG_URL' in df_img.columns:
             df_img_clean = df_img.dropna(subset=['IMG_URL'])
@@ -252,7 +262,7 @@ class AutoContentSEO:
                     chosen_img = df_img_clean.sample(n=1).iloc[0]
                     
                 img_url = str(chosen_img['IMG_URL'])
-                self.chosen_img_url = img_url # Đánh dấu để cập nhật trạng thái
+                self.chosen_img_url = img_url 
         
         img_tag = f"<br><p align='center'><img src='{img_url}' alt='{self.main_kw['KW_TEXT']}'></p><br>"
         self.raw_html = shielded_content.replace("</p>", f"</p>\n{img_tag}", 1)
@@ -281,7 +291,6 @@ class AutoContentSEO:
             client = gspread.authorize(creds)
             sheet = client.open_by_key(SHEET_ID)
             
-            # 1. Lưu REPORT
             report_tab = sheet.worksheet('REPORT')
             headers = report_tab.row_values(1)
             
@@ -292,31 +301,30 @@ class AutoContentSEO:
             row_data = []
             for h in headers:
                 key = str(h).strip()
-                if key == "":
+                if key == "" or "COT_TRONG" in key:
                     row_data.append("")
                 else:
                     row_data.append(str(new_data.get(key, "")))
                     
             report_tab.append_row(row_data)
             
-            # 2. Cập nhật trạng thái TỪ KHOÁ (KEYWORD)
             kw_tab = sheet.worksheet('KEYWORD')
             all_kws_used = [self.main_kw['KW_TEXT']] + self.secondary_kws
             kw_data = kw_tab.get_all_values()
             
             if len(kw_data) > 1:
                 header = kw_data[0]
-                text_idx = header.index('KW_TEXT')
-                status_idx = header.index('KW_STATUS')
-                date_idx = header.index('KW_DATE') if 'KW_DATE' in header else None
-                for r_idx, row in enumerate(kw_data[1:], start=2):
-                    if row[text_idx] in all_kws_used:
-                        current_status = int(row[status_idx]) if row[status_idx].isdigit() else 0
-                        kw_tab.update_cell(r_idx, status_idx + 1, str(current_status + 1))
-                        if date_idx is not None:
-                            kw_tab.update_cell(r_idx, date_idx + 1, self.publish_time.strftime('%Y-%m-%d %H:%M'))
+                if 'KW_TEXT' in header and 'KW_STATUS' in header:
+                    text_idx = header.index('KW_TEXT')
+                    status_idx = header.index('KW_STATUS')
+                    date_idx = header.index('KW_DATE') if 'KW_DATE' in header else None
+                    for r_idx, row in enumerate(kw_data[1:], start=2):
+                        if row[text_idx] in all_kws_used:
+                            current_status = int(row[status_idx]) if row[status_idx].isdigit() else 0
+                            kw_tab.update_cell(r_idx, status_idx + 1, str(current_status + 1))
+                            if date_idx is not None:
+                                kw_tab.update_cell(r_idx, date_idx + 1, self.publish_time.strftime('%Y-%m-%d %H:%M'))
                             
-            # 3. Cập nhật trạng thái ẢNH (IMAGE)
             if self.chosen_img_url:
                 img_tab = sheet.worksheet('IMAGE')
                 img_data = img_tab.get_all_values()
@@ -383,7 +391,6 @@ with tab1:
                 bot = AutoContentSEO(db_mock)
                 
                 if bot.step1_kiem_tra_he_thong(status_text):
-                    # HIỂN THỊ TIẾN ĐỘ LÊN GIAO DIỆN
                     m = bot.metrics
                     st.info(f"📈 TIẾN ĐỘ TỔNG HỆ THỐNG: **{m.get('batch_current')}/{m.get('batch_total')}** BÀI")
                     st.info(f"🌐 TIẾN ĐỘ WEB ({bot.target_web.get('WS_NAME')}): **{m.get('web_current')}/{m.get('web_total')}** BÀI")
