@@ -53,13 +53,13 @@ def format_display_dataframe(df):
     if df.empty: return df
     df_show = df.copy()
     df_show.insert(0, 'STT', range(1, len(df_show) + 1))
-    # Tuyệt đối không map cột REP_HTML vào bảng để tránh sập web
     rename_dict = {
         'REP_TITLE': 'Tiêu đề bài viết',
         'REP_WS_NAME': 'Tên trang web',
         'REP_PUBLISH_DATE': 'Ngày đăng bài',
         'REP_RESULT': 'Trạng thái',
-        'REP_POST_URL': 'Đường dẫn'
+        'REP_POST_URL': 'Đường dẫn',
+        'REP_HTML': 'Link File (Drive)'
     }
     return df_show.rename(columns={k: v for k, v in rename_dict.items() if k in df_show.columns})
 
@@ -171,7 +171,7 @@ class AutoContentSEO:
             log_placeholder.success(f"✅ Đã tải file HTML lên Google Drive.")
             return link
         except Exception as e:
-            log_placeholder.warning(f"⚠️ Chưa lưu được lên Drive! Vui lòng làm theo thông báo màu vàng bên trên màn hình nếu có lỗi 403.")
+            log_placeholder.warning(f"⚠️ Chưa lưu được lên Drive do cấu hình Google Cloud. (Bỏ qua bước này)")
             return ""
 
     def step1_kiem_tra_he_thong(self, log_placeholder) -> bool:
@@ -343,7 +343,6 @@ class AutoContentSEO:
                 
         self.raw_html = "\n".join(final_html_parts)
         
-        # LƯU FILE LÊN DRIVE
         drive_link = self.upload_to_drive(self.raw_html, self.generated_title, log_placeholder)
         html_val_to_save = drive_link if drive_link else f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>{self.generated_title}</title></head><body>{self.raw_html}</body></html>"
 
@@ -453,52 +452,23 @@ with tab1:
 
         st.markdown("### 📋 Danh sách bài viết hôm nay")
         if not df_today.empty:
-            cols_to_show = [c for c in ['REP_TITLE', 'REP_WS_NAME', 'REP_PUBLISH_DATE', 'REP_RESULT', 'REP_POST_URL'] if c in df_today.columns]
+            cols_to_show = [c for c in ['REP_TITLE', 'REP_WS_NAME', 'REP_PUBLISH_DATE', 'REP_RESULT', 'REP_POST_URL', 'REP_HTML'] if c in df_today.columns]
             st.dataframe(format_display_dataframe(df_today[cols_to_show]), use_container_width=True, hide_index=True)
-            
-            st.markdown("### 👀 Xem & Tải Bài Viết")
-            if 'REP_HTML' in df_rep.columns:
-                valid_articles = df_rep.dropna(subset=['REP_TITLE']).copy()
-                valid_articles = valid_articles[valid_articles['REP_TITLE'].str.strip() != '']
-                if not valid_articles.empty:
-                    sel_title = st.selectbox("Chọn bài viết muốn xem/tải (Mới nhất trên cùng):", valid_articles['REP_TITLE'].tolist()[::-1])
-                    if sel_title:
-                        html_val = str(valid_articles[valid_articles['REP_TITLE'] == sel_title]['REP_HTML'].iloc[0]).strip()
-                        
-                        if html_val.startswith('http'):
-                            st.success("Tệp HTML đã được lưu tự động trên hệ thống Google Drive.")
-                            st.markdown(f"👉 **[BẤM VÀO ĐÂY ĐỂ MỞ VÀ TẢI FILE TỪ GOOGLE DRIVE]({html_val})**")
-                        elif html_val.startswith('<'):
-                            st.download_button(
-                                label="📥 TẢI FILE HTML VỀ MÁY", 
-                                data=html_val.encode('utf-8'), 
-                                file_name=f"{sel_title}.html", 
-                                mime="text/html", 
-                                type="primary"
-                            )
-                            with st.expander("Nhấp vào đây để xem trước nội dung"):
-                                st.components.v1.html(html_val, height=500, scrolling=True)
-                        else:
-                            st.warning("Bài viết này chưa có dữ liệu nội dung.")
-            else: st.warning("Hệ thống chưa ghi nhận dữ liệu HTML.")
+            st.info("💡 File bài viết đã tự động được lưu vào thư mục Google Drive của bạn. Copy link ở cột cuối dán vào trình duyệt để tải xuống nha Sếp!")
         else: st.info("Chưa có bài viết nào được tạo trong hôm nay.")
 
 with tab2:
     st.subheader("Bảng Điều Khiển Vận Hành Auto")
     col_btn, col_log = st.columns([1, 3])
     
-    if 'is_running' not in st.session_state:
-        st.session_state.is_running = False
-
-    def start_auto(): st.session_state.is_running = True
-
     with col_btn: 
-        start_btn = st.button("🚀 BẮT ĐẦU CHẠY AUTO", type="primary", use_container_width=True, disabled=st.session_state.is_running, on_click=start_auto)
+        start_btn = st.button("🚀 BẮT ĐẦU CHẠY AUTO", type="primary", use_container_width=True)
         
     with col_log: log_container = st.container()
         
-    if st.session_state.is_running and db_mock is not None:
-        with st.spinner("ĐANG CHẠY AUTO - KHOÁ MÀN HÌNH (Vui lòng không bấm gì thêm)..."):
+    if start_btn and db_mock is not None:
+        with log_container:
+            st.info("🚀 Đang khởi động cỗ máy cày Auto... Vui lòng không F5 trình duyệt!")
             df_rep_temp = db_mock.get('REPORT', pd.DataFrame())
             today_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%Y-%m-%d')
             created_today = len(df_rep_temp[df_rep_temp['REP_CREATED_AT'].astype(str).str.startswith(today_str, na=False)]) if not df_rep_temp.empty and 'REP_CREATED_AT' in df_rep_temp.columns else 0
@@ -509,8 +479,10 @@ with tab2:
             else:
                 articles_to_run = quota_day - created_today
                 progress_bar = st.progress(0)
+                completed_docs = []
+                
                 for i in range(articles_to_run):
-                    st.info(f"⏳ Đang cày cuốc bài {i+1}/{articles_to_run}...")
+                    st.markdown(f"**⏳ Đang cày cuốc bài {i+1}/{articles_to_run}...**")
                     bot = AutoContentSEO(db_mock)
                     if bot.step1_kiem_tra_he_thong(st):
                         new_data = bot.run_ai_content_pipeline(st)
@@ -523,6 +495,7 @@ with tab2:
                             bot.step9_email(new_data, st, bot.raw_html)
                             
                             st.success(f"✅ Xong bài {i+1}: {new_data.get('REP_TITLE')}")
+                            completed_docs.append((new_data.get('REP_TITLE'), bot.raw_html, new_data.get('REP_HTML')))
                             
                             new_df = pd.DataFrame([new_data])
                             if db_mock['REPORT'].empty: db_mock['REPORT'] = new_df
@@ -530,10 +503,16 @@ with tab2:
                             
                             progress_bar.progress((i + 1) / articles_to_run)
                             time.sleep(2)
-                    else: break
-            
-            st.session_state.is_running = False
-            st.rerun()
+                    else: 
+                        st.warning("⚠️ Dừng lặp vì không còn slot đăng bài trống hoặc đã hết Quota website.")
+                        break
+                        
+                st.success("🎉 ĐÃ HOÀN TẤT CHU TRÌNH CÀY NGẦM!")
+                for idx, (title, html_content, drive_link) in enumerate(completed_docs):
+                    with st.expander(f"📄 Bài {idx+1}: {title}"):
+                        if str(drive_link).startswith('http'):
+                            st.markdown(f"👉 **[MỞ TRÊN GOOGLE DRIVE]({drive_link})**")
+                        st.download_button(label="📥 TẢI FILE HTML", data=html_content.encode('utf-8'), file_name=f"{title}.html", mime="text/html", key=f"dl_btn_{idx}")
 
 with tab3:
     st.subheader("Dữ Liệu Thô (Dành cho SEOer)")
