@@ -5,3 +5,4 @@ groq
 google-search-results
 requests
 python-docx
+google-generativeai
