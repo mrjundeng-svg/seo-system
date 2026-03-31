@@ -99,7 +99,8 @@ class AutoContentSEO:
     def _parse_dashboard(self) -> dict:
         df = self.db.get('DASHBOARD', pd.DataFrame())
         if df.empty: return {}
-        return dict(zip(df['DATA_KEY'], df['DATA_CONTENT']))
+        # Ép phẳng (strip) toàn bộ Key và Content để tránh lỗi người dùng gõ dư khoảng trắng
+        return {str(k).strip(): str(v).strip() for k, v in zip(df['DATA_KEY'], df['DATA_CONTENT'])}
 
     def _get_random_limit(self, limit_val) -> int:
         limit_str = str(limit_val).strip()
@@ -145,9 +146,11 @@ class AutoContentSEO:
                 url = "https://serpapi.com/search"
                 res = requests.get(url, params={"q": self.main_kw_text, "hl": "vi", "gl": "vn", "api_key": serp_key}, timeout=10).json()
                 results = res.get("organic_results", [])
+                
                 target_urls = [r["link"] for r in results[:10] if any(c in r.get("link", "") for c in competitors)]
                 if not target_urls and results:
                     target_urls = [r["link"] for r in results[:10] if "link" in r]
+                
                 random.shuffle(target_urls)
                 for t_url in target_urls:
                     content = self.scrape_url(t_url)
@@ -259,13 +262,14 @@ class AutoContentSEO:
         return True
 
     def run_ai_content_pipeline(self, log_placeholder):
-        self.add_log(log_placeholder, "Bắt đầu Nhịp 1: Thiết lập Hệ sinh thái Từ khoá", "info")
+        self.add_log(log_placeholder, "NHỊP 1.1: Keyword_Website_Content", "info")
         kw_web_content = self.actual_limits.get('link_in', 1) + self.actual_limits.get('link_out', 1)
 
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty: return {"Lỗi": "Tab KEYWORD trống!"}
         df_kw['KW_STATUS'] = pd.to_numeric(df_kw.get('KW_STATUS', 0), errors='coerce').fillna(0)
         
+        self.add_log(log_placeholder, "NHỊP 1.2: REP_KW_1", "info")
         min_kw_status = df_kw['KW_STATUS'].min()
         main_kw_row = df_kw[df_kw['KW_STATUS'] == min_kw_status].sample(n=1).iloc[0]
         self.main_kw_text = str(main_kw_row['KW_TEXT'])
@@ -284,18 +288,19 @@ class AutoContentSEO:
         self.all_used_kws = [self.main_kw_text] + self.content_kws
         self.add_log(log_placeholder, f"Đã bốc: {', '.join(self.all_used_kws)}", "success")
 
+        self.add_log(log_placeholder, "NHỊP 1.3: Rule WORD_COUNT_RANGE", "info")
         word_range = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
         base_word = random.randint(int(word_range[0]), int(word_range[-1]))
         self.final_word_count = base_word // 2 if kw_web_content < 3 else base_word
-        self.add_log(log_placeholder, f"Định lượng số chữ bài viết: {self.final_word_count} chữ", "info")
+        self.add_log(log_placeholder, f"Chốt: {self.final_word_count} chữ", "info")
 
-        self.add_log(log_placeholder, "Chuyển sang Nhịp 2: Tìm bài đối thủ làm Xương sống", "info")
+        self.add_log(log_placeholder, "NHỊP 2: SERP_STYLE", "info")
         ref_content = self.fetch_reference_content(log_placeholder)
         if not ref_content: 
-            self.add_log(log_placeholder, "Cào thất bại. Chuyển sang tự do sáng tạo.", "warning")
+            self.add_log(log_placeholder, "Bỏ qua cào bài. Tự động chuyển sang chế độ tự do sáng tạo!", "warning")
             ref_content = f"Hãy tự do phân tích chuyên sâu về chủ đề '{self.main_kw_text}', trình bày rõ ràng, mạch lạc, đáp ứng intent của người dùng tìm kiếm."
 
-        self.add_log(log_placeholder, "Đóng gói Prompt và ép Luật", "info")
+        self.add_log(log_placeholder, "NHỊP 3: PROMT_CONTENT", "info")
         personas = ["chuyên gia", "khách hàng review", "nhà báo", "chủ doanh nghiệp"]
         t_template = spin_text(self.dashboard.get('PROMPT_TEMPLATE', '')).replace('{{keyword}}', self.main_kw_text).replace('{{word_count}}', str(self.final_word_count)).replace('{{secondary_keywords}}', ", ".join(self.content_kws))
         
@@ -318,32 +323,24 @@ class AutoContentSEO:
 
         final_prompt = f"{t_template}\n\n{strat}\n\n{search}\n\n{style_full}\n\n{persona_rule}\n\n{global_rule}\n\n{rule_phan_bo}\n\n{anti_bold_rule}\n\n{h1_rule}\n\n{humanizer}\n\n(Chỉ trả về HTML thô: H1, H2, H3, p)."
 
-        # =======================================================
-        # BỘ LỌC BỌC THÉP: LÀM SẠCH KEY & LẤY ĐÚNG 1 MODEL
-        # =======================================================
         response_text = ""
         last_error = ""
 
         # LÀM SẠCH OPENROUTER KEY & MODEL
         openrouter_raw = str(self.dashboard.get('OPENROUTER_API_KEY', '')).replace('\n', '').replace(' ', '')
         openrouter_keys = [k.strip() for k in openrouter_raw.split(',') if k.strip()]
-        
-        # Chỉ lấy Model ĐẦU TIÊN nếu Sếp lỡ nhập nhiều model cách nhau dấu phẩy
-        or_model_raw = str(self.dashboard.get('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet'))
-        or_model = or_model_raw.split(',')[0].strip() 
+        or_model = str(self.dashboard.get('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet')).split(',')[0].strip() 
 
         # LÀM SẠCH GEMINI KEY & MODEL
         gemini_raw = str(self.dashboard.get('GEMINI_API_KEY', '')).replace('\n', '').replace(' ', '')
         gemini_keys = [k.strip() for k in gemini_raw.split(',') if k.strip()]
-        
-        gm_model_raw = str(self.dashboard.get('GEMINI_MODEL', 'gemini-2.5-flash'))
-        gm_model = gm_model_raw.split(',')[0].strip()
+        gm_model = str(self.dashboard.get('GEMINI_MODEL', 'gemini-2.5-flash')).split(',')[0].strip()
 
-        # THÁC NƯỚC 1: THỬ OPENROUTER
+        # 1. THỬ OPENROUTER
         if openrouter_keys:
             for i, current_key in enumerate(openrouter_keys):
                 try:
-                    self.add_log(log_placeholder, f"Đang gọi OpenRouter - {or_model} (Key {i+1}/{len(openrouter_keys)})...", "info")
+                    self.add_log(log_placeholder, f"Bắt đầu tạo bài viết .... (OpenRouter - {or_model})", "info")
                     headers = {"Authorization": f"Bearer {current_key}", "Content-Type": "application/json"}
                     payload = {
                         "model": or_model, 
@@ -353,7 +350,6 @@ class AutoContentSEO:
                     res_data = res.json()
                     if "choices" in res_data and len(res_data["choices"]) > 0:
                         response_text = res_data["choices"][0]["message"]["content"]
-                        self.add_log(log_placeholder, f"OpenRouter ({or_model}) tạo bài thành công!", "success")
                         break
                     else:
                         raise Exception(str(res_data.get('error', res_data)))
@@ -362,7 +358,7 @@ class AutoContentSEO:
                     self.add_log(log_placeholder, f"OpenRouter Key {i+1} lỗi. Thử tiếp...", "warning")
                     continue
 
-        # THÁC NƯỚC 2: NẾU THẤT BẠI, LÙI VỀ GEMINI
+        # 2. NẾU THẤT BẠI, LÙI VỀ GEMINI
         if not response_text:
             if not gemini_keys and not openrouter_keys:
                 return {"Lỗi": "Thiếu thông tin API Key! Vui lòng điền OPENROUTER_API_KEY hoặc GEMINI_API_KEY vào Sheet."}
@@ -370,12 +366,11 @@ class AutoContentSEO:
             if gemini_keys:
                 for i, current_key in enumerate(gemini_keys):
                     try:
-                        self.add_log(log_placeholder, f"Đang chuyển sang {gm_model} dự phòng (Key {i+1}/{len(gemini_keys)})...", "info")
+                        self.add_log(log_placeholder, f"Bắt đầu tạo bài viết .... (Gemini - {gm_model})", "info")
                         genai.configure(api_key=current_key)
                         model = genai.GenerativeModel(gm_model)
                         response = model.generate_content(final_prompt)
                         response_text = response.text
-                        self.add_log(log_placeholder, f"Gemini ({gm_model}) tạo bài thành công!", "success")
                         break 
                     except Exception as e:
                         last_error = str(e)
@@ -447,8 +442,6 @@ class AutoContentSEO:
         
         self.add_log(log_placeholder, "Đang xuất file sang Google Doc...", "info")
         doc_link = self.append_to_google_doc(self.raw_html, self.generated_title, log_placeholder)
-        
-        self.add_log(log_placeholder, "Hoàn thành chu trình bài viết.", "success")
 
         return {
             'REP_WS_NAME': self.target_web.get('WS_NAME', ''),
@@ -519,13 +512,11 @@ class AutoContentSEO:
         if not email_sender or not email_pwd or not email_receiver: return
         
         try:
-            self.add_log(log_placeholder, "Đang gửi Email thông báo...", "info")
             msg = MIMEMultipart()
             msg['From'] = email_sender
             msg['To'] = email_receiver
             msg['Subject'] = f"Report Auto SEO: {new_data.get('REP_TITLE')}"
             msg.attach(MIMEText(f"Hệ thống lên bài thành công!\nTiêu đề: {new_data.get('REP_TITLE')}\nTừ khoá: {new_data.get('REP_KW_1')}\nLên lịch: {new_data.get('REP_PUBLISH_DATE')}\n\nXem nội dung bài viết trong Google Doc.", 'plain'))
-            
             server = smtplib.SMTP('smtp.gmail.com', 587)
             server.starttls()
             server.login(email_sender, email_pwd)
@@ -541,20 +532,6 @@ if db_mock is not None and not db_mock.get('DASHBOARD', pd.DataFrame()).empty:
 
 st.title(f"🚀 {project_name}")
 st.markdown("---")
-
-if 'is_running' not in st.session_state:
-    st.session_state.is_running = False
-
-if st.session_state.is_running:
-    st.components.v1.html("""
-        <script>
-            const parentWindow = window.parent || window;
-            parentWindow.addEventListener("beforeunload", function (e) {
-                e.preventDefault();
-                e.returnValue = "Hệ thống đang viết bài nghen, nếu nhấn OK xác nhận là mất bài đang viết ráng chịu!";
-            });
-        </script>
-    """, height=0, width=0)
 
 tab1, tab2, tab3 = st.tabs(["📊 DASHBOARD", "⚙️ CONTROL", "📝 REPORT"])
 
@@ -602,20 +579,14 @@ with tab2:
     st.subheader("Bảng Điều Khiển Vận Hành Auto")
     col_btn, col_log = st.columns([1, 3])
 
-    def start_auto(): st.session_state.is_running = True
-    def stop_auto():
-        st.session_state.is_running = False
-        st.cache_data.clear()
-
     with col_btn: 
-        start_btn = st.button("🚀 BẮT ĐẦU CHẠY AUTO", type="primary", use_container_width=True, disabled=st.session_state.is_running, on_click=start_auto)
-        
-        if st.session_state.is_running:
-            st.button("❌ ĐÓNG / RESET TẠM DỪNG", type="secondary", use_container_width=True, on_click=stop_auto)
+        start_btn = st.button("🚀 BẮT ĐẦU CHẠY AUTO", type="primary", use_container_width=True)
         
     with col_log: log_container = st.container()
         
-    if st.session_state.is_running and db_mock is not None:
+    if start_btn and db_mock is not None:
+        st.components.v1.html("""<script>const parentWindow = window.parent || window; parentWindow.addEventListener("beforeunload", function (e) { e.preventDefault(); e.returnValue = "Hệ thống đang chạy, không nên thoát!"; });</script>""", height=0, width=0)
+        
         start_time_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%H:%M:%S')
         with log_container:
             df_rep_temp = db_mock.get('REPORT', pd.DataFrame())
@@ -625,14 +596,11 @@ with tab2:
             
             if created_today >= quota_day:
                 st.success("🎉 Hôm nay đã chạy đủ BATCH_SIZE rồi Sếp ơi!")
-                st.session_state.is_running = False
-                if st.button("🔄 LÀM MỚI BẢNG ĐIỀU KHIỂN", type="primary", use_container_width=True):
-                    st.cache_data.clear()
-                    st.rerun()
             else:
                 articles_to_run = quota_day - created_today
                 progress_bar = st.progress(0)
                 
+                has_error = False
                 for i in range(articles_to_run):
                     with st.status(f"⏳ [Bắt đầu: {start_time_str}] Đang cày cuốc bài {i+1}/{articles_to_run}...", expanded=True) as status_box:
                         bot = AutoContentSEO(db_mock)
@@ -640,7 +608,8 @@ with tab2:
                             new_data = bot.run_ai_content_pipeline(status_box)
                             if "Lỗi" in new_data:
                                 status_box.error(new_data["Lỗi"])
-                                status_box.update(state="error", expanded=False)
+                                status_box.update(state="error", expanded=True)
+                                has_error = True
                                 break
                             else:
                                 bot.step7_save_to_sheet(new_data, status_box)
@@ -655,14 +624,14 @@ with tab2:
                                 status_box.update(label=f"✅ Hoàn tất bài {i+1}: {new_data.get('REP_TITLE')}", state="complete", expanded=False)
                                 time.sleep(2)
                         else: 
-                            status_box.update(label="⚠️ Đã dừng lặp (Hết Slot hoặc Quota)", state="error", expanded=False)
+                            status_box.update(label="⚠️ Đã dừng lặp (Hết Slot đăng bài trống)", state="error", expanded=False)
+                            has_error = True
                             break
-                        
-                st.success("🎉 ĐÃ HOÀN TẤT CHU TRÌNH CÀY NGẦM!")
-                st.session_state.is_running = False
-                if st.button("🔄 HOÀN TẤT! BẤM VÀO ĐÂY ĐỂ LÀM MỚI TRANG", type="primary", use_container_width=True):
-                    st.cache_data.clear()
-                    st.rerun()
+                
+                if has_error:
+                    st.error("❌ CHU TRÌNH CÀY NGẦM ĐÃ DỪNG LẠI DO LỖI HOẶC HẾT SLOT!")
+                else:
+                    st.success("✅ ĐÃ HOÀN TẤT CHU TRÌNH CÀY NGẦM THÀNH CÔNG!")
 
 with tab3:
     col_title_3, col_sync_3 = st.columns([4, 1])
