@@ -11,7 +11,6 @@ import requests
 import smtplib
 import io
 from email.mime.multipart import MIMEMultipart
-from email.mime.application import MIMEApplication
 from email.mime.text import MIMEText
 from bs4 import BeautifulSoup
 from googleapiclient.discovery import build
@@ -116,8 +115,7 @@ class AutoContentSEO:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Referer': 'https://www.google.com/'
+                'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7'
             }
             res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 200:
@@ -145,19 +143,15 @@ class AutoContentSEO:
                 url = "https://serpapi.com/search"
                 res = requests.get(url, params={"q": self.main_kw_text, "hl": "vi", "gl": "vn", "api_key": serp_key}, timeout=10).json()
                 results = res.get("organic_results", [])
-                
                 target_urls = [r["link"] for r in results[:10] if any(c in r.get("link", "") for c in competitors)]
-                if not target_urls and results:
-                    target_urls = [r["link"] for r in results[:10] if "link" in r]
-                
+                if not target_urls and results: target_urls = [r["link"] for r in results[:10] if "link" in r]
                 random.shuffle(target_urls)
                 for t_url in target_urls:
                     content = self.scrape_url(t_url)
                     if content: 
                         self.add_log(log_placeholder, f"Đã cào xương sống thành công từ: {t_url}", "success")
                         return content
-            except Exception as e: 
-                self.add_log(log_placeholder, "Lỗi/Timeout gọi SERPAPI. Đang thử cách khác...", "warning")
+            except: self.add_log(log_placeholder, "Lỗi/Timeout gọi SERPAPI. Đang thử cách khác...", "warning")
             
         df_rep = self.db.get('REPORT', pd.DataFrame())
         if not df_rep.empty and 'REP_RESULT' in df_rep.columns and 'REP_POST_URL' in df_rep.columns:
@@ -178,17 +172,13 @@ class AutoContentSEO:
             s_creds = dict(st.secrets["service_account"])
             creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
             docs_service = build('docs', 'v1', credentials=creds)
-            
             separator = "=" * 50
             time_now = self.current_date.strftime('%Y-%m-%d %H:%M:%S')
             text_to_insert = f"\n\n{separator}\nBÀI VIẾT: {title}\nNGÀY TẠO: {time_now}\n{separator}\n\n{html_content}\n\n"
-            
             requests_body = [{'insertText': {'endOfSegmentLocation': {'segmentId': ''}, 'text': text_to_insert}}]
             docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
-            
-            doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
             self.add_log(log_placeholder, f"Đã ghi mã HTML vào Google Doc tập trung thành công.", "success")
-            return doc_url
+            return f"https://docs.google.com/document/d/{doc_id}/edit"
         except Exception as e:
             self.add_log(log_placeholder, f"Lỗi ghi Google Doc API: {e}", "error")
             return ""
@@ -229,7 +219,6 @@ class AutoContentSEO:
             for _, web in available_webs.iterrows():
                 web_limit = self._get_random_limit(web.get('WS_POST_LIMIT', '1'))
                 posts_for_web = posts_in_day[posts_in_day['REP_WS_NAME'] == web['WS_NAME']] if len(posts_in_day) > 0 else []
-                
                 if len(posts_for_web) < web_limit:
                     self.target_web = web
                     self.target_date = check_date
@@ -279,10 +268,8 @@ class AutoContentSEO:
         pool_kws = valid_kws[valid_kws['KW_STATUS'] == min_sub_status]
         
         needed = max(1, kw_web_content)
-        if len(pool_kws) < needed:
-            self.content_kws = valid_kws.sort_values(by='KW_STATUS').head(needed)['KW_TEXT'].tolist()
-        else:
-            self.content_kws = pool_kws.sample(n=needed)['KW_TEXT'].tolist()
+        if len(pool_kws) < needed: self.content_kws = valid_kws.sort_values(by='KW_STATUS').head(needed)['KW_TEXT'].tolist()
+        else: self.content_kws = pool_kws.sample(n=needed)['KW_TEXT'].tolist()
             
         self.all_used_kws = [self.main_kw_text] + self.content_kws
         self.add_log(log_placeholder, f"Đã bốc: {', '.join(self.all_used_kws)}", "success")
@@ -325,19 +312,16 @@ class AutoContentSEO:
         response_text = ""
         last_error = ""
 
-        # LÀM SẠCH OPENROUTER KEY & MODEL
         openrouter_raw = str(self.dashboard.get('OPENROUTER_API_KEY', '')).replace('\n', '').replace(' ', '')
         openrouter_keys = [k.strip() for k in openrouter_raw.split(',') if k.strip()]
         or_model_raw = str(self.dashboard.get('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet'))
         or_model = or_model_raw.split(',')[0].strip() 
 
-        # LÀM SẠCH GEMINI KEY & MODEL
         gemini_raw = str(self.dashboard.get('GEMINI_API_KEY', '')).replace('\n', '').replace(' ', '')
         gemini_keys = [k.strip() for k in gemini_raw.split(',') if k.strip()]
         gm_model_raw = str(self.dashboard.get('GEMINI_MODEL', 'gemini-2.5-flash'))
         gm_model = gm_model_raw.split(',')[0].strip()
 
-        # 1. THỬ OPENROUTER
         if openrouter_keys:
             for i, current_key in enumerate(openrouter_keys):
                 try:
@@ -348,28 +332,21 @@ class AutoContentSEO:
                         "X-Title": "AutoSEO",
                         "Content-Type": "application/json"
                     }
-                    payload = {
-                        "model": or_model, 
-                        "messages": [{"role": "user", "content": final_prompt}]
-                    }
+                    payload = {"model": or_model, "messages": [{"role": "user", "content": final_prompt}]}
                     res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=120)
                     res_data = res.json()
-                    
                     if "choices" in res_data and len(res_data["choices"]) > 0:
                         response_text = res_data["choices"][0]["message"]["content"]
                         break
-                    else:
-                        raise Exception(str(res_data))
+                    else: raise Exception(str(res_data))
                 except Exception as e:
                     last_error = str(e)
                     self.add_log(log_placeholder, f"OpenRouter Key lỗi. Lỗi trả về: {last_error}", "warning")
                     continue
 
-        # 2. NẾU THẤT BẠI, LÙI VỀ GEMINI
         if not response_text:
             if not gemini_keys and not openrouter_keys:
-                return {"Lỗi": "Thiếu thông tin API Key! Vui lòng điền OPENROUTER_API_KEY hoặc GEMINI_API_KEY vào Sheet."}
-
+                return {"Lỗi": "Thiếu thông tin API Key! Vui lòng điền OPENROUTER_API_KEY hoặc GEMINI_API_KEY."}
             if gemini_keys:
                 for i, current_key in enumerate(gemini_keys):
                     try:
@@ -381,21 +358,18 @@ class AutoContentSEO:
                         break 
                     except Exception as e:
                         last_error = str(e)
-                        self.add_log(log_placeholder, f"Gemini Key {i+1} lỗi/hết Quota...", "warning")
+                        self.add_log(log_placeholder, f"Gemini Key {i+1} lỗi...", "warning")
                         continue
                     
-        if not response_text:
-            return {"Lỗi": f"Toàn bộ Key API đều thất bại! Lỗi cuối cùng: {last_error}"}
+        if not response_text: return {"Lỗi": f"Toàn bộ Key API đều thất bại! Lỗi cuối cùng: {last_error}"}
 
         self.raw_html = response_text.replace('```html', '').replace('```', '').strip()
-
         shielded_content = self.raw_html
         h1_match = re.search(r'<h1>(.*?)</h1>', shielded_content, re.IGNORECASE)
         if h1_match:
             self.generated_title = re.sub(r'<[^>]+>', '', h1_match.group(1)).strip()
             shielded_content = shielded_content.replace(h1_match.group(0), "")
-        else:
-            self.generated_title = f"Dịch Vụ {self.main_kw_text.title()}"
+        else: self.generated_title = f"Dịch Vụ {self.main_kw_text.title()}"
 
         self.add_log(log_placeholder, "Đang bọc Backlink vào đúng vị trí...", "info")
         kw_mapping = {}
@@ -412,8 +386,7 @@ class AutoContentSEO:
             if in_link: urls_to_inject.append(in_link)
 
         for placeholder, kw in kw_mapping.items():
-            if urls_to_inject:
-                shielded_content = shielded_content.replace(placeholder, f"<a href='{urls_to_inject.pop(0)}' target='_blank'><b>{kw}</b></a>", 1)
+            if urls_to_inject: shielded_content = shielded_content.replace(placeholder, f"<a href='{urls_to_inject.pop(0)}' target='_blank'><b>{kw}</b></a>", 1)
             shielded_content = shielded_content.replace(placeholder, kw) 
 
         self.add_log(log_placeholder, "Đang chèn hình ảnh rải rác...", "info")
@@ -448,8 +421,9 @@ class AutoContentSEO:
         self.raw_html = "\n".join(final_html_parts)
         
         self.add_log(log_placeholder, "Đang xuất file sang Google Doc...", "info")
-        doc_link = self.append_to_google_doc(self.raw_html, self.generated_title, log_placeholder)
+        self.append_to_google_doc(self.raw_html, self.generated_title, log_placeholder)
 
+        # ĐÃ SỬA: Ép cứng lưu Mã HTML thô vào cột REP_HTML để đưa đi gửi Email
         return {
             'REP_WS_NAME': self.target_web.get('WS_NAME', ''),
             'REP_CREATED_AT': self.current_date.strftime('%Y-%m-%d %H:%M'),
@@ -467,7 +441,7 @@ class AutoContentSEO:
             'REP_POST_URL': "Đang cập nhật...",
             'REP_RESULT': "PENDING",
             'REP_LOG': "\n".join(self.history_log), 
-            'REP_HTML': doc_link 
+            'REP_HTML': self.raw_html 
         }
 
     def step7_save_to_sheet(self, new_data, log_placeholder):
@@ -512,25 +486,86 @@ class AutoContentSEO:
             requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": msg}, timeout=5)
         except: pass
 
-    def step9_email(self, new_data, log_placeholder, html_content):
-        email_sender = self.dashboard.get('EMAIL_SENDER', '').strip()
-        email_pwd = str(self.dashboard.get('EMAIL_SENDER_PASSWORD', '')).replace(" ", "").strip()
-        email_receiver = self.dashboard.get('EMAIL_RECEIVER_EMAIL', '').strip()
-        if not email_sender or not email_pwd or not email_receiver: return
+# --- TÍNH NĂNG MỚI: ÉP ĐĂNG BÀI BẰNG TAY TỪ GIAO DIỆN WEB ---
+def force_publish_pending_posts(status_box):
+    try:
+        status_box.write("ℹ️ Đang kết nối kho dữ liệu để lấy bài PENDING...")
+        scopes = ['https://www.googleapis.com/auth/spreadsheets']
+        s_creds = dict(st.secrets["service_account"])
+        creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(SHEET_ID)
         
-        try:
-            msg = MIMEMultipart()
-            msg['From'] = email_sender
-            msg['To'] = email_receiver
-            msg['Subject'] = f"Report Auto SEO: {new_data.get('REP_TITLE')}"
-            msg.attach(MIMEText(f"Hệ thống lên bài thành công!\nTiêu đề: {new_data.get('REP_TITLE')}\nTừ khoá: {new_data.get('REP_KW_1')}\nLên lịch: {new_data.get('REP_PUBLISH_DATE')}\n\nXem nội dung bài viết trong Google Doc.", 'plain'))
-            
-            server = smtplib.SMTP('smtp.gmail.com', 587)
-            server.starttls()
-            server.login(email_sender, email_pwd)
-            server.send_message(msg)
-            server.quit()
-        except: pass
+        ws_report = spreadsheet.worksheet('REPORT')
+        df_report = pd.DataFrame(ws_report.get_all_records())
+        ws_website = spreadsheet.worksheet('WEBSITE')
+        df_website = pd.DataFrame(ws_website.get_all_records())
+        ws_dashboard = spreadsheet.worksheet('DASHBOARD')
+        dash_data = ws_dashboard.get_all_records()
+        dashboard = {str(row['DATA_KEY']).strip(): str(row['DATA_CONTENT']).strip() for row in dash_data}
+        
+        email_sender = dashboard.get('EMAIL_SENDER', '').strip()
+        email_pwd = dashboard.get('EMAIL_SENDER_PASSWORD', '').replace(' ', '').strip()
+
+        if not email_sender or not email_pwd:
+            status_box.error("❌ Thiếu EMAIL_SENDER hoặc PASSWORD trong tab DASHBOARD.")
+            return
+
+        now = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+        headers = ws_report.row_values(1)
+        res_col_idx = headers.index('REP_RESULT') + 1
+        url_col_idx = headers.index('REP_POST_URL') + 1
+
+        posted_count = 0
+        for idx, row in df_report.iterrows():
+            if str(row.get('REP_RESULT', '')).strip() == 'PENDING':
+                pub_date_str = str(row.get('REP_PUBLISH_DATE', '')).strip()
+                try:
+                    pub_date = datetime.datetime.strptime(pub_date_str, '%Y-%m-%d %H:%M')
+                    if now >= pub_date:
+                        ws_name = str(row.get('REP_WS_NAME', '')).strip()
+                        title = str(row.get('REP_TITLE', '')).strip()
+                        html_content = str(row.get('REP_HTML', '')).strip()
+
+                        if "<!DOCTYPE" not in html_content and "<h" not in html_content:
+                            status_box.warning(f"⚠️ Bài '{title}' không có mã HTML (Chắc do bản cũ lưu link). Bỏ qua!")
+                            continue
+
+                        target_row = df_website[df_website['WS_NAME'].astype(str).str.strip() == ws_name]
+                        if not target_row.empty:
+                            target_email = str(target_row.iloc[0].get('WS_BLOG_CONTENT', '')).strip()
+                            if target_email and '@' in target_email:
+                                status_box.write(f"⏳ Đang gửi Mail2Blogger cho bài: {title}...")
+                                msg = MIMEMultipart()
+                                msg['From'] = email_sender
+                                msg['To'] = target_email
+                                msg['Subject'] = title
+                                msg.attach(MIMEText(html_content, 'html'))
+                                
+                                server = smtplib.SMTP('smtp.gmail.com', 587)
+                                server.starttls()
+                                server.login(email_sender, email_pwd)
+                                server.send_message(msg)
+                                server.quit()
+
+                                sheet_row = idx + 2
+                                ws_report.update_cell(sheet_row, res_col_idx, 'DONE')
+                                ws_report.update_cell(sheet_row, url_col_idx, 'Đã đẩy qua Mail2Blogger')
+                                status_box.success(f"✅ Đã gửi thành công bài: {title}")
+                                posted_count += 1
+                                time.sleep(1)
+                            else:
+                                status_box.warning(f"⚠️ Thiếu Email đăng bài cho Web: {ws_name}")
+                except Exception as e:
+                    status_box.error(f"❌ Lỗi xử lý bài '{row.get('REP_TITLE', 'Unknown')}': {e}")
+        
+        if posted_count == 0:
+            status_box.info("ℹ️ Không tìm thấy bài viết PENDING nào đã tới giờ đăng hợp lệ.")
+        else:
+            status_box.success(f"🎉 Hoàn tất ép đăng {posted_count} bài viết!")
+
+    except Exception as e:
+        status_box.error(f"❌ Lỗi hệ thống khi ép đăng bài: {e}")
 
 db_mock = load_data_from_gsheets()
 project_name = "HỆ THỐNG AUTO CONTENT SEO"
@@ -540,20 +575,6 @@ if db_mock is not None and not db_mock.get('DASHBOARD', pd.DataFrame()).empty:
 
 st.title(f"🚀 {project_name}")
 st.markdown("---")
-
-if 'is_running' not in st.session_state:
-    st.session_state.is_running = False
-
-if st.session_state.is_running:
-    st.components.v1.html("""
-        <script>
-            const parentWindow = window.parent || window;
-            parentWindow.addEventListener("beforeunload", function (e) {
-                e.preventDefault();
-                e.returnValue = "Hệ thống đang viết bài nghen, nếu nhấn OK xác nhận là mất bài đang viết ráng chịu!";
-            });
-        </script>
-    """, height=0, width=0)
 
 tab1, tab2, tab3 = st.tabs(["📊 DASHBOARD", "⚙️ CONTROL", "📝 REPORT"])
 
@@ -599,22 +620,24 @@ with tab1:
 
 with tab2:
     st.subheader("Bảng Điều Khiển Vận Hành Auto")
-    col_btn, col_log = st.columns([1, 3])
+    col_btn1, col_btn2, col_log = st.columns([1, 1, 2])
 
-    def start_auto(): st.session_state.is_running = True
-    def stop_auto():
-        st.session_state.is_running = False
-        st.cache_data.clear()
-
-    with col_btn: 
-        start_btn = st.button("🚀 BẮT ĐẦU CHẠY AUTO", type="primary", use_container_width=True, disabled=st.session_state.is_running, on_click=start_auto)
-        
-        if st.session_state.is_running:
-            st.button("❌ ĐÓNG / RESET TẠM DỪNG", type="secondary", use_container_width=True, on_click=stop_auto)
+    with col_btn1: 
+        start_btn = st.button("🚀 CHẠY AUTO (NẶN BÀI MỚI)", type="primary", use_container_width=True)
+    with col_btn2:
+        force_post_btn = st.button("🔥 ÉP ĐĂNG BÀI BỊ SÓT NGAY", type="secondary", use_container_width=True)
         
     with col_log: log_container = st.container()
         
-    if st.session_state.is_running and db_mock is not None:
+    if force_post_btn:
+        with log_container:
+            with st.status("🔥 Đang rà soát và ép đăng bài...", expanded=True) as status_box:
+                force_publish_pending_posts(status_box)
+                status_box.update(label="Hoàn tất quy trình ép đăng!", state="complete", expanded=False)
+
+    if start_btn and db_mock is not None:
+        st.components.v1.html("""<script>const parentWindow = window.parent || window; parentWindow.addEventListener("beforeunload", function (e) { e.preventDefault(); e.returnValue = "Hệ thống đang chạy, không nên thoát!"; });</script>""", height=0, width=0)
+        
         start_time_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%H:%M:%S')
         with log_container:
             df_rep_temp = db_mock.get('REPORT', pd.DataFrame())
@@ -624,7 +647,6 @@ with tab2:
             
             if created_today >= quota_day:
                 st.success("🎉 Hôm nay đã chạy đủ BATCH_SIZE rồi Sếp ơi!")
-                st.session_state.is_running = False
             else:
                 articles_to_run = quota_day - created_today
                 progress_bar = st.progress(0)
@@ -643,7 +665,6 @@ with tab2:
                             else:
                                 bot.step7_save_to_sheet(new_data, status_box)
                                 bot.step8_telegram(new_data, status_box)
-                                bot.step9_email(new_data, status_box, bot.raw_html)
                                 
                                 new_df = pd.DataFrame([new_data])
                                 if db_mock['REPORT'].empty: db_mock['REPORT'] = new_df
@@ -661,8 +682,6 @@ with tab2:
                     st.error("❌ CHU TRÌNH CÀY NGẦM ĐÃ DỪNG LẠI DO LỖI HOẶC HẾT SLOT!")
                 else:
                     st.success("✅ ĐÃ HOÀN TẤT CHU TRÌNH CÀY NGẦM THÀNH CÔNG!")
-                
-                st.session_state.is_running = False
 
 with tab3:
     col_title_3, col_sync_3 = st.columns([4, 1])
