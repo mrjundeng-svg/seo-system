@@ -5,26 +5,37 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import datetime
-import os
 import time
 import re
 
-print("🚀 Khởi động Robot Shipper (Bản Đọc Text Thuần - Chuẩn Từng Cú Pháp)...")
+print("🚀 Khởi động Robot Shipper (Bản Bất Tử - Xuyên Thủng Mọi Lỗi Format)...")
 
-# 1. KẾT NỐI GOOGLE SHEET (CƠ CHẾ LỌC LÕI)
+# 1. KẾT NỐI GOOGLE SHEET (DÙNG MẮT THẦN REGEX)
 try:
     with open(".streamlit/secrets.toml", "r", encoding="utf-8") as f:
         raw_secrets = f.read()
 
-    s_creds = {}
-    # Quét tóm gọn mọi cặp Key = "Value" hoặc "Key": "Value" (Bao cả TOML lẫn JSON)
-    matches = re.findall(r'["\']?([a-zA-Z0-9_]+)["\']?\s*[:=]\s*"([^"]+)"', raw_secrets)
-    for k, v in matches:
-        # Quan trọng nhất: Trả lại sự trong sáng cho ký tự \n ảo thành xuống dòng thật
-        s_creds[k] = v.replace('\\n', '\n') 
+    # Móc Email Bot
+    email_match = re.search(r'([a-zA-Z0-9_\-\.]+@[a-zA-Z0-9_\-\.]+\.iam\.gserviceaccount\.com)', raw_secrets)
+    if not email_match:
+        raise Exception("Không tìm thấy Email Bot đuôi .iam.gserviceaccount.com")
+    client_email = email_match.group(1)
 
-    if "private_key" not in s_creds:
-        raise Exception("Không móc được private_key ra khỏi file Secrets. Sếp check lại nội dung paste nha!")
+    # Móc Private Key (Nguyên khối từ BEGIN đến END)
+    pk_match = re.search(r'(-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----)', raw_secrets, re.DOTALL)
+    if not pk_match:
+        raise Exception("Không tìm thấy đoạn khóa BEGIN PRIVATE KEY")
+    
+    # Biến \n ảo (text) thành \n thật (xuống dòng) cho Google Auth đọc được
+    private_key = pk_match.group(1).replace('\\n', '\n')
+
+    s_creds = {
+        "type": "service_account",
+        "project_id": client_email.split('@')[1].replace('.iam.gserviceaccount.com', ''),
+        "private_key": private_key,
+        "client_email": client_email,
+        "token_uri": "https://oauth2.googleapis.com/token"
+    }
 
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
