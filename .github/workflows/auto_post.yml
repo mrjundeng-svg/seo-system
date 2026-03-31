@@ -2,8 +2,8 @@ name: He Thong Auto Post 24/7
 
 on:
   schedule:
-    - cron: '*/5 * * * *' # Chạy ngầm mỗi 5 phút
-  workflow_dispatch: # Nút chạy thủ công để test
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   run-bot:
@@ -19,7 +19,12 @@ jobs:
 
     - name: Cai dat thu vien
       run: |
-        pip install pandas gspread google-auth requests beautifulsoup4
+        pip install pandas gspread google-auth requests beautifulsoup4 toml
+
+    - name: Nap Chia Khoa Secrets
+      run: |
+        mkdir -p .streamlit
+        echo "${{ secrets.STREAMLIT_SECRETS }}" > .streamlit/secrets.toml
 
     - name: Chay File Dang Bai
       run: python autopost.py
