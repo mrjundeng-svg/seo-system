@@ -127,7 +127,7 @@ def force_publish_pending_posts(status_box):
     except Exception as e: status_box.error(f"❌ Lỗi khi ép đăng: {e}")
 
 # ==========================================
-# 🤖 LÕI AI NẶN BÀI VÀ PHÂN BỔ LOGIC
+# 🤖 LÕI AI SOẠN BÀI VÀ PHÂN BỔ LOGIC
 # ==========================================
 class AutoContentSEO:
     def __init__(self, data_frames):
@@ -154,6 +154,15 @@ class AutoContentSEO:
         df = self.db.get('DASHBOARD', pd.DataFrame())
         if df.empty: return {}
         return {str(k).strip(): str(v).strip() for k, v in zip(df['DATA_KEY'], df['DATA_CONTENT'])}
+
+    def safe_int(self, value, default=1):
+        """Hàm an toàn để chuyển đổi chuỗi sang số, chống lỗi ValueError"""
+        try:
+            val_str = str(value).strip()
+            if not val_str: return default
+            return int(val_str)
+        except:
+            return default
 
     def fetch_reference_content(self, log_placeholder):
         serp_key = self.dashboard.get('SERPAPI_KEY', '').strip()
@@ -192,11 +201,12 @@ class AutoContentSEO:
         except: pass
 
     # =================================================================
-    # LUỒNG LOGIC TÌM SLOT CỰC CHUẨN (TỪ NHỊP 1 ĐẾN NHỊP 4 CỦA SẾP)
+    # LUỒNG LOGIC TÌM SLOT CỰC CHUẨN
     # =================================================================
     def step1_kiem_tra_he_thong(self, log_placeholder) -> bool:
         self.add_log(log_placeholder, "=============================================")
-        self.add_log(log_placeholder, "BẮT ĐẦU CHU TRÌNH TỰ ĐỘNG NẶN BÀI")
+        # ĐÃ ĐỔI TEXT YÊU CẦU CỦA SẾP DƯỚI ĐÂY:
+        self.add_log(log_placeholder, "BẮT ĐẦU CHU TRÌNH TỰ ĐỘNG SOẠN BÀI AI")
         self.add_log(log_placeholder, "=============================================")
         
         df_report = self.db.get('REPORT', pd.DataFrame())
@@ -206,13 +216,16 @@ class AutoContentSEO:
             return False
 
         try:
-            max_days = int(self.dashboard.get('MAX_SCHEDULE_DAYS', 30))
-            batch_size = int(self.dashboard.get('BATCH_SIZE', 5))
+            # Sử dụng hàm an toàn (safe_int) để đề phòng ô trống
+            max_days = self.safe_int(self.dashboard.get('MAX_SCHEDULE_DAYS', 30), 30)
+            batch_size = self.safe_int(self.dashboard.get('BATCH_SIZE', 5), 5)
+            
             time_range = str(self.dashboard.get('AUTO_RUN_TIME', '08:00-20:00')).split('-')
             start_h, start_m = map(int, time_range[0].strip().split(':'))
             end_h, end_m = map(int, time_range[1].strip().split(':'))
+            
             spacing = str(self.dashboard.get('POST_SPACING_MINUTES', '30-60')).split('-')
-            min_space, max_space = int(spacing[0]), int(spacing[-1])
+            min_space, max_space = self.safe_int(spacing[0], 30), self.safe_int(spacing[-1], 60)
         except Exception as e:
             self.add_log(log_placeholder, f"LỖI CẤU HÌNH DASHBOARD: {e}. Vui lòng kiểm tra lại số liệu.")
             return False
@@ -241,7 +254,8 @@ class AutoContentSEO:
 
             for _, web in available_webs.iterrows():
                 ws_name = str(web.get('WS_NAME', '')).strip()
-                ws_limit = int(web.get('WS_POST_LIMIT', 1))
+                # Ép kiểu an toàn bằng hàm safe_int (Chống lỗi ValueError thần thánh)
+                ws_limit = self.safe_int(web.get('WS_POST_LIMIT', 1), 1)
 
                 ws_posts_count = len(posts_on_day_x[posts_on_day_x['REP_WS_NAME'].astype(str).str.strip() == ws_name]) if not posts_on_day_x.empty else 0
 
@@ -306,7 +320,7 @@ class AutoContentSEO:
         self.add_log(log_placeholder, f"REP_KW: {', '.join(self.all_used_kws)}")
 
         word_range = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
-        final_word_count = random.randint(int(word_range[0]), int(word_range[-1]))
+        final_word_count = random.randint(self.safe_int(word_range[0], 900), self.safe_int(word_range[-1], 1200))
 
         ref_content = self.fetch_reference_content(log_placeholder)
         if not ref_content:
@@ -399,7 +413,6 @@ tab1, tab2, tab3 = st.tabs(["🚀 BẢNG ĐIỀU KHIỂN & TỔNG QUAN", "📋 Q
 with tab1:
     col1, col2, col3 = st.columns(3)
     
-    # Lấy chính xác bài gen trong ngày hôm nay
     today_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%Y-%m-%d')
     if not df_report.empty and 'REP_CREATED_AT' in df_report.columns:
         posts_today = len(df_report[df_report['REP_CREATED_AT'].astype(str).str.contains(today_str)])
@@ -410,7 +423,6 @@ with tab1:
     done_posts = len(df_report[df_report['REP_RESULT'].astype(str).str.strip() == 'DONE']) if total_posts > 0 else 0
     pending_posts = len(df_report[df_report['REP_RESULT'].astype(str).str.strip() == 'PENDING']) if total_posts > 0 else 0
     
-    # Cập nhật số tổng bài viết theo đúng Logic: Số gen hôm nay / Batch Size
     col1.metric("Tổng Bài Viết", f"{posts_today}/{batch_size}")
     col2.metric("✅ Đã đăng bài", done_posts)
     col3.metric("⏳ Chờ hẹn giờ", pending_posts)
