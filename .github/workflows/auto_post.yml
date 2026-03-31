@@ -1,0 +1,25 @@
+name: He Thong Auto Post 24/7
+
+on:
+  schedule:
+    - cron: '*/5 * * * *' # Chạy ngầm mỗi 5 phút
+  workflow_dispatch: # Nút chạy thủ công để test
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Cai dat Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Cai dat thu vien
+      run: |
+        pip install pandas gspread google-auth requests beautifulsoup4
+
+    - name: Chay File Dang Bai
+      run: python autopost.py
