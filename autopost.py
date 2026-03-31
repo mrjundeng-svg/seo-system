@@ -7,32 +7,44 @@ from email.mime.text import MIMEText
 import datetime
 import os
 import time
+import re
 
-print("🚀 Khởi động Robot Shipper (Bản Siêu Cấp - Bất Tử Định Dạng)...")
+print("🚀 Khởi động Robot Shipper (Bản TERMINATOR - Tự động ráp chìa khóa)...")
 
-# 1. KẾT NỐI GOOGLE SHEET (BÓC TÁCH BẰNG TAY)
+# 1. KẾT NỐI GOOGLE SHEET (DÙNG MẮT THẦN REGEX BÓC TÁCH)
 try:
     with open(".streamlit/secrets.toml", "r", encoding="utf-8") as f:
-        raw_content = f.read()
+        raw_secrets = f.read()
 
-    s_creds = {}
+    s_creds = {
+        "type": "service_account",
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token"
+    }
     
-    # Tự động dò từng dòng, bỏ qua mọi lỗi cú pháp của TOML/JSON
-    for line in raw_content.split('\n'):
-        if '=' in line:
-            parts = line.split('=', 1)
-            key = parts[0].strip()
-            # Cắt bỏ mọi dấu ngoặc kép, dấu nháy đơn, khoảng trắng thừa
-            val = parts[1].strip().strip(' "\'') 
-            
-            # Phục hồi nguyên trạng cái private_key bị gãy dòng
-            if key == 'private_key':
-                val = val.replace('\\n', '\n') 
-                
-            s_creds[key] = val
+    # 🎯 Săn tìm Private Key (Bất chấp gãy dòng, lộn xộn)
+    pk_match = re.search(r'(-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----)', raw_secrets, re.DOTALL)
+    if pk_match:
+        pk = pk_match.group(1).replace('\\n', '\n') # Biến \n ảo thành xuống dòng thật
+        # Hút sạch khoảng trắng thừa và ráp lại chìa khóa nguyên khối chuẩn 100%
+        s_creds["private_key"] = '\n'.join([line.strip() for line in pk.split('\n') if line.strip()])
+    else:
+        raise Exception("Không tìm thấy đoạn -----BEGIN PRIVATE KEY----- trong file Secret.")
 
-    if "private_key" not in s_creds or "project_id" not in s_creds:
-        raise Exception("Vẫn không tìm thấy private_key. GitHub đã nuốt mất file!")
+    # 🎯 Săn tìm Email Bot
+    email_match = re.search(r'([a-zA-Z0-9_\-\.]+@[a-zA-Z0-9_\-\.]+\.iam\.gserviceaccount\.com)', raw_secrets)
+    if email_match:
+        s_creds["client_email"] = email_match.group(1)
+    else:
+        raise Exception("Không tìm thấy Email Bot đuôi .iam.gserviceaccount.com")
+    
+    # 🎯 Săn tìm Project ID
+    pid_match = re.search(r'project_id\s*[:=]\s*["\'](.*?)["\']', raw_secrets)
+    if pid_match:
+        s_creds["project_id"] = pid_match.group(1)
+    else:
+        # Tự suy luận Project ID từ Email luôn cho ngầu
+        s_creds["project_id"] = s_creds["client_email"].split('@')[1].replace('.iam.gserviceaccount.com', '')
 
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
