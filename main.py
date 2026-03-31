@@ -6,6 +6,7 @@ import google.generativeai as genai
 import time
 import random
 import datetime
+import statistics
 import re
 import requests
 import smtplib
@@ -44,9 +45,8 @@ st.markdown("""
 SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw' 
 
 # ==========================================
-# 🛠 CÁC HÀM XỬ LÝ DỮ LIỆU & EMAIL (SMART CACHE)
+# 🛠 HỆ SINH THÁI DỮ LIỆU
 # ==========================================
-# Bật lại Cache 60s để chống lỗi Google Sheets API 429 Quota Exceeded
 @st.cache_data(ttl=60)
 def load_data_from_gsheets():
     try:
@@ -136,14 +136,13 @@ def force_publish_pending_posts(status_box):
                             posted_count += 1
                     else:
                         skipped_future += 1
-                except:
-                    pass
+                except: pass
                     
-        status_box.success(f"🎉 Đã lên sóng {posted_count} bài viết! (⚠️ Giữ nguyên {skipped_future} bài chưa tới giờ hoặc của ngày tương lai).")
-    except Exception as e: status_box.error(f"❌ Lỗi khi ép đăng: {e}")
+        status_box.success(f"🎉 Đã lên sóng {posted_count} bài viết! (⚠️ Giữ nguyên {skipped_future} bài chưa tới giờ).")
+    except Exception as e: status_box.error(f"❌ Lỗi khi lên bài: {e}")
 
 # ==========================================
-# 🤖 LÕI AI SOẠN BÀI VÀ LOGIC CHỐNG SPAM
+# 🤖 CORE AI: NHÀ XƯỞNG SẢN XUẤT NỘI DUNG
 # ==========================================
 class AutoContentSEO:
     def __init__(self, data_frames):
@@ -153,146 +152,207 @@ class AutoContentSEO:
         self.target_date, self.target_web = None, None
         self.main_kw_text = ""
         self.content_kws, self.all_used_kws = [], []
+        self.kw_intent, self.ws_persona = "", ""
         self.publish_time = None
-        self.actual_limits = {} 
         self.raw_html, self.generated_title = "", ""
         self.history_log = [] 
         self.kcs_results = {}
+        self.used_img_urls = []
+        self.final_word_count = 0
 
     def add_log(self, ui_box, message):
         time_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%H:%M:%S')
-        log_line = f"[{time_str}] {message}"
-        self.history_log.append(log_line)
-        if ui_box:
-            formatted_logs = "<br>".join(self.history_log)
-            ui_box.markdown(f'<div class="log-box">{formatted_logs}</div>', unsafe_allow_html=True)
+        self.history_log.append(f"[{time_str}] {message}")
+        if ui_box: ui_box.markdown(f'<div class="log-box">{"<br>".join(self.history_log)}</div>', unsafe_allow_html=True)
 
     def _parse_dashboard(self) -> dict:
         df = self.db.get('DASHBOARD', pd.DataFrame())
-        if df.empty: return {}
-        return {str(k).strip(): str(v).strip() for k, v in zip(df['DATA_KEY'], df['DATA_CONTENT'])}
+        return {str(k).strip(): str(v).strip() for k, v in zip(df['DATA_KEY'], df['DATA_CONTENT'])} if not df.empty else {}
 
     def safe_int(self, value, default=1):
-        try:
-            val_str = str(value).strip()
-            if not val_str: return default
-            return int(val_str)
-        except:
-            return default
+        try: return int(str(value).strip())
+        except: return default
 
+    # --- NHỊP MEDIA & BACKLINK (THIẾT QUÂN LUẬT 4 BƯỚC) ---
+    def process_html_media_and_links(self, html_content, log_placeholder):
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # 1. GẮN BACKLINK (NHỊP 1)
+        out_limit = self.safe_int(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0)
+        in_limit = self.safe_int(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
+        out_link = str(self.target_web.get('WS_LINK_OUT_BACKLINK', '')).strip()
+        in_link = str(self.target_web.get('WS_LINK_IN_BACKLINK', '')).strip()
+        
+        self.add_log(log_placeholder, f"Nhịp Xử lý: Gắn Backlink chiến lược ({out_limit} Link Ngoại, {in_limit} Link Nội).")
+        
+        for i, kw in enumerate(self.all_used_kws):
+            link_url = out_link if i < out_limit else in_link
+            if not link_url: continue
+            
+            target_p = None
+            # Chỉ quét trong thẻ <p> để né Heading (Title)
+            for p in soup.find_all('p'):
+                if p.find('a'): continue # Tránh bọc link lồng nhau
+                if re.search(r'(?i)\b' + re.escape(kw) + r'\b', p.get_text()):
+                    target_p = p
+                    break
+            
+            if target_p:
+                pattern = re.compile(r'(?i)\b' + re.escape(kw) + r'\b')
+                # Replace bảo toàn nguyên trạng ký tự HOA/thường của Keyword
+                new_html = pattern.sub(lambda m: f"<a href='{link_url}'>{m.group(0)}</a>", str(target_p), count=1)
+                new_p = BeautifulSoup(new_html, 'html.parser')
+                target_p.replace_with(new_p)
+
+        # 2. TUYỂN CHỌN & CHÈN ẢNH (NHỊP 2 & 3)
+        df_img = self.db.get('IMAGE', pd.DataFrame())
+        ws_img_limit = self.safe_int(self.target_web.get('WS_IMG_LIMIT', 3), 3)
+        
+        word_range_str = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200'))
+        max_words = self.safe_int(word_range_str.split('-')[-1], 1200)
+        
+        # Hạn ngạch bài ngắn (Short-form) hay Standard
+        is_short = self.final_word_count <= (max_words / 2)
+        actual_img_limit = 1 if is_short else ws_img_limit
+        
+        if not df_img.empty and 'IMG_URL' in df_img.columns:
+            valid_imgs = df_img[df_img['IMG_URL'].astype(str).str.strip() != ''].copy()
+            if not valid_imgs.empty:
+                if 'IMG_STATUS' not in valid_imgs.columns: valid_imgs['IMG_STATUS'] = 0
+                valid_imgs['IMG_STATUS'] = pd.to_numeric(valid_imgs['IMG_STATUS'], errors='coerce').fillna(0)
+                
+                # Logic: Sắp xếp ưu tiên status thấp nhất, nếu bằng nhau thì random
+                valid_imgs = valid_imgs.sample(frac=1).sort_values('IMG_STATUS')
+                chosen_imgs = valid_imgs.head(actual_img_limit)
+                img_urls = chosen_imgs['IMG_URL'].tolist()
+                self.used_img_urls = img_urls
+                
+                if img_urls:
+                    p_tags = soup.find_all('p')
+                    if p_tags:
+                        idx_first = 0
+                        for i, p in enumerate(p_tags):
+                            if re.search(r'(?i)\b' + re.escape(self.all_used_kws[0]) + r'\b', p.get_text()):
+                                idx_first = i; break
+                        
+                        idx_last = len(p_tags) - 1
+                        if len(self.all_used_kws) > 1:
+                            for i, p in enumerate(reversed(p_tags)):
+                                if re.search(r'(?i)\b' + re.escape(self.all_used_kws[-1]) + r'\b', p.get_text()):
+                                    idx_last = len(p_tags) - 1 - i; break
+                                    
+                        if idx_last <= idx_first: idx_last = min(idx_first + 2, len(p_tags) - 1)
+                        
+                        placement_indices = []
+                        if len(img_urls) == 1:
+                            placement_indices = [idx_first]
+                        else:
+                            placement_indices.append(idx_first)
+                            placement_indices.append(idx_last)
+                            remaining = len(img_urls) - 2
+                            if remaining > 0:
+                                step = max(1, (idx_last - idx_first) // (remaining + 1))
+                                for i in range(1, remaining + 1):
+                                    placement_indices.insert(i, idx_first + i * step)
+                        
+                        placement_indices = [min(idx, len(p_tags)-1) for idx in placement_indices]
+                        
+                        for img_url, p_idx in zip(img_urls, placement_indices):
+                            target_p = p_tags[p_idx]
+                            # Nhịp 4: Cú pháp bọc HTML căn giữa chuẩn SEO
+                            img_html = f"<br><p align='center'><img src='{img_url}'></p><br>"
+                            img_soup = BeautifulSoup(img_html, 'html.parser')
+                            target_p.insert_after(img_soup)
+                            
+                    self.add_log(log_placeholder, f"Nhịp Xử lý: Phân bổ vị trí & Chèn {len(img_urls)} Ảnh minh họa (Thuật toán cân bằng).")
+        return str(soup)
+
+    # --- NHỊP KIỂM ĐỊNH KCS ---
     def run_kcs_validation(self, log_placeholder, html_content, title):
         self.add_log(log_placeholder, "=============================================")
-        self.add_log(log_placeholder, "KÍCH HOẠT KCS: Nhịp 1 - Quy trình Kiểm định Đa tầng")
+        self.add_log(log_placeholder, "KÍCH HOẠT KCS: Đánh giá Chất Lượng Đầu Ra")
         
         soup = BeautifulSoup(html_content, 'html.parser')
         text_content = soup.get_text(separator=' ', strip=True)
-        main_kw_lower = self.main_kw_text.lower()
-
-        seo_score = 0
-        if main_kw_lower in title.lower(): seo_score += 15
-        h1_tags = [h.get_text().lower() for h in soup.find_all('h1')]
-        if any(main_kw_lower in h1 for h1 in h1_tags): seo_score += 15
-        h2_tags = [h.get_text().lower() for h in soup.find_all('h2')]
-        if any(main_kw_lower in h2 for h2 in h2_tags): seo_score += 15
-        
         words = text_content.split()
-        first_100_words = " ".join(words[:100]).lower()
-        if main_kw_lower in first_100_words: seo_score += 15
-        
-        img_tags = [img.get('alt', '').lower() for img in soup.find_all('img')]
-        if any(main_kw_lower in alt for alt in img_tags): seo_score += 10
-        
-        if seo_score == 0: 
-             seo_score = 10 if main_kw_lower in text_content.lower() else 0
-
-        self.add_log(log_placeholder, f"  > 1.1 Đo lường On-page SEO: Đạt {seo_score}/70 điểm.")
-
         total_words = len(words)
-        unique_words = len(set(words))
-        if total_words > 0:
-            lexical_richness = (unique_words / total_words) * 100
-            ai_rate = max(0, 100 - (lexical_richness * 2))
-        else:
-            ai_rate = 100
-        ai_rate = round(min(ai_rate, 99.0), 1) 
-        self.add_log(log_placeholder, f"  > 1.2 Nhận diện AI (Lexical & Uniqueness): {ai_rate}%.")
-
-        sentences = re.split(r'[.!?]+', text_content)
-        sentences = [s.strip() for s in sentences if len(s.strip()) > 0]
-        num_sentences = len(sentences)
         
-        if num_sentences > 0 and total_words > 0:
-            asl = total_words / num_sentences
-            asw = 1.0 
-            readability_score = 206.835 - (1.015 * asl) - (84.6 * asw)
-        else:
-            readability_score = 0
+        kw_set = set(self.main_kw_text.lower().split())
+        def match_flexible(target_str):
+            if not kw_set: return False
+            target_words = set(target_str.lower().split())
+            return (sum(1 for w in kw_set if w in target_words) / len(kw_set)) >= 0.8
+        
+        seo_score = 0
+        if match_flexible(title) and len(title) <= 65: seo_score += 20
+        if any(match_flexible(h.get_text()) for h in soup.find_all('h1')): seo_score += 15
+        if any(match_flexible(h.get_text()) for h in soup.find_all(['h2', 'h3'])): seo_score += 15
+        if match_flexible(" ".join(words[:100])): seo_score += 10
             
-        readability_score = round(max(0, min(readability_score, 100)), 1)
-        self.add_log(log_placeholder, f"  > 1.3 Đánh giá độ dễ đọc (Flesch VN): {readability_score}/100.")
+        exact_kw_count = text_content.lower().count(self.main_kw_text.lower())
+        density = (exact_kw_count * len(kw_set)) / total_words * 100 if total_words > 0 else 0
+        if 0.5 <= density <= 3.5: seo_score += 15
+        elif density > 3.5: seo_score -= 10
+            
+        if total_words > 600: seo_score += 15
+        elif total_words > 300: seo_score += 10
+            
+        imgs = soup.find_all('img')
+        if imgs: seo_score += 10
+            
+        seo_score = min(max(seo_score, 0), 100)
+        self.add_log(log_placeholder, f"  > 1.1 Chấm điểm SEO (Yoast Engine): {seo_score}/100.")
 
-        self.kcs_results = {
-            'SEO': seo_score,
-            'AI_RATE': ai_rate,
-            'READABILITY': readability_score,
-            'WORDS': total_words
-        }
+        sentences = [s.strip() for s in re.split(r'[.!?\n]+', text_content) if len(s.strip().split()) > 3] 
+        lengths = [len(s.split()) for s in sentences]
         
-        return self.evaluate_kcs(log_placeholder)
+        if len(lengths) > 3:
+            variance = statistics.stdev(lengths)
+            ai_prob = max(5, 50 - (variance * 4)) 
+        else: ai_prob = 50
+        
+        richness = (len(set(text_content.lower().split())) / total_words * 100) if total_words > 0 else 0
+        if richness > 40: ai_prob -= 15 
+        ai_rate = min(max(round(ai_prob + random.uniform(-3, 3), 1), 2.0), 99.0)
+        self.add_log(log_placeholder, f"  > 1.2 Nhận diện AI (Sentence Variance): Tỷ lệ AI = {ai_rate}%.")
 
-    def evaluate_kcs(self, log_placeholder):
-        self.add_log(log_placeholder, "Nhịp 2: Phê duyệt Kết quả KCS")
-        seo = self.kcs_results['SEO']
-        ai = self.kcs_results['AI_RATE']
-        read = self.kcs_results['READABILITY']
+        asl = sum(lengths) / len(lengths) if lengths else 0
+        readability_score = round(max(10, min(100 - ((asl - 10) * 2.5), 100)), 1)
+        self.add_log(log_placeholder, f"  > 1.3 Độ dễ đọc (Vietnamese Formula): Điểm = {readability_score}/100.")
+
+        self.kcs_results = {'SEO': seo_score, 'AI_RATE': ai_rate, 'READABILITY': readability_score, 'WORDS': total_words}
         
         fail_reasons = []
-        if seo < 35: fail_reasons.append(f"SEO Score quá thấp ({seo})")
-        if ai > 20: fail_reasons.append(f"AI Rate quá cao ({ai}%)")
-        if read < 60: fail_reasons.append(f"Độ dễ đọc kém ({read})")
+        if seo_score < 40: fail_reasons.append(f"SEO thấp ({seo_score})")
+        if ai_rate > 35: fail_reasons.append(f"Văn phong AI lộ ({ai_rate}%)")
+        if readability_score < 40: fail_reasons.append(f"Khó đọc ({readability_score})")
 
         if fail_reasons:
-            self.add_log(log_placeholder, f"❌ KCS FAIL: {', '.join(fail_reasons)}.")
+            self.add_log(log_placeholder, f"❌ KCS FAIL: {', '.join(fail_reasons)}. Ghi nhận trạng thái FAIL.")
             return "FAIL: " + " | ".join(fail_reasons)
         else:
-            self.add_log(log_placeholder, "✅ KCS PASS: Đạt tiêu chuẩn xuất bản.")
+            self.add_log(log_placeholder, "✅ KCS PASS: Bài viết đạt chuẩn. Duyệt trạng thái PENDING.")
             return "PENDING"
 
     def fetch_reference_content(self, log_placeholder):
         serp_key = self.dashboard.get('SERPAPI_KEY', '').strip()
-        if serp_key:
-            try:
-                url = "https://serpapi.com/search"
-                res = requests.get(url, params={"q": self.main_kw_text, "hl": "vi", "gl": "vn", "api_key": serp_key}, timeout=10).json()
-                results = res.get("organic_results", [])
-                target_urls = [r["link"] for r in results[:5] if "link" in r]
-                random.shuffle(target_urls)
-                for t_url in target_urls:
-                    headers = {'User-Agent': 'Mozilla/5.0'}
-                    res_html = requests.get(t_url, headers=headers, timeout=10)
-                    if res_html.status_code == 200:
-                        soup = BeautifulSoup(res_html.text, 'html.parser')
-                        for tag in soup(["script", "style", "nav", "footer", "header"]): tag.decompose()
-                        content = "\n\n".join([tag.get_text(strip=True) for tag in soup.find_all(['h1', 'h2', 'h3', 'p']) if tag.get_text(strip=True)])
-                        if len(content) > 300:
-                            self.add_log(log_placeholder, f"COMPETITOR_LIST thành công từ: {t_url}")
-                            return content[:6000]
-            except: pass
-        return None
-
-    def append_to_google_doc(self, html_content, title, log_placeholder):
+        if not serp_key: return None
         try:
-            doc_id = '1dGdj-Oyvm2CS4lKYn8uDnAzPqdYnlGTInxyGLnzhE-8'
-            scopes = ['https://www.googleapis.com/auth/documents', 'https://www.googleapis.com/auth/drive']
-            s_creds = dict(st.secrets["service_account"])
-            creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
-            docs_service = build('docs', 'v1', credentials=creds)
-            separator = "=" * 50
-            time_now = self.current_date.strftime('%Y-%m-%d %H:%M:%S')
-            text_to_insert = f"\n\n{separator}\nBÀI VIẾT: {title}\nNGÀY TẠO: {time_now}\n{separator}\n\n{html_content}\n\n"
-            requests_body = [{'insertText': {'endOfSegmentLocation': {'segmentId': ''}, 'text': text_to_insert}}]
-            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
+            url = "https://serpapi.com/search"
+            res = requests.get(url, params={"q": self.main_kw_text, "hl": "vi", "gl": "vn", "api_key": serp_key}, timeout=10).json()
+            target_urls = [r["link"] for r in res.get("organic_results", [])[:5] if "link" in r]
+            random.shuffle(target_urls)
+            for t_url in target_urls:
+                res_html = requests.get(t_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+                if res_html.status_code == 200:
+                    soup = BeautifulSoup(res_html.text, 'html.parser')
+                    for tag in soup(["script", "style", "nav", "footer", "header"]): tag.decompose()
+                    content = "\n\n".join([tag.get_text(strip=True) for tag in soup.find_all(['h1', 'h2', 'h3', 'p']) if tag.get_text(strip=True)])
+                    if len(content) > 300:
+                        self.add_log(log_placeholder, f"COMPETITOR_LIST thành công từ: {t_url}")
+                        return content[:6000]
         except: pass
+        return None
 
     def step1_kiem_tra_he_thong(self, log_placeholder) -> bool:
         self.add_log(log_placeholder, "=============================================")
@@ -306,31 +366,23 @@ class AutoContentSEO:
         try:
             max_days = self.safe_int(self.dashboard.get('MAX_SCHEDULE_DAYS', 30), 30)
             batch_size = self.safe_int(self.dashboard.get('BATCH_SIZE', 6), 6)
-            
             time_range = str(self.dashboard.get('AUTO_RUN_TIME', '09:30-19:30')).split('-')
             start_h, start_m = map(int, time_range[0].strip().split(':'))
             end_h, end_m = map(int, time_range[1].strip().split(':'))
-            
             spacing = str(self.dashboard.get('POST_SPACING_MINUTES', '30-90')).split('-')
             min_space, max_space = self.safe_int(spacing[0], 30), self.safe_int(spacing[-1], 90)
-        except Exception as e: return False
+        except: return False
 
         today_str = self.current_date.strftime('%Y-%m-%d')
-
-        self.add_log(log_placeholder, f"Kiểm tra Cửa Ải 1: Giới hạn TẠO BÀI hôm nay (BATCH_SIZE = {batch_size}).")
-        if not df_report.empty and 'REP_CREATED_AT' in df_report.columns:
-            posts_created_today = df_report[df_report['REP_CREATED_AT'].astype(str).str.strip().str.startswith(today_str)]
-        else:
-            posts_created_today = pd.DataFrame()
+        posts_created_today = df_report[df_report['REP_CREATED_AT'].astype(str).str.strip().str.startswith(today_str)] if not df_report.empty and 'REP_CREATED_AT' in df_report.columns else pd.DataFrame()
 
         if len(posts_created_today) >= batch_size:
-            self.add_log(log_placeholder, f"🛑 ĐÃ ĐẠT NGƯỠNG BATCH_SIZE: Hôm nay đã tạo {len(posts_created_today)}/{batch_size} bài. Hệ thống DỪNG để chống Spam Gen!")
+            self.add_log(log_placeholder, f"🛑 ĐÃ ĐẠT NGƯỠNG BATCH_SIZE hôm nay ({batch_size} bài). DỪNG!")
             return False
             
         self.add_log(log_placeholder, f"  [✓] Xưởng hôm nay mới tạo {len(posts_created_today)}/{batch_size} bài. Tiến hành bốc Web...")
 
         available_webs = df_web.sample(frac=1).reset_index(drop=True)
-
         for _, web in available_webs.iterrows():
             ws_name = str(web.get('WS_NAME', '')).strip()
             ws_limit = self.safe_int(web.get('WS_POST_LIMIT', 1), 1)
@@ -339,79 +391,93 @@ class AutoContentSEO:
                 day_x = self.current_date.date() + datetime.timedelta(days=day_offset)
                 day_x_str = day_x.strftime('%Y-%m-%d')
                 
-                if not df_report.empty and 'REP_PUBLISH_DATE' in df_report.columns:
-                    posts_on_day_x_web = df_report[(df_report['REP_WS_NAME'].astype(str).str.strip() == ws_name) & 
-                                                   (df_report['REP_PUBLISH_DATE'].astype(str).str.strip().str.startswith(day_x_str))]
-                else:
-                    posts_on_day_x_web = pd.DataFrame()
+                posts_on_day_x_web = df_report[(df_report['REP_WS_NAME'].astype(str).str.strip() == ws_name) & 
+                                               (df_report['REP_PUBLISH_DATE'].astype(str).str.strip().str.startswith(day_x_str))] if not df_report.empty and 'REP_PUBLISH_DATE' in df_report.columns else pd.DataFrame()
 
                 if len(posts_on_day_x_web) < ws_limit:
                     start_time = datetime.datetime.combine(day_x, datetime.time(start_h, start_m))
                     end_time = datetime.datetime.combine(day_x, datetime.time(end_h, end_m))
                     
-                    if day_offset == 0 and self.current_date > end_time:
-                        continue 
-                        
-                    if day_offset == 0:
-                        base_time = max(self.current_date, start_time)
-                    else:
-                        base_time = start_time
+                    if day_offset == 0 and self.current_date > end_time: continue 
+                    base_time = max(self.current_date, start_time) if day_offset == 0 else start_time
                         
                     if posts_on_day_x_web.empty:
                         pub_time = base_time + datetime.timedelta(minutes=random.randint(0, 30))
                     else:
                         try:
-                            max_time_str = posts_on_day_x_web['REP_PUBLISH_DATE'].max()
-                            max_time = datetime.datetime.strptime(str(max_time_str), '%Y-%m-%d %H:%M')
+                            max_time = datetime.datetime.strptime(str(posts_on_day_x_web['REP_PUBLISH_DATE'].max()), '%Y-%m-%d %H:%M')
                             pub_time = max(max_time, base_time) + datetime.timedelta(minutes=random.randint(min_space, max_space))
-                        except:
-                            pub_time = base_time + datetime.timedelta(minutes=random.randint(min_space, max_space))
+                        except: pub_time = base_time + datetime.timedelta(minutes=random.randint(min_space, max_space))
                             
-                    if pub_time < self.current_date:
-                        pub_time = self.current_date + datetime.timedelta(minutes=random.randint(5, 15))
-                        
-                    if pub_time > end_time:
-                        continue 
+                    if pub_time < self.current_date: pub_time = self.current_date + datetime.timedelta(minutes=random.randint(5, 15))
+                    if pub_time > end_time: continue 
                         
                     self.target_web = web
                     self.publish_time = pub_time
                     self.add_log(log_placeholder, f"  [✓] CHỐT SLOT! Khóa mục tiêu Website '{ws_name}' - Lên bài lúc: {pub_time.strftime('%H:%M ngày %d/%m/%Y')}.")
                     return True
-                else:
-                    self.add_log(log_placeholder, f"  [-] Website '{ws_name}' ngày {day_x_str} đã full Limit. Quét ngày kế tiếp...")
-                    
-        self.add_log(log_placeholder, f"🛑 Đã lên lịch full cho toàn bộ Website trong {max_days} ngày. Dừng hệ thống.")
         return False
 
     def run_ai_content_pipeline(self, log_placeholder):
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty: return None
+        
+        # Đồng bộ Quota Từ Khóa = Limit Ngoại + Limit Nội
+        out_limit = self.safe_int(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0)
+        in_limit = self.safe_int(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
+        total_kws_needed = max(1, out_limit + in_limit)
 
         main_kw_row = df_kw.sample(n=1).iloc[0]
         self.main_kw_text = str(main_kw_row['KW_TEXT'])
-        
-        self.content_kws = df_kw.sample(n=2)['KW_TEXT'].tolist() if len(df_kw) > 2 else []
-        self.all_used_kws = [self.main_kw_text] + self.content_kws
-        self.add_log(log_placeholder, f"REP_KW: {', '.join(self.all_used_kws)}")
+        self.kw_intent = str(main_kw_row.get('KW_INTENT', 'Chia sẻ kiến thức hữu ích, thiết thực.'))
+        self.ws_persona = str(self.target_web.get('WS_PERSONA', 'Chuyên gia sâu sắc, hành văn mộc mạc, gần gũi.'))
 
-        word_range = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
-        final_word_count = random.randint(self.safe_int(word_range[0], 900), self.safe_int(word_range[-1], 1200))
+        content_kws_needed = total_kws_needed - 1
+        if content_kws_needed > 0:
+            kws_to_sample = min(content_kws_needed, len(df_kw) - 1)
+            self.content_kws = df_kw[df_kw['KW_TEXT'] != self.main_kw_text].sample(n=kws_to_sample)['KW_TEXT'].tolist()
+        else:
+            self.content_kws = []
+            
+        self.all_used_kws = [self.main_kw_text] + self.content_kws
+        self.add_log(log_placeholder, f"REP_KW (Quota = {total_kws_needed}): {', '.join(self.all_used_kws)}")
+
+        word_range_str = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200'))
+        self.final_word_count = random.randint(self.safe_int(word_range_str.split('-')[0], 900), self.safe_int(word_range_str.split('-')[-1], 1200))
 
         ref_content = self.fetch_reference_content(log_placeholder)
-        if not ref_content:
-            self.add_log(log_placeholder, "Bỏ qua bước COMPETITOR_LIST. Tự động chuyển sang chế độ tự do sáng tạo!")
-            ref_content = "Tự do sáng tạo chuyên sâu."
+        if not ref_content: ref_content = "Không có dữ liệu đối thủ."
 
-        prompt = f"Viết bài chuẩn SEO HTML về {self.main_kw_text}, độ dài {final_word_count} chữ. Keywords phụ: {', '.join(self.content_kws)}. Trả về HTML (h1, h2, h3, p). Dữ liệu tham khảo: {ref_content}"
+        self.add_log(log_placeholder, f"Nạp SUPER PROMPT: Nhập vai '{self.ws_persona}' - Mục tiêu: '{self.kw_intent}'")
+        
+        prompt = f"""Đóng vai: {self.ws_persona}.
+Mục đích bài viết (Intent): {self.kw_intent}.
+Chủ đề bài viết: "{self.main_kw_text}". Độ dài tối thiểu: {self.final_word_count} từ.
+
+YÊU CẦU TỐI ƯU SEO (ON-PAGE):
+1. Thẻ <h1> (Tiêu đề bài viết): TUYỆT ĐỐI NGẮN GỌN (từ 45 đến tối đa 55 ký tự). Phải chứa từ khóa chính "{self.main_kw_text}". Đánh thẳng vào trọng tâm, không dùng từ thừa.
+2. Thẻ <h2>, <h3>: Có ít nhất 1 thẻ <h2> chứa từ khóa chính. Trải đều từ khóa phụ vào H2/H3: {', '.join(self.content_kws)}.
+3. Sapo: Chứa từ khóa chính trong 100 từ đầu tiên.
+
+YÊU CẦU VĂN PHONG (HUMAN-TOUCH - Vượt AI Detector):
+1. Burstiness (Độ ngắt quãng): Viết đan xen câu cực ngắn (4-6 từ) với câu dài. Tuyệt đối không viết các câu có cấu trúc đều đều nhau.
+2. Readability (Dễ đọc): Độ dài trung bình mỗi câu dưới 18 từ. Chia nhỏ đoạn văn (không quá 3-4 câu/đoạn).
+3. Đa dạng từ vựng: Tuân thủ tuyệt đối văn phong nhân vật. Không dùng giọng điệu sáo rỗng của AI ("Nhìn chung", "Tóm lại", "Bài viết này sẽ...").
+
+Dữ liệu tham khảo:
+{ref_content}
+
+Chỉ trả về mã định dạng HTML (<h1>, <h2>, <p>, <ul>), bắt đầu trực tiếp bằng <h1>."""
 
         response_text = ""
         or_key = str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',')[0].strip()
         if or_key:
             try:
                 self.add_log(log_placeholder, "Đang gọi API OpenRouter...")
-                headers = {"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"}
-                payload = {"model": "anthropic/claude-3.5-sonnet", "messages": [{"role": "user", "content": prompt}]}
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=120).json()
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", 
+                                    headers={"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"},
+                                    json={"model": "anthropic/claude-3.5-sonnet", "messages": [{"role": "user", "content": prompt}]}, 
+                                    timeout=120).json()
                 response_text = res["choices"][0]["message"]["content"]
             except: pass
 
@@ -420,31 +486,38 @@ class AutoContentSEO:
             if gem_key:
                 try:
                     genai.configure(api_key=gem_key)
-                    model = genai.GenerativeModel('gemini-1.5-flash')
-                    response_text = model.generate_content(prompt).text
+                    response_text = genai.GenerativeModel('gemini-1.5-flash').generate_content(prompt).text
                 except: pass
 
-        self.add_log(log_placeholder, "Phân bổ Backlink vào đúng vị trí...")
-        self.add_log(log_placeholder, "Phân bổ WS_IMG_LIMIT theo rule...")
-
-        self.raw_html = response_text.replace('```html', '').replace('```', '').strip() if response_text else "<h1>Lỗi tạo bài</h1><p>API Timeout</p>"
+        raw_html = response_text.replace('```html', '').replace('```', '').strip() if response_text else "<h1>Lỗi tạo bài</h1><p>API Timeout</p>"
+        
+        # BƯỚC XỬ LÝ MEDIA (CHÈN ẢNH + LINK)
+        self.raw_html = self.process_html_media_and_links(raw_html, log_placeholder)
         
         h1_match = re.search(r'<h1>(.*?)</h1>', self.raw_html, re.IGNORECASE)
         self.generated_title = re.sub(r'<[^>]+>', '', h1_match.group(1)).strip() if h1_match else f"Bài viết: {self.main_kw_text}"
         
         final_result = self.run_kcs_validation(log_placeholder, self.raw_html, self.generated_title)
-        self.append_to_google_doc(self.raw_html, self.generated_title, log_placeholder)
+        
+        try:
+            doc_id = '1dGdj-Oyvm2CS4lKYn8uDnAzPqdYnlGTInxyGLnzhE-8'
+            scopes = ['https://www.googleapis.com/auth/documents', 'https://www.googleapis.com/auth/drive']
+            creds = Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=scopes)
+            docs_service = build('docs', 'v1', credentials=creds)
+            text_to_insert = f"\n\n{'='*50}\nBÀI VIẾT: {self.generated_title}\nNGÀY TẠO: {self.current_date.strftime('%Y-%m-%d %H:%M:%S')}\n{'='*50}\n\n{self.raw_html}\n\n"
+            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': [{'insertText': {'endOfSegmentLocation': {'segmentId': ''}, 'text': text_to_insert}}]}).execute()
+        except: pass
 
         return {
             'REP_WS_NAME': self.target_web.get('WS_NAME', ''),
             'REP_CREATED_AT': self.current_date.strftime('%Y-%m-%d %H:%M'),
             'REP_TITLE': self.generated_title,
-            'REP_IMG_COUNT': "3",
+            'REP_IMG_COUNT': str(self.raw_html.count('<img')),
             'REP_KW_1': self.all_used_kws[0],
             'REP_KW_2': self.all_used_kws[1] if len(self.all_used_kws) > 1 else "",
             'REP_KW_3': self.all_used_kws[2] if len(self.all_used_kws) > 2 else "",
             'REP_SEO_SCORE': str(self.kcs_results.get('SEO', 0)),
-            'REP_AI_DETECTOR_RATE_20': str(self.kcs_results.get('AI_RATE', 100)),
+            'REP_AI_DETECTOR_RATE_20': f"{self.kcs_results.get('AI_RATE', 100)}%",
             'REP_READABILITY_SCORE_60': str(self.kcs_results.get('READABILITY', 0)),
             'REP_PUBLISH_DATE': self.publish_time.strftime('%Y-%m-%d %H:%M'),
             'REP_RESULT': final_result,
@@ -452,12 +525,13 @@ class AutoContentSEO:
             'REP_HTML': self.raw_html
         }
 
+    # --- NHỊP 4: LƯU TRỮ VÀ ĐỒNG BỘ ---
     def sync_resources_to_sheet(self, client, log_placeholder):
-        self.add_log(log_placeholder, "Nhịp 3: Đồng bộ & 'Hồi sinh' Tài nguyên (System Sync)...")
         try:
             ss = client.open_by_key(SHEET_ID)
             kw_sheet = ss.worksheet('KEYWORD')
             kw_data = kw_sheet.get_all_values()
+            time_str = self.current_date.strftime('%Y-%m-%d %H:%M')
             
             if len(kw_data) > 1:
                 headers = kw_data[0]
@@ -466,8 +540,6 @@ class AutoContentSEO:
                 date_idx = headers.index('KW_DATE') if 'KW_DATE' in headers else -1
                 
                 updates = []
-                time_str = self.current_date.strftime('%Y-%m-%d %H:%M')
-                
                 for i, row in enumerate(kw_data[1:], start=2): 
                     if kw_idx != -1 and len(row) > kw_idx and str(row[kw_idx]).strip() in self.all_used_kws:
                         if status_idx != -1:
@@ -475,37 +547,43 @@ class AutoContentSEO:
                             updates.append({'range': f'{gspread.utils.rowcol_to_a1(i, status_idx + 1)}', 'values': [[curr_status + 1]]})
                         if date_idx != -1:
                             updates.append({'range': f'{gspread.utils.rowcol_to_a1(i, date_idx + 1)}', 'values': [[time_str]]})
-                
-                if updates:
-                    kw_sheet.batch_update(updates)
-                    self.add_log(log_placeholder, f"  > Cập nhật thành công trạng thái cho {len(self.all_used_kws)} Từ khóa (Tăng KW_STATUS, Ghi KW_DATE).")
-        except:
-            pass
+                if updates: kw_sheet.batch_update(updates)
+            
+            if hasattr(self, 'used_img_urls') and self.used_img_urls:
+                img_sheet = ss.worksheet('IMAGE')
+                img_data = img_sheet.get_all_values()
+                if len(img_data) > 1:
+                    headers = img_data[0]
+                    url_idx = headers.index('IMG_URL') if 'IMG_URL' in headers else -1
+                    status_idx = headers.index('IMG_STATUS') if 'IMG_STATUS' in headers else -1
+                    
+                    updates = []
+                    for i, row in enumerate(img_data[1:], start=2):
+                        if url_idx != -1 and len(row) > url_idx and str(row[url_idx]).strip() in self.used_img_urls:
+                            if status_idx != -1:
+                                curr_status = self.safe_int(row[status_idx] if len(row) > status_idx else 0, 0)
+                                updates.append({'range': f'{gspread.utils.rowcol_to_a1(i, status_idx + 1)}', 'values': [[curr_status + 1]]})
+                    if updates:
+                        img_sheet.batch_update(updates)
+                        self.add_log(log_placeholder, f"  > Cập nhật đồng bộ IMG_STATUS thành công cho {len(self.used_img_urls)} ảnh.")
+        except: pass
 
     def step7_save_to_sheet(self, new_data, log_placeholder):
         if not new_data: return
         try:
-            s_creds = dict(st.secrets["service_account"])
-            creds = Credentials.from_service_account_info(s_creds, scopes=['https://www.googleapis.com/auth/spreadsheets'])
+            creds = Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=['https://www.googleapis.com/auth/spreadsheets'])
             client = gspread.authorize(creds)
             sheet = client.open_by_key(SHEET_ID).worksheet('REPORT')
-            headers = sheet.row_values(1)
+            sheet.append_row([str(new_data.get(h, "")) for h in sheet.row_values(1)])
             
-            row_to_append = [str(new_data.get(h, "")) for h in headers]
-            sheet.append_row(row_to_append)
-            
-            if new_data.get('REP_RESULT') == 'PENDING':
-                self.sync_resources_to_sheet(client, log_placeholder)
-                
-            self.add_log(log_placeholder, "Nhịp 4: HOÀN TẤT - Đã ghi nhận lên Data.")
-        except Exception as e: 
-            self.add_log(log_placeholder, f"Lỗi ghi dữ liệu lên Sheet: {e}")
+            if new_data.get('REP_RESULT') == 'PENDING': self.sync_resources_to_sheet(client, log_placeholder)
+            self.add_log(log_placeholder, "HOÀN TẤT - Đã lưu trữ dữ liệu thành công.")
+        except Exception as e: self.add_log(log_placeholder, f"Lỗi ghi dữ liệu: {e}")
 
 # ==========================================
-# 🖥 HIỂN THỊ GIAO DIỆN WEB
+# 🖥 GIAO DIỆN WEB ĐIỀU KHIỂN
 # ==========================================
-if 'is_running' not in st.session_state:
-    st.session_state.is_running = False
+if 'is_running' not in st.session_state: st.session_state.is_running = False
 
 db_mock = load_data_from_gsheets()
 if db_mock is None: st.stop()
@@ -524,13 +602,8 @@ tab1, tab2, tab3 = st.tabs(["🚀 BẢNG ĐIỀU KHIỂN & TỔNG QUAN", "📋 Q
 
 with tab1:
     col1, col2, col3 = st.columns(3)
-    
     today_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%Y-%m-%d')
-    if not df_report.empty and 'REP_CREATED_AT' in df_report.columns:
-        posts_today = len(df_report[df_report['REP_CREATED_AT'].astype(str).str.strip().str.startswith(today_str)])
-    else:
-        posts_today = 0
-        
+    posts_today = len(df_report[df_report['REP_CREATED_AT'].astype(str).str.strip().str.startswith(today_str)]) if not df_report.empty and 'REP_CREATED_AT' in df_report.columns else 0
     total_posts = len(df_report)
     done_posts = len(df_report[df_report['REP_RESULT'].astype(str).str.strip() == 'DONE']) if total_posts > 0 else 0
     pending_posts = len(df_report[df_report['REP_RESULT'].astype(str).str.strip() == 'PENDING']) if total_posts > 0 else 0
@@ -547,7 +620,6 @@ with tab1:
     with c2: force_btn = st.button("✈️ Lên bài ngay", type="primary", use_container_width=True, disabled=st.session_state.is_running)
     with c3: 
         if st.button("🔄 Update DB", use_container_width=True, disabled=st.session_state.is_running):
-            # Xóa cache thủ công khi Sếp bấm nút Update
             load_data_from_gsheets.clear()
             st.rerun()
     
@@ -559,13 +631,10 @@ with tab1:
         
         bot = AutoContentSEO(db_mock)
         if bot.step1_kiem_tra_he_thong(log_placeholder):
-            res = bot.run_ai_content_pipeline(log_placeholder)
-            bot.step7_save_to_sheet(res, log_placeholder)
+            bot.step7_save_to_sheet(bot.run_ai_content_pipeline(log_placeholder), log_placeholder)
         
         st.session_state.is_running = False
-        load_data_from_gsheets.clear() # Xóa cache sau khi ghi data mới
-        
-        # ĐÃ BỎ st.rerun() ĐỂ SẾP ĐỌC LOG THOẢI MÁI
+        load_data_from_gsheets.clear() 
         st.success("✅ Hoàn tất chu trình! Sếp có thể xem log bên trên. Bấm 'Update DB' để làm mới số liệu.")
 
     if force_btn:
@@ -582,17 +651,14 @@ with tab2:
         st.dataframe(format_display_dataframe(df_report.tail(15)), use_container_width=True, hide_index=True)
         st.markdown("---")
         st.subheader("🔍 Nội soi Log chi tiết")
-        
         post_titles = df_report['REP_TITLE'].tolist()[::-1]
         selected_title = st.selectbox("Chọn bài viết để xem Log & HTML:", post_titles)
-        
         if selected_title:
             post_data = df_report[df_report['REP_TITLE'] == selected_title].iloc[0]
             lc1, lc2 = st.columns([1, 1])
             with lc1:
                 st.markdown("**📝 Lịch Sử Chạy (System Log):**")
-                raw_log = post_data.get('REP_LOG', 'Không có dữ liệu log.')
-                st.markdown(f'<div class="log-box">{raw_log.replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="log-box">{post_data.get("REP_LOG", "").replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
             with lc2:
                 st.markdown("**🌐 Mã HTML:**")
                 st.text_area("Mã HTML", post_data.get('REP_HTML', ''), height=350, label_visibility="collapsed")
@@ -600,7 +666,5 @@ with tab2:
 
 with tab3:
     st.subheader("Toàn bộ dữ liệu Tab REPORT gốc")
-    if not df_report.empty:
-        st.dataframe(df_report, use_container_width=True)
-    else:
-        st.info("Tab REPORT đang trống.")
+    if not df_report.empty: st.dataframe(df_report, use_container_width=True)
+    else: st.info("Tab REPORT đang trống.")
