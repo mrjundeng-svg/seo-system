@@ -171,40 +171,26 @@ class AutoContentSEO:
                         return content
         return None
 
-    # TÍNH NĂNG MỚI: GHI TRỰC TIẾP VÀO GOOGLE DOC
     def append_to_google_doc(self, html_content, title, log_placeholder):
         try:
-            # Lấy ID mà Sếp cung cấp
             doc_id = '1dGdj-Oyvm2CS4lKYn8uDnAzPqdYnlGTInxyGLnzhE-8'
-            
-            # Khởi tạo API Google Docs
             scopes = ['https://www.googleapis.com/auth/documents', 'https://www.googleapis.com/auth/drive']
             s_creds = dict(st.secrets["service_account"])
             creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
             docs_service = build('docs', 'v1', credentials=creds)
             
-            # Tạo bộ khung bài viết để dễ copy
             separator = "=" * 50
             time_now = self.current_date.strftime('%Y-%m-%d %H:%M:%S')
             text_to_insert = f"\n\n{separator}\nBÀI VIẾT: {title}\nNGÀY TẠO: {time_now}\n{separator}\n\n{html_content}\n\n"
             
-            # Dùng lệnh endOfSegmentLocation để chèn xuống cuối cùng của file Doc
-            requests_body = [
-                {
-                    'insertText': {
-                        'endOfSegmentLocation': {'segmentId': ''},
-                        'text': text_to_insert
-                    }
-                }
-            ]
-            
+            requests_body = [{'insertText': {'endOfSegmentLocation': {'segmentId': ''}, 'text': text_to_insert}}]
             docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
             
             doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
-            self.add_log(log_placeholder, f"✅ Đã ghi mã HTML vào Google Doc tập trung thành công.", "success")
+            self.add_log(log_placeholder, f"Đã ghi mã HTML vào Google Doc tập trung thành công.", "success")
             return doc_url
         except Exception as e:
-            self.add_log(log_placeholder, f"❌ Lỗi ghi Google Doc API: {e}", "error")
+            self.add_log(log_placeholder, f"Lỗi ghi Google Doc API: {e}", "error")
             return ""
 
     def step1_kiem_tra_he_thong(self, log_placeholder) -> bool:
@@ -334,17 +320,32 @@ class AutoContentSEO:
 
         final_prompt = f"{t_template}\n\n{strat}\n\n{search}\n\n{style_full}\n\n{persona_rule}\n\n{global_rule}\n\n{rule_phan_bo}\n\n{anti_bold_rule}\n\n{h1_rule}\n\n{humanizer}\n\n(Chỉ trả về HTML thô: H1, H2, H3, p)."
 
-        gemini_key = self.dashboard.get('GEMINI_API_KEY', '')
-        if not gemini_key: return {"Lỗi": "Thiếu GEMINI_API_KEY"}
+        # --- HỆ THỐNG TỰ ĐỘNG XOAY VÒNG API KEY (API KEY ROTATION) ---
+        api_keys_raw = str(self.dashboard.get('GEMINI_API_KEY', ''))
+        gemini_keys = [k.strip() for k in api_keys_raw.split(',') if k.strip()]
+        if not gemini_keys: return {"Lỗi": "Thiếu GEMINI_API_KEY trong cấu hình!"}
 
-        try:
-            self.add_log(log_placeholder, "Đang gọi AI Gemini nặn chữ...", "info")
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel('gemini-2.5-flash')
-            response = model.generate_content(final_prompt)
-            self.raw_html = response.text.replace('```html', '').replace('```', '').strip()
-            self.add_log(log_placeholder, "AI viết xong HTML.", "success")
-        except Exception as e: return {"Lỗi": f"API Gemini lỗi: {e}"}
+        response_text = ""
+        last_error = ""
+        
+        for i, current_key in enumerate(gemini_keys):
+            try:
+                self.add_log(log_placeholder, f"Đang gọi AI Gemini (Thử Key {i+1}/{len(gemini_keys)})...", "info")
+                genai.configure(api_key=current_key)
+                model = genai.GenerativeModel('gemini-2.5-flash')
+                response = model.generate_content(final_prompt)
+                response_text = response.text
+                self.add_log(log_placeholder, f"API Key {i+1} tạo bài thành công!", "success")
+                break # Thành công thì thoát vòng lặp, không cần thử key tiếp theo
+            except Exception as e:
+                last_error = str(e)
+                self.add_log(log_placeholder, f"Key {i+1} lỗi hoặc hết Quota. Tự động chuyển Key tiếp theo...", "warning")
+                continue # Nếu lỗi thì lặp tiếp sang Key tiếp theo
+                
+        if not response_text:
+            return {"Lỗi": f"Toàn bộ {len(gemini_keys)} API Key đều đã cạn kiệt hoặc bị lỗi. Lỗi cuối cùng: {last_error}"}
+
+        self.raw_html = response_text.replace('```html', '').replace('```', '').strip()
 
         shielded_content = self.raw_html
         h1_match = re.search(r'<h1>(.*?)</h1>', shielded_content, re.IGNORECASE)
