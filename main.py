@@ -145,11 +145,9 @@ class AutoContentSEO:
                 url = "https://serpapi.com/search"
                 res = requests.get(url, params={"q": self.main_kw_text, "hl": "vi", "gl": "vn", "api_key": serp_key}, timeout=10).json()
                 results = res.get("organic_results", [])
-                
                 target_urls = [r["link"] for r in results[:10] if any(c in r.get("link", "") for c in competitors)]
                 if not target_urls and results:
                     target_urls = [r["link"] for r in results[:10] if "link" in r]
-                
                 random.shuffle(target_urls)
                 for t_url in target_urls:
                     content = self.scrape_url(t_url)
@@ -320,20 +318,28 @@ class AutoContentSEO:
 
         final_prompt = f"{t_template}\n\n{strat}\n\n{search}\n\n{style_full}\n\n{persona_rule}\n\n{global_rule}\n\n{rule_phan_bo}\n\n{anti_bold_rule}\n\n{h1_rule}\n\n{humanizer}\n\n(Chỉ trả về HTML thô: H1, H2, H3, p)."
 
-        # --- CHIẾN THUẬT THÁC NƯỚC: OPENROUTER -> GEMINI ---
+        # =======================================================
+        # BỘ LỌC BỌC THÉP: LÀM SẠCH KEY & LẤY ĐÚNG 1 MODEL
+        # =======================================================
         response_text = ""
         last_error = ""
 
-        # LẤY CẤU HÌNH TỪ GOOGLE SHEET
-        openrouter_raw = str(self.dashboard.get('OPENROUTER_API_KEY', ''))
+        # LÀM SẠCH OPENROUTER KEY & MODEL
+        openrouter_raw = str(self.dashboard.get('OPENROUTER_API_KEY', '')).replace('\n', '').replace(' ', '')
         openrouter_keys = [k.strip() for k in openrouter_raw.split(',') if k.strip()]
-        or_model = str(self.dashboard.get('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet')).strip()
         
-        gemini_raw = str(self.dashboard.get('GEMINI_API_KEY', ''))
-        gemini_keys = [k.strip() for k in gemini_raw.split(',') if k.strip()]
-        gm_model = str(self.dashboard.get('GEMINI_MODEL', 'gemini-2.5-flash')).strip()
+        # Chỉ lấy Model ĐẦU TIÊN nếu Sếp lỡ nhập nhiều model cách nhau dấu phẩy
+        or_model_raw = str(self.dashboard.get('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet'))
+        or_model = or_model_raw.split(',')[0].strip() 
 
-        # 1. THỬ OPENROUTER
+        # LÀM SẠCH GEMINI KEY & MODEL
+        gemini_raw = str(self.dashboard.get('GEMINI_API_KEY', '')).replace('\n', '').replace(' ', '')
+        gemini_keys = [k.strip() for k in gemini_raw.split(',') if k.strip()]
+        
+        gm_model_raw = str(self.dashboard.get('GEMINI_MODEL', 'gemini-2.5-flash'))
+        gm_model = gm_model_raw.split(',')[0].strip()
+
+        # THÁC NƯỚC 1: THỬ OPENROUTER
         if openrouter_keys:
             for i, current_key in enumerate(openrouter_keys):
                 try:
@@ -356,7 +362,7 @@ class AutoContentSEO:
                     self.add_log(log_placeholder, f"OpenRouter Key {i+1} lỗi. Thử tiếp...", "warning")
                     continue
 
-        # 2. NẾU THẤT BẠI, LÙI VỀ GEMINI
+        # THÁC NƯỚC 2: NẾU THẤT BẠI, LÙI VỀ GEMINI
         if not response_text:
             if not gemini_keys and not openrouter_keys:
                 return {"Lỗi": "Thiếu thông tin API Key! Vui lòng điền OPENROUTER_API_KEY hoặc GEMINI_API_KEY vào Sheet."}
