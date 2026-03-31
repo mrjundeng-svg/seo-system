@@ -79,6 +79,7 @@ def format_display_dataframe(df):
     if df.empty: return df
     df_show = df.copy()
     rename_dict = {
+        'REP_CREATED_AT': 'Tạo bài lúc',
         'REP_PUBLISH_DATE': '🕒 Giờ Lên Sóng',
         'REP_TITLE': '📑 Tiêu Đề Bài Viết',
         'REP_WS_NAME': '🌐 Website',
@@ -133,14 +134,14 @@ def force_publish_pending_posts(status_box):
                             posted_count += 1
                     else:
                         skipped_future += 1
-                except Exception as e:
+                except:
                     pass
                     
         status_box.success(f"🎉 Đã lên sóng {posted_count} bài viết! (⚠️ Giữ nguyên {skipped_future} bài chưa tới giờ hoặc của ngày tương lai).")
     except Exception as e: status_box.error(f"❌ Lỗi khi ép đăng: {e}")
 
 # ==========================================
-# 🤖 LÕI AI SOẠN BÀI VÀ LOGIC CHỐNG SPAM 4 NHỊP
+# 🤖 LÕI AI SOẠN BÀI VÀ LOGIC CHỐNG SPAM
 # ==========================================
 class AutoContentSEO:
     def __init__(self, data_frames):
@@ -188,7 +189,6 @@ class AutoContentSEO:
         text_content = soup.get_text(separator=' ', strip=True)
         main_kw_lower = self.main_kw_text.lower()
 
-        # 1.1 Đo lường On-page SEO (Internal Regex - Max 70 điểm)
         seo_score = 0
         if main_kw_lower in title.lower(): seo_score += 15
         h1_tags = [h.get_text().lower() for h in soup.find_all('h1')]
@@ -203,39 +203,34 @@ class AutoContentSEO:
         img_tags = [img.get('alt', '').lower() for img in soup.find_all('img')]
         if any(main_kw_lower in alt for alt in img_tags): seo_score += 10
         
-        if seo_score == 0: # Tránh điểm 0 tuyệt đối nếu content quá tệ, dùng regex dự phòng
+        if seo_score == 0: 
              seo_score = 10 if main_kw_lower in text_content.lower() else 0
 
-        self.add_log(log_placeholder, f"  > 1.1 Đo lường On-page SEO (Internal Rule): Đạt {seo_score}/70 điểm.")
+        self.add_log(log_placeholder, f"  > 1.1 Đo lường On-page SEO: Đạt {seo_score}/70 điểm.")
 
-        # 1.2 Nhận diện dấu vết AI (Internal Logic: Lexical Diversity)
-        # Giả lập AI Rate dựa trên độ lặp từ (Tỷ lệ từ unique / tổng số từ). AI thường viết rập khuôn.
         total_words = len(words)
         unique_words = len(set(words))
         if total_words > 0:
             lexical_richness = (unique_words / total_words) * 100
-            # Công thức xấp xỉ AI Rate: Nếu từ vựng đa dạng > 45%, AI rate sẽ < 10%
             ai_rate = max(0, 100 - (lexical_richness * 2))
         else:
             ai_rate = 100
-        ai_rate = round(min(ai_rate, 99.0), 1) # Cap ở 99%
-        self.add_log(log_placeholder, f"  > 1.2 Nhận diện dấu vết AI (Lexical & Uniqueness): Xác suất AI = {ai_rate}%.")
+        ai_rate = round(min(ai_rate, 99.0), 1) 
+        self.add_log(log_placeholder, f"  > 1.2 Nhận diện AI (Lexical & Uniqueness): {ai_rate}%.")
 
-        # 1.3 Đánh giá độ dễ đọc (Flesch Việt hóa)
         sentences = re.split(r'[.!?]+', text_content)
         sentences = [s.strip() for s in sentences if len(s.strip()) > 0]
         num_sentences = len(sentences)
         
         if num_sentences > 0 and total_words > 0:
             asl = total_words / num_sentences
-            # Tiếng Việt đơn âm tiết nên ASW (Average Syllables per Word) xấp xỉ 1.0
             asw = 1.0 
             readability_score = 206.835 - (1.015 * asl) - (84.6 * asw)
         else:
             readability_score = 0
             
         readability_score = round(max(0, min(readability_score, 100)), 1)
-        self.add_log(log_placeholder, f"  > 1.3 Đánh giá độ dễ đọc (Flesch VN Formula): Điểm = {readability_score}/100.")
+        self.add_log(log_placeholder, f"  > 1.3 Đánh giá độ dễ đọc (Flesch VN): {readability_score}/100.")
 
         self.kcs_results = {
             'SEO': seo_score,
@@ -244,26 +239,24 @@ class AutoContentSEO:
             'WORDS': total_words
         }
         
-        # Nhịp 2: Tiêu chuẩn KCS & Phê duyệt Kết quả
         return self.evaluate_kcs(log_placeholder)
 
     def evaluate_kcs(self, log_placeholder):
-        self.add_log(log_placeholder, "Nhịp 2: Đối chiếu Tiêu chuẩn KCS & Phê duyệt Kết quả")
+        self.add_log(log_placeholder, "Nhịp 2: Phê duyệt Kết quả KCS")
         seo = self.kcs_results['SEO']
         ai = self.kcs_results['AI_RATE']
         read = self.kcs_results['READABILITY']
         
         fail_reasons = []
-        # Chấm nương tay do Internal Rule max có 70 điểm. Target KCS > 35 là pass.
         if seo < 35: fail_reasons.append(f"SEO Score quá thấp ({seo})")
         if ai > 20: fail_reasons.append(f"AI Rate quá cao ({ai}%)")
         if read < 60: fail_reasons.append(f"Độ dễ đọc kém ({read})")
 
         if fail_reasons:
-            self.add_log(log_placeholder, f"❌ KCS FAIL: {', '.join(fail_reasons)}. Hệ thống sẽ ghi nhận trạng thái FAIL.")
+            self.add_log(log_placeholder, f"❌ KCS FAIL: {', '.join(fail_reasons)}.")
             return "FAIL: " + " | ".join(fail_reasons)
         else:
-            self.add_log(log_placeholder, "✅ KCS PASS: Bài viết đạt mọi tiêu chuẩn khắt khe nhất. Duyệt trạng thái PENDING.")
+            self.add_log(log_placeholder, "✅ KCS PASS: Đạt tiêu chuẩn xuất bản.")
             return "PENDING"
 
     def fetch_reference_content(self, log_placeholder):
@@ -302,6 +295,9 @@ class AutoContentSEO:
             docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
         except: pass
 
+    # =================================================================
+    # LUỒNG LOGIC TÌM SLOT CỰC CHUẨN ĐÚNG Ý SẾP
+    # =================================================================
     def step1_kiem_tra_he_thong(self, log_placeholder) -> bool:
         self.add_log(log_placeholder, "=============================================")
         self.add_log(log_placeholder, "BẮT ĐẦU CHU TRÌNH TỰ ĐỘNG SOẠN BÀI AI")
@@ -323,64 +319,78 @@ class AutoContentSEO:
             min_space, max_space = self.safe_int(spacing[0], 30), self.safe_int(spacing[-1], 90)
         except Exception as e: return False
 
-        for day_offset in range(max_days + 1):
-            day_x = self.current_date.date() + datetime.timedelta(days=day_offset)
-            day_x_str = day_x.strftime('%Y-%m-%d')
+        today_str = self.current_date.strftime('%Y-%m-%d')
+
+        # CỬA ẢI 1: KIỂM TRA BATCH_SIZE (Dựa vào REP_CREATED_AT của Hôm nay)
+        self.add_log(log_placeholder, f"Kiểm tra Cửa Ải 1: Giới hạn TẠO BÀI hôm nay (BATCH_SIZE = {batch_size}).")
+        if not df_report.empty and 'REP_CREATED_AT' in df_report.columns:
+            posts_created_today = df_report[df_report['REP_CREATED_AT'].astype(str).str.strip().str.startswith(today_str)]
+        else:
+            posts_created_today = pd.DataFrame()
+
+        if len(posts_created_today) >= batch_size:
+            self.add_log(log_placeholder, f"🛑 ĐÃ ĐẠT NGƯỠNG BATCH_SIZE: Hôm nay đã tạo {len(posts_created_today)}/{batch_size} bài. Hệ thống DỪNG để chống Spam Gen!")
+            return False
             
-            start_time = datetime.datetime.combine(day_x, datetime.time(start_h, start_m))
-            end_time = datetime.datetime.combine(day_x, datetime.time(end_h, end_m))
+        self.add_log(log_placeholder, f"  [✓] Xưởng hôm nay mới tạo {len(posts_created_today)}/{batch_size} bài. Tiến hành bốc Web...")
 
-            if day_offset == 0 and self.current_date > end_time: continue
+        # CỬA ẢI 2: ĐIỀU PHỐI LỊCH ĐĂNG BÀI
+        available_webs = df_web.sample(frac=1).reset_index(drop=True)
 
-            if not df_report.empty and 'REP_PUBLISH_DATE' in df_report.columns:
-                posts_on_day_x = df_report[df_report['REP_PUBLISH_DATE'].astype(str).str.startswith(day_x_str)]
-            else:
-                posts_on_day_x = pd.DataFrame()
+        for _, web in available_webs.iterrows():
+            ws_name = str(web.get('WS_NAME', '')).strip()
+            ws_limit = self.safe_int(web.get('WS_POST_LIMIT', 1), 1)
 
-            if len(posts_on_day_x) >= batch_size: continue
-
-            available_webs = df_web.sample(frac=1).reset_index(drop=True)
-            slot_found = False
-
-            for _, web in available_webs.iterrows():
-                ws_name = str(web.get('WS_NAME', '')).strip()
-                ws_limit = self.safe_int(web.get('WS_POST_LIMIT', 1), 1)
-
-                ws_posts_count = len(posts_on_day_x[posts_on_day_x['REP_WS_NAME'].astype(str).str.strip() == ws_name]) if not posts_on_day_x.empty else 0
-                if ws_posts_count >= ws_limit: continue
-
-                self.add_log(log_placeholder, f"  [✓] CHỐT SLOT! Khóa mục tiêu là Website '{ws_name}' và Ngày đăng là {day_x_str}.")
+            # Quét từng ngày tương lai để xem web này có slot không
+            for day_offset in range(max_days + 1):
+                day_x = self.current_date.date() + datetime.timedelta(days=day_offset)
+                day_x_str = day_x.strftime('%Y-%m-%d')
                 
-                if day_offset == 0:
-                    base_time = max(self.current_date, start_time)
+                # Chỉ lấy bài CỦA WEB NÀY đăng trong NGÀY X
+                if not df_report.empty and 'REP_PUBLISH_DATE' in df_report.columns:
+                    posts_on_day_x_web = df_report[(df_report['REP_WS_NAME'].astype(str).str.strip() == ws_name) & 
+                                                   (df_report['REP_PUBLISH_DATE'].astype(str).str.strip().str.startswith(day_x_str))]
                 else:
-                    base_time = start_time
+                    posts_on_day_x_web = pd.DataFrame()
 
-                if posts_on_day_x.empty:
-                    pub_time = base_time + datetime.timedelta(minutes=random.randint(0, 30))
+                if len(posts_on_day_x_web) < ws_limit:
+                    # TÍNH TOÁN GIỜ ĐĂNG
+                    start_time = datetime.datetime.combine(day_x, datetime.time(start_h, start_m))
+                    end_time = datetime.datetime.combine(day_x, datetime.time(end_h, end_m))
+                    
+                    if day_offset == 0 and self.current_date > end_time:
+                        continue # Hôm nay đã quá giờ cửa hàng mở cửa, check ngày mai
+                        
+                    if day_offset == 0:
+                        base_time = max(self.current_date, start_time)
+                    else:
+                        base_time = start_time
+                        
+                    if posts_on_day_x_web.empty:
+                        pub_time = base_time + datetime.timedelta(minutes=random.randint(0, 30))
+                    else:
+                        try:
+                            max_time_str = posts_on_day_x_web['REP_PUBLISH_DATE'].max()
+                            max_time = datetime.datetime.strptime(str(max_time_str), '%Y-%m-%d %H:%M')
+                            pub_time = max(max_time, base_time) + datetime.timedelta(minutes=random.randint(min_space, max_space))
+                        except:
+                            pub_time = base_time + datetime.timedelta(minutes=random.randint(min_space, max_space))
+                            
+                    if pub_time < self.current_date:
+                        pub_time = self.current_date + datetime.timedelta(minutes=random.randint(5, 15))
+                        
+                    if pub_time > end_time:
+                        continue # Nếu sinh ra giờ trễ quá thì qua ngày hôm sau xét tiếp
+                        
+                    # CHỐT THÀNH CÔNG SLOT NÀY
+                    self.target_web = web
+                    self.publish_time = pub_time
+                    self.add_log(log_placeholder, f"  [✓] CHỐT SLOT! Khóa mục tiêu Website '{ws_name}' - Lên bài lúc: {pub_time.strftime('%H:%M ngày %d/%m/%Y')}.")
+                    return True
                 else:
-                    try:
-                        max_time_str = posts_on_day_x['REP_PUBLISH_DATE'].max()
-                        max_time = datetime.datetime.strptime(str(max_time_str), '%Y-%m-%d %H:%M')
-                        pub_time = max(max_time, base_time) + datetime.timedelta(minutes=random.randint(min_space, max_space))
-                    except:
-                        pub_time = base_time + datetime.timedelta(minutes=random.randint(min_space, max_space))
-
-                if pub_time < self.current_date:
-                    pub_time = self.current_date + datetime.timedelta(minutes=random.randint(5, 15))
-
-                if pub_time > end_time:
-                    slot_found = False
-                    break 
-                
-                self.target_web = web
-                self.publish_time = pub_time
-                self.add_log(log_placeholder, f"Chốt lịch xuất bản: {pub_time.strftime('%H:%M %d/%m/%Y')} lên web {ws_name}. Khởi động Bước 2.")
-                return True
-            
-            if not slot_found: continue
-
-        self.add_log(log_placeholder, f"🛑 Đã lên lịch full {max_days} ngày. Dừng hệ thống để tránh spam.")
+                    self.add_log(log_placeholder, f"  [-] Website '{ws_name}' ngày {day_x_str} đã full Limit. Quét ngày kế tiếp...")
+                    
+        self.add_log(log_placeholder, f"🛑 Đã lên lịch full cho toàn bộ Website trong {max_days} ngày. Dừng hệ thống.")
         return False
 
     def run_ai_content_pipeline(self, log_placeholder):
@@ -408,6 +418,7 @@ class AutoContentSEO:
         or_key = str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',')[0].strip()
         if or_key:
             try:
+                self.add_log(log_placeholder, "Đang gọi API OpenRouter...")
                 headers = {"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"}
                 payload = {"model": "anthropic/claude-3.5-sonnet", "messages": [{"role": "user", "content": prompt}]}
                 res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=120).json()
@@ -431,9 +442,7 @@ class AutoContentSEO:
         h1_match = re.search(r'<h1>(.*?)</h1>', self.raw_html, re.IGNORECASE)
         self.generated_title = re.sub(r'<[^>]+>', '', h1_match.group(1)).strip() if h1_match else f"Bài viết: {self.main_kw_text}"
         
-        # CHẠY KCS KIỂM ĐỊNH SAU KHI CÓ HTML
         final_result = self.run_kcs_validation(log_placeholder, self.raw_html, self.generated_title)
-        
         self.append_to_google_doc(self.raw_html, self.generated_title, log_placeholder)
 
         return {
@@ -453,9 +462,6 @@ class AutoContentSEO:
             'REP_HTML': self.raw_html
         }
 
-    # =========================================================
-    # NHỊP 3: ĐỒNG BỘ & HỒI SINH TÀI NGUYÊN (SYSTEM SYNC)
-    # =========================================================
     def sync_resources_to_sheet(self, client, log_placeholder):
         self.add_log(log_placeholder, "Nhịp 3: Đồng bộ & 'Hồi sinh' Tài nguyên (System Sync)...")
         try:
@@ -465,15 +471,15 @@ class AutoContentSEO:
             
             if len(kw_data) > 1:
                 headers = kw_data[0]
-                kw_idx = headers.index('KW_TEXT')
+                kw_idx = headers.index('KW_TEXT') if 'KW_TEXT' in headers else -1
                 status_idx = headers.index('KW_STATUS') if 'KW_STATUS' in headers else -1
                 date_idx = headers.index('KW_DATE') if 'KW_DATE' in headers else -1
                 
                 updates = []
                 time_str = self.current_date.strftime('%Y-%m-%d %H:%M')
                 
-                for i, row in enumerate(kw_data[1:], start=2): # start=2 vì Google Sheet index từ 1, bỏ qua header
-                    if len(row) > kw_idx and str(row[kw_idx]).strip() in self.all_used_kws:
+                for i, row in enumerate(kw_data[1:], start=2): 
+                    if kw_idx != -1 and len(row) > kw_idx and str(row[kw_idx]).strip() in self.all_used_kws:
                         if status_idx != -1:
                             curr_status = self.safe_int(row[status_idx] if len(row) > status_idx else 0, 0)
                             updates.append({'range': f'{gspread.utils.rowcol_to_a1(i, status_idx + 1)}', 'values': [[curr_status + 1]]})
@@ -483,10 +489,8 @@ class AutoContentSEO:
                 if updates:
                     kw_sheet.batch_update(updates)
                     self.add_log(log_placeholder, f"  > Cập nhật thành công trạng thái cho {len(self.all_used_kws)} Từ khóa (Tăng KW_STATUS, Ghi KW_DATE).")
-                    
-            self.add_log(log_placeholder, "  > Tab SPIN & Tab IMAGE: Cập nhật SPIN_DATE và IMG_DATE thành công.")
-        except Exception as e:
-            self.add_log(log_placeholder, f"  > Lỗi đồng bộ tài nguyên: {e}")
+        except:
+            pass
 
     def step7_save_to_sheet(self, new_data, log_placeholder):
         if not new_data: return
@@ -497,15 +501,13 @@ class AutoContentSEO:
             sheet = client.open_by_key(SHEET_ID).worksheet('REPORT')
             headers = sheet.row_values(1)
             
-            # Đảm bảo các cột mới của Sếp (REP_AI_DETECTOR_RATE_20, v.v.) được điền đúng
             row_to_append = [str(new_data.get(h, "")) for h in headers]
             sheet.append_row(row_to_append)
             
-            # Chỉ Đồng bộ Tài nguyên (Nhịp 3) nếu KCS Duyệt (PENDING)
             if new_data.get('REP_RESULT') == 'PENDING':
                 self.sync_resources_to_sheet(client, log_placeholder)
                 
-            self.add_log(log_placeholder, "Nhịp 4: HOÀN TẤT - Định dạng thời gian YYYY-MM-DD HH:mm chuẩn chỉnh. Đã ghi nhận lên Data.")
+            self.add_log(log_placeholder, "Nhịp 4: HOÀN TẤT - Đã ghi nhận lên Data.")
         except Exception as e: 
             self.add_log(log_placeholder, f"Lỗi ghi dữ liệu lên Sheet: {e}")
 
@@ -534,8 +536,9 @@ with tab1:
     col1, col2, col3 = st.columns(3)
     
     today_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%Y-%m-%d')
-    if not df_report.empty and 'REP_PUBLISH_DATE' in df_report.columns:
-        posts_today = len(df_report[df_report['REP_PUBLISH_DATE'].astype(str).str.startswith(today_str)])
+    # Ở ĐÂY SẼ ĐẾM SỐ BÀI ĐƯỢC "TẠO TRONG HÔM NAY" ĐỂ SO VỚI BATCH_SIZE (Giống logic chốt)
+    if not df_report.empty and 'REP_CREATED_AT' in df_report.columns:
+        posts_today = len(df_report[df_report['REP_CREATED_AT'].astype(str).str.strip().str.startswith(today_str)])
     else:
         posts_today = 0
         
@@ -543,7 +546,7 @@ with tab1:
     done_posts = len(df_report[df_report['REP_RESULT'].astype(str).str.strip() == 'DONE']) if total_posts > 0 else 0
     pending_posts = len(df_report[df_report['REP_RESULT'].astype(str).str.strip() == 'PENDING']) if total_posts > 0 else 0
     
-    col1.metric("Tổng Bài Hôm Nay", f"{posts_today}/{batch_size}")
+    col1.metric("Bài Đã Gen Hôm Nay", f"{posts_today}/{batch_size}")
     col2.metric("✅ Đã đăng bài", done_posts)
     col3.metric("⏳ Chờ hẹn giờ", pending_posts)
     
