@@ -44,8 +44,10 @@ st.markdown("""
 SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw' 
 
 # ==========================================
-# 🛠 CÁC HÀM XỬ LÝ DỮ LIỆU & EMAIL
+# 🛠 CÁC HÀM XỬ LÝ DỮ LIỆU & EMAIL (SMART CACHE)
 # ==========================================
+# Bật lại Cache 60s để chống lỗi Google Sheets API 429 Quota Exceeded
+@st.cache_data(ttl=60)
 def load_data_from_gsheets():
     try:
         scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/documents']
@@ -178,9 +180,6 @@ class AutoContentSEO:
         except:
             return default
 
-    # =========================================================
-    # KCS: NHỊP 1 - QUY TRÌNH KIỂM ĐỊNH ĐA TẦNG (INTERNAL LOGIC)
-    # =========================================================
     def run_kcs_validation(self, log_placeholder, html_content, title):
         self.add_log(log_placeholder, "=============================================")
         self.add_log(log_placeholder, "KÍCH HOẠT KCS: Nhịp 1 - Quy trình Kiểm định Đa tầng")
@@ -295,9 +294,6 @@ class AutoContentSEO:
             docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
         except: pass
 
-    # =================================================================
-    # LUỒNG LOGIC TÌM SLOT CỰC CHUẨN ĐÚNG Ý SẾP
-    # =================================================================
     def step1_kiem_tra_he_thong(self, log_placeholder) -> bool:
         self.add_log(log_placeholder, "=============================================")
         self.add_log(log_placeholder, "BẮT ĐẦU CHU TRÌNH TỰ ĐỘNG SOẠN BÀI AI")
@@ -321,7 +317,6 @@ class AutoContentSEO:
 
         today_str = self.current_date.strftime('%Y-%m-%d')
 
-        # CỬA ẢI 1: KIỂM TRA BATCH_SIZE (Dựa vào REP_CREATED_AT của Hôm nay)
         self.add_log(log_placeholder, f"Kiểm tra Cửa Ải 1: Giới hạn TẠO BÀI hôm nay (BATCH_SIZE = {batch_size}).")
         if not df_report.empty and 'REP_CREATED_AT' in df_report.columns:
             posts_created_today = df_report[df_report['REP_CREATED_AT'].astype(str).str.strip().str.startswith(today_str)]
@@ -334,19 +329,16 @@ class AutoContentSEO:
             
         self.add_log(log_placeholder, f"  [✓] Xưởng hôm nay mới tạo {len(posts_created_today)}/{batch_size} bài. Tiến hành bốc Web...")
 
-        # CỬA ẢI 2: ĐIỀU PHỐI LỊCH ĐĂNG BÀI
         available_webs = df_web.sample(frac=1).reset_index(drop=True)
 
         for _, web in available_webs.iterrows():
             ws_name = str(web.get('WS_NAME', '')).strip()
             ws_limit = self.safe_int(web.get('WS_POST_LIMIT', 1), 1)
 
-            # Quét từng ngày tương lai để xem web này có slot không
             for day_offset in range(max_days + 1):
                 day_x = self.current_date.date() + datetime.timedelta(days=day_offset)
                 day_x_str = day_x.strftime('%Y-%m-%d')
                 
-                # Chỉ lấy bài CỦA WEB NÀY đăng trong NGÀY X
                 if not df_report.empty and 'REP_PUBLISH_DATE' in df_report.columns:
                     posts_on_day_x_web = df_report[(df_report['REP_WS_NAME'].astype(str).str.strip() == ws_name) & 
                                                    (df_report['REP_PUBLISH_DATE'].astype(str).str.strip().str.startswith(day_x_str))]
@@ -354,12 +346,11 @@ class AutoContentSEO:
                     posts_on_day_x_web = pd.DataFrame()
 
                 if len(posts_on_day_x_web) < ws_limit:
-                    # TÍNH TOÁN GIỜ ĐĂNG
                     start_time = datetime.datetime.combine(day_x, datetime.time(start_h, start_m))
                     end_time = datetime.datetime.combine(day_x, datetime.time(end_h, end_m))
                     
                     if day_offset == 0 and self.current_date > end_time:
-                        continue # Hôm nay đã quá giờ cửa hàng mở cửa, check ngày mai
+                        continue 
                         
                     if day_offset == 0:
                         base_time = max(self.current_date, start_time)
@@ -380,9 +371,8 @@ class AutoContentSEO:
                         pub_time = self.current_date + datetime.timedelta(minutes=random.randint(5, 15))
                         
                     if pub_time > end_time:
-                        continue # Nếu sinh ra giờ trễ quá thì qua ngày hôm sau xét tiếp
+                        continue 
                         
-                    # CHỐT THÀNH CÔNG SLOT NÀY
                     self.target_web = web
                     self.publish_time = pub_time
                     self.add_log(log_placeholder, f"  [✓] CHỐT SLOT! Khóa mục tiêu Website '{ws_name}' - Lên bài lúc: {pub_time.strftime('%H:%M ngày %d/%m/%Y')}.")
@@ -536,7 +526,6 @@ with tab1:
     col1, col2, col3 = st.columns(3)
     
     today_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%Y-%m-%d')
-    # Ở ĐÂY SẼ ĐẾM SỐ BÀI ĐƯỢC "TẠO TRONG HÔM NAY" ĐỂ SO VỚI BATCH_SIZE (Giống logic chốt)
     if not df_report.empty and 'REP_CREATED_AT' in df_report.columns:
         posts_today = len(df_report[df_report['REP_CREATED_AT'].astype(str).str.strip().str.startswith(today_str)])
     else:
@@ -558,6 +547,8 @@ with tab1:
     with c2: force_btn = st.button("✈️ Lên bài ngay", type="primary", use_container_width=True, disabled=st.session_state.is_running)
     with c3: 
         if st.button("🔄 Update DB", use_container_width=True, disabled=st.session_state.is_running):
+            # Xóa cache thủ công khi Sếp bấm nút Update
+            load_data_from_gsheets.clear()
             st.rerun()
     
     if start_btn:
@@ -572,8 +563,10 @@ with tab1:
             bot.step7_save_to_sheet(res, log_placeholder)
         
         st.session_state.is_running = False
-        time.sleep(1)
-        st.rerun()
+        load_data_from_gsheets.clear() # Xóa cache sau khi ghi data mới
+        
+        # ĐÃ BỎ st.rerun() ĐỂ SẾP ĐỌC LOG THOẢI MÁI
+        st.success("✅ Hoàn tất chu trình! Sếp có thể xem log bên trên. Bấm 'Update DB' để làm mới số liệu.")
 
     if force_btn:
         st.session_state.is_running = True
@@ -581,8 +574,8 @@ with tab1:
         with st.status("✈️ Đang quét đúng rule để lên bài...", expanded=True) as s:
             force_publish_pending_posts(s)
         st.session_state.is_running = False
-        time.sleep(1)
-        st.rerun()
+        load_data_from_gsheets.clear()
+        st.success("✅ Hoàn tất đăng bài! Bấm 'Update DB' để làm mới số liệu.")
 
 with tab2:
     if not df_report.empty:
