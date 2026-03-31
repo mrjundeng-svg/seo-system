@@ -7,46 +7,32 @@ from email.mime.text import MIMEText
 import datetime
 import os
 import time
-import re
-import json
-import toml
 
-print("🚀 Khởi động Robot Shipper (Bản VÔ ĐỊCH - Bất chấp định dạng)...")
+print("🚀 Khởi động Robot Shipper (Bản Siêu Cấp - Bất Tử Định Dạng)...")
 
-# 1. KẾT NỐI GOOGLE SHEET (NÃO BỘ CỰC MẠNH)
+# 1. KẾT NỐI GOOGLE SHEET (BÓC TÁCH BẰNG TAY)
 try:
     with open(".streamlit/secrets.toml", "r", encoding="utf-8") as f:
-        raw_secrets = f.read()
+        raw_content = f.read()
 
     s_creds = {}
     
-    # CHIÊU 1: Làm sạch dữ liệu rác
-    clean_json = re.sub(r'\[.*?\]', '', raw_secrets).strip()
-    
-    try:
-        # Thử đọc kiểu JSON chuẩn
-        s_creds = json.loads(clean_json)
-        print("ℹ️ Phân tích thành công theo chuẩn JSON.")
-    except:
-        try:
-            # Thử đọc kiểu TOML
-            data = toml.loads(raw_secrets)
-            s_creds = data.get("service_account", data)
-            print("ℹ️ Phân tích thành công theo chuẩn TOML.")
-        except:
-            # CHIÊU 2: CỨU HỘ KHẨN CẤP DÙNG REGEX (Chấp mọi định dạng sai)
-            print("⚠️ Định dạng Key bị méo mó. Kích hoạt bới lông tìm vết (Regex)...")
-            keys_to_find = ["type", "project_id", "private_key_id", "private_key", "client_email", "client_id", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "client_x509_cert_url"]
-            for k in keys_to_find:
-                # Tìm bất kỳ giá trị nào nằm trong ngoặc kép sau tên key
-                match = re.search(fr'"{k}"\s*[:=]\s*"(.*?)"', raw_secrets, re.DOTALL)
-                if not match:
-                    match = re.search(fr'{k}\s*=\s*"(.*?)"', raw_secrets, re.DOTALL)
-                if match:
-                    s_creds[k] = match.group(1).replace('\\n', '\n')
+    # Tự động dò từng dòng, bỏ qua mọi lỗi cú pháp của TOML/JSON
+    for line in raw_content.split('\n'):
+        if '=' in line:
+            parts = line.split('=', 1)
+            key = parts[0].strip()
+            # Cắt bỏ mọi dấu ngoặc kép, dấu nháy đơn, khoảng trắng thừa
+            val = parts[1].strip().strip(' "\'') 
+            
+            # Phục hồi nguyên trạng cái private_key bị gãy dòng
+            if key == 'private_key':
+                val = val.replace('\\n', '\n') 
+                
+            s_creds[key] = val
 
-    if not s_creds.get("private_key"):
-        raise Exception("Không tìm thấy private_key! Sếp hãy kiểm tra lại kho Secret.")
+    if "private_key" not in s_creds or "project_id" not in s_creds:
+        raise Exception("Vẫn không tìm thấy private_key. GitHub đã nuốt mất file!")
 
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
