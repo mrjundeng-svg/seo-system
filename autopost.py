@@ -8,43 +8,42 @@ import datetime
 import os
 import time
 import re
+import textwrap
 
-print("🚀 Khởi động Robot Shipper (Bản TERMINATOR - Tự động ráp chìa khóa)...")
+print("🚀 Khởi động Robot Shipper (Bản ÉP KHUÔN CHÌA KHÓA)...")
 
-# 1. KẾT NỐI GOOGLE SHEET (DÙNG MẮT THẦN REGEX BÓC TÁCH)
+# 1. KẾT NỐI GOOGLE SHEET (TÁI TẠO CHÌA KHÓA MỚI TINH)
 try:
     with open(".streamlit/secrets.toml", "r", encoding="utf-8") as f:
         raw_secrets = f.read()
 
+    # Bới tìm đoạn khóa từ BEGIN đến END
+    pk_match = re.search(r'-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----', raw_secrets, re.DOTALL)
+    if not pk_match:
+        raise Exception("Không tìm thấy chữ BEGIN PRIVATE KEY.")
+    
+    # Rút ruột khóa: Xóa sạch mọi dấu cách, \n, nháy kép, nháy đơn
+    b64_core = pk_match.group(1).replace('\\n', '').replace('"', '').replace("'", "")
+    b64_core = re.sub(r'\s+', '', b64_core)
+    
+    # Ép khuôn chuẩn quốc tế: Cứ 64 chữ cái là bắt buộc xuống dòng
+    b64_lines = '\n'.join(textwrap.wrap(b64_core, 64))
+    
+    # Đóng gói lại thành cái chìa khóa mới tinh, không tì vết
+    clean_private_key = f"-----BEGIN PRIVATE KEY-----\n{b64_lines}\n-----END PRIVATE KEY-----\n"
+
+    # Bới tìm Email của Bot
+    email_match = re.search(r'([a-zA-Z0-9_\-\.]+@[a-zA-Z0-9_\-\.]+\.iam\.gserviceaccount\.com)', raw_secrets)
+    client_email = email_match.group(1) if email_match else "bot-laiho@gen-lang-client-0856973751.iam.gserviceaccount.com"
+
+    # Ráp bộ hồ sơ chuẩn gửi cho Google
     s_creds = {
         "type": "service_account",
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "project_id": client_email.split('@')[1].replace('.iam.gserviceaccount.com', ''),
+        "private_key": clean_private_key,
+        "client_email": client_email,
         "token_uri": "https://oauth2.googleapis.com/token"
     }
-    
-    # 🎯 Săn tìm Private Key (Bất chấp gãy dòng, lộn xộn)
-    pk_match = re.search(r'(-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----)', raw_secrets, re.DOTALL)
-    if pk_match:
-        pk = pk_match.group(1).replace('\\n', '\n') # Biến \n ảo thành xuống dòng thật
-        # Hút sạch khoảng trắng thừa và ráp lại chìa khóa nguyên khối chuẩn 100%
-        s_creds["private_key"] = '\n'.join([line.strip() for line in pk.split('\n') if line.strip()])
-    else:
-        raise Exception("Không tìm thấy đoạn -----BEGIN PRIVATE KEY----- trong file Secret.")
-
-    # 🎯 Săn tìm Email Bot
-    email_match = re.search(r'([a-zA-Z0-9_\-\.]+@[a-zA-Z0-9_\-\.]+\.iam\.gserviceaccount\.com)', raw_secrets)
-    if email_match:
-        s_creds["client_email"] = email_match.group(1)
-    else:
-        raise Exception("Không tìm thấy Email Bot đuôi .iam.gserviceaccount.com")
-    
-    # 🎯 Săn tìm Project ID
-    pid_match = re.search(r'project_id\s*[:=]\s*["\'](.*?)["\']', raw_secrets)
-    if pid_match:
-        s_creds["project_id"] = pid_match.group(1)
-    else:
-        # Tự suy luận Project ID từ Email luôn cho ngầu
-        s_creds["project_id"] = s_creds["client_email"].split('@')[1].replace('.iam.gserviceaccount.com', '')
 
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
@@ -52,7 +51,7 @@ try:
     
     SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw'
     spreadsheet = client.open_by_key(SHEET_ID)
-    print("✅ Kết nối Google Sheet THÀNH CÔNG RỰC RỠ!")
+    print("✅ Kết nối Google Sheet THÀNH CÔNG!")
 except Exception as e:
     print(f"❌ Lỗi kết nối: {e}")
     exit()
