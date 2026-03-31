@@ -5,27 +5,48 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import datetime
-import toml
-import json
 import os
 import time
+import re
+import json
+import toml
 
-print("🚀 Khởi động Robot Shipper (Bản Nâng Cấp chống lỗi JSON/TOML)...")
+print("🚀 Khởi động Robot Shipper (Bản VÔ ĐỊCH - Bất chấp định dạng)...")
 
-# 1. KẾT NỐI GOOGLE SHEET QUA SECRETS
+# 1. KẾT NỐI GOOGLE SHEET (NÃO BỘ CỰC MẠNH)
 try:
     with open(".streamlit/secrets.toml", "r", encoding="utf-8") as f:
         raw_secrets = f.read()
 
-    s_creds = None
-    # Cách 1: Thử đọc theo chuẩn JSON (nếu Sếp dán JSON của Google)
+    s_creds = {}
+    
+    # CHIÊU 1: Làm sạch dữ liệu rác
+    clean_json = re.sub(r'\[.*?\]', '', raw_secrets).strip()
+    
     try:
-        data = json.loads(raw_secrets)
-        s_creds = data.get("service_account", data)
+        # Thử đọc kiểu JSON chuẩn
+        s_creds = json.loads(clean_json)
+        print("ℹ️ Phân tích thành công theo chuẩn JSON.")
     except:
-        # Cách 2: Nếu không phải JSON thì thử đọc theo chuẩn TOML
-        data = toml.loads(raw_secrets)
-        s_creds = data.get("service_account", data)
+        try:
+            # Thử đọc kiểu TOML
+            data = toml.loads(raw_secrets)
+            s_creds = data.get("service_account", data)
+            print("ℹ️ Phân tích thành công theo chuẩn TOML.")
+        except:
+            # CHIÊU 2: CỨU HỘ KHẨN CẤP DÙNG REGEX (Chấp mọi định dạng sai)
+            print("⚠️ Định dạng Key bị méo mó. Kích hoạt bới lông tìm vết (Regex)...")
+            keys_to_find = ["type", "project_id", "private_key_id", "private_key", "client_email", "client_id", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "client_x509_cert_url"]
+            for k in keys_to_find:
+                # Tìm bất kỳ giá trị nào nằm trong ngoặc kép sau tên key
+                match = re.search(fr'"{k}"\s*[:=]\s*"(.*?)"', raw_secrets, re.DOTALL)
+                if not match:
+                    match = re.search(fr'{k}\s*=\s*"(.*?)"', raw_secrets, re.DOTALL)
+                if match:
+                    s_creds[k] = match.group(1).replace('\\n', '\n')
+
+    if not s_creds.get("private_key"):
+        raise Exception("Không tìm thấy private_key! Sếp hãy kiểm tra lại kho Secret.")
 
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
@@ -33,9 +54,9 @@ try:
     
     SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw'
     spreadsheet = client.open_by_key(SHEET_ID)
-    print("✅ Kết nối Google Sheet thành công!")
+    print("✅ Kết nối Google Sheet THÀNH CÔNG RỰC RỠ!")
 except Exception as e:
-    print(f"❌ Lỗi định dạng chìa khoá Secret: {e}")
+    print(f"❌ Lỗi kết nối: {e}")
     exit()
 
 # 2. LẤY DỮ LIỆU TỪ CÁC TAB
@@ -59,6 +80,8 @@ except Exception as e:
 
 # 3. QUÉT BÀI VIẾT PENDING ĐÃ ĐẾN GIỜ ĐĂNG
 now = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+print(f"🕒 Giờ hệ thống hiện tại (VN): {now.strftime('%Y-%m-%d %H:%M')}")
+
 headers = ws_report.row_values(1)
 res_col_idx = headers.index('REP_RESULT') + 1
 url_col_idx = headers.index('REP_POST_URL') + 1
@@ -74,6 +97,9 @@ for idx, row in df_report.iterrows():
                 ws_name = str(row.get('REP_WS_NAME', '')).strip()
                 title = str(row.get('REP_TITLE', '')).strip()
                 html_content = str(row.get('REP_HTML', '')).strip()
+
+                if len(html_content) < 100:
+                    continue
 
                 target_web = df_website[df_website['WS_NAME'].astype(str).str.strip() == ws_name]
                 if not target_web.empty:
