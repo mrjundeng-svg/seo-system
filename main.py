@@ -22,7 +22,7 @@ SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw'
 @st.cache_data(ttl=5)
 def load_data_from_gsheets():
     try:
-        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/documents']
         s_creds = dict(st.secrets["service_account"])
         creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
         client = gspread.authorize(creds)
@@ -99,7 +99,6 @@ class AutoContentSEO:
     def _parse_dashboard(self) -> dict:
         df = self.db.get('DASHBOARD', pd.DataFrame())
         if df.empty: return {}
-        # Ép phẳng (strip) toàn bộ Key và Content để tránh lỗi người dùng gõ dư khoảng trắng
         return {str(k).strip(): str(v).strip() for k, v in zip(df['DATA_KEY'], df['DATA_CONTENT'])}
 
     def _get_random_limit(self, limit_val) -> int:
@@ -329,33 +328,41 @@ class AutoContentSEO:
         # LÀM SẠCH OPENROUTER KEY & MODEL
         openrouter_raw = str(self.dashboard.get('OPENROUTER_API_KEY', '')).replace('\n', '').replace(' ', '')
         openrouter_keys = [k.strip() for k in openrouter_raw.split(',') if k.strip()]
-        or_model = str(self.dashboard.get('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet')).split(',')[0].strip() 
+        or_model_raw = str(self.dashboard.get('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet'))
+        or_model = or_model_raw.split(',')[0].strip() 
 
         # LÀM SẠCH GEMINI KEY & MODEL
         gemini_raw = str(self.dashboard.get('GEMINI_API_KEY', '')).replace('\n', '').replace(' ', '')
         gemini_keys = [k.strip() for k in gemini_raw.split(',') if k.strip()]
-        gm_model = str(self.dashboard.get('GEMINI_MODEL', 'gemini-2.5-flash')).split(',')[0].strip()
+        gm_model_raw = str(self.dashboard.get('GEMINI_MODEL', 'gemini-2.5-flash'))
+        gm_model = gm_model_raw.split(',')[0].strip()
 
         # 1. THỬ OPENROUTER
         if openrouter_keys:
             for i, current_key in enumerate(openrouter_keys):
                 try:
                     self.add_log(log_placeholder, f"Bắt đầu tạo bài viết .... (OpenRouter - {or_model})", "info")
-                    headers = {"Authorization": f"Bearer {current_key}", "Content-Type": "application/json"}
+                    headers = {
+                        "Authorization": f"Bearer {current_key}", 
+                        "HTTP-Referer": "https://seosystem.streamlit.app",
+                        "X-Title": "AutoSEO",
+                        "Content-Type": "application/json"
+                    }
                     payload = {
                         "model": or_model, 
                         "messages": [{"role": "user", "content": final_prompt}]
                     }
                     res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=120)
                     res_data = res.json()
+                    
                     if "choices" in res_data and len(res_data["choices"]) > 0:
                         response_text = res_data["choices"][0]["message"]["content"]
                         break
                     else:
-                        raise Exception(str(res_data.get('error', res_data)))
+                        raise Exception(str(res_data))
                 except Exception as e:
                     last_error = str(e)
-                    self.add_log(log_placeholder, f"OpenRouter Key {i+1} lỗi. Thử tiếp...", "warning")
+                    self.add_log(log_placeholder, f"OpenRouter Key lỗi. Lỗi trả về: {last_error}", "warning")
                     continue
 
         # 2. NẾU THẤT BẠI, LÙI VỀ GEMINI
@@ -378,7 +385,7 @@ class AutoContentSEO:
                         continue
                     
         if not response_text:
-            return {"Lỗi": f"Toàn bộ Key OpenRouter và Gemini đều chết! Lỗi cuối: {last_error}"}
+            return {"Lỗi": f"Toàn bộ Key API đều thất bại! Lỗi cuối cùng: {last_error}"}
 
         self.raw_html = response_text.replace('```html', '').replace('```', '').strip()
 
@@ -517,6 +524,7 @@ class AutoContentSEO:
             msg['To'] = email_receiver
             msg['Subject'] = f"Report Auto SEO: {new_data.get('REP_TITLE')}"
             msg.attach(MIMEText(f"Hệ thống lên bài thành công!\nTiêu đề: {new_data.get('REP_TITLE')}\nTừ khoá: {new_data.get('REP_KW_1')}\nLên lịch: {new_data.get('REP_PUBLISH_DATE')}\n\nXem nội dung bài viết trong Google Doc.", 'plain'))
+            
             server = smtplib.SMTP('smtp.gmail.com', 587)
             server.starttls()
             server.login(email_sender, email_pwd)
@@ -532,6 +540,20 @@ if db_mock is not None and not db_mock.get('DASHBOARD', pd.DataFrame()).empty:
 
 st.title(f"🚀 {project_name}")
 st.markdown("---")
+
+if 'is_running' not in st.session_state:
+    st.session_state.is_running = False
+
+if st.session_state.is_running:
+    st.components.v1.html("""
+        <script>
+            const parentWindow = window.parent || window;
+            parentWindow.addEventListener("beforeunload", function (e) {
+                e.preventDefault();
+                e.returnValue = "Hệ thống đang viết bài nghen, nếu nhấn OK xác nhận là mất bài đang viết ráng chịu!";
+            });
+        </script>
+    """, height=0, width=0)
 
 tab1, tab2, tab3 = st.tabs(["📊 DASHBOARD", "⚙️ CONTROL", "📝 REPORT"])
 
@@ -579,14 +601,20 @@ with tab2:
     st.subheader("Bảng Điều Khiển Vận Hành Auto")
     col_btn, col_log = st.columns([1, 3])
 
+    def start_auto(): st.session_state.is_running = True
+    def stop_auto():
+        st.session_state.is_running = False
+        st.cache_data.clear()
+
     with col_btn: 
-        start_btn = st.button("🚀 BẮT ĐẦU CHẠY AUTO", type="primary", use_container_width=True)
+        start_btn = st.button("🚀 BẮT ĐẦU CHẠY AUTO", type="primary", use_container_width=True, disabled=st.session_state.is_running, on_click=start_auto)
+        
+        if st.session_state.is_running:
+            st.button("❌ ĐÓNG / RESET TẠM DỪNG", type="secondary", use_container_width=True, on_click=stop_auto)
         
     with col_log: log_container = st.container()
         
-    if start_btn and db_mock is not None:
-        st.components.v1.html("""<script>const parentWindow = window.parent || window; parentWindow.addEventListener("beforeunload", function (e) { e.preventDefault(); e.returnValue = "Hệ thống đang chạy, không nên thoát!"; });</script>""", height=0, width=0)
-        
+    if st.session_state.is_running and db_mock is not None:
         start_time_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%H:%M:%S')
         with log_container:
             df_rep_temp = db_mock.get('REPORT', pd.DataFrame())
@@ -596,6 +624,7 @@ with tab2:
             
             if created_today >= quota_day:
                 st.success("🎉 Hôm nay đã chạy đủ BATCH_SIZE rồi Sếp ơi!")
+                st.session_state.is_running = False
             else:
                 articles_to_run = quota_day - created_today
                 progress_bar = st.progress(0)
@@ -624,14 +653,16 @@ with tab2:
                                 status_box.update(label=f"✅ Hoàn tất bài {i+1}: {new_data.get('REP_TITLE')}", state="complete", expanded=False)
                                 time.sleep(2)
                         else: 
-                            status_box.update(label="⚠️ Đã dừng lặp (Hết Slot đăng bài trống)", state="error", expanded=False)
+                            status_box.update(label="⚠️ Đã dừng lặp (Hết Slot hoặc Quota)", state="error", expanded=False)
                             has_error = True
                             break
-                
+                        
                 if has_error:
                     st.error("❌ CHU TRÌNH CÀY NGẦM ĐÃ DỪNG LẠI DO LỖI HOẶC HẾT SLOT!")
                 else:
                     st.success("✅ ĐÃ HOÀN TẤT CHU TRÌNH CÀY NGẦM THÀNH CÔNG!")
+                
+                st.session_state.is_running = False
 
 with tab3:
     col_title_3, col_sync_3 = st.columns([4, 1])
