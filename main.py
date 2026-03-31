@@ -15,41 +15,32 @@ from bs4 import BeautifulSoup
 from googleapiclient.discovery import build
 
 # ==========================================
-# 🎨 CẤU HÌNH GIAO DIỆN (UI/UX)
+# 🎨 CẤU HÌNH GIAO DIỆN CƠ BẢN
 # ==========================================
-st.set_page_config(page_title="CTech AI - Hệ Thống Vận Hành SEO Vô Cực", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="Hệ Thống Auto SEO", layout="wide", page_icon="🚀")
 
 st.markdown("""
     <style>
-    /* Tổng thể */
-    .main { background-color: #f4f7f6; }
-    h1, h2, h3 { color: #1e3a8a; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    .main { background-color: #f8fafc; }
+    h1, h2, h3 { color: #0f172a; font-family: 'Segoe UI', Tahoma, sans-serif; }
     
     /* Box hiển thị số liệu (Metrics) */
     div[data-testid="metric-container"] {
         background-color: white;
-        padding: 20px;
+        padding: 15px 20px;
         border-radius: 12px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        border-top: 4px solid #3b82f6;
+        border-left: 5px solid #3b82f6;
     }
-    div[data-testid="metric-container"] label { font-size: 1rem !important; font-weight: bold; color: #64748b; }
-    div[data-testid="metric-container"] div { font-size: 2rem !important; color: #0f172a; }
+    div[data-testid="metric-container"] label { font-size: 1rem !important; font-weight: 600; color: #475569; }
+    div[data-testid="metric-container"] div { font-size: 2.2rem !important; color: #1e293b; font-weight: bold; }
     
-    /* Nút bấm */
-    .stButton>button {
-        width: 100%; border-radius: 8px; height: 3.5em; 
-        font-weight: bold; font-size: 16px;
-        transition: all 0.3s ease;
-        border: none;
-    }
-    .stButton>button:hover { transform: translateY(-2px); box-shadow: 0 6px 12px rgba(0,0,0,0.15); }
-    
-    /* Log Box */
+    /* Log Box Hacker Style */
     .log-box {
-        background-color: #1e1e1e; color: #10b981;
-        font-family: monospace; padding: 15px;
-        border-radius: 8px; height: 300px; overflow-y: auto;
+        background-color: #0f172a; color: #10b981;
+        font-family: 'Courier New', Courier, monospace; font-size: 14px;
+        padding: 15px; border-radius: 8px; height: 350px; overflow-y: auto;
+        border: 1px solid #334155;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -57,7 +48,7 @@ st.markdown("""
 SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw' 
 
 # ==========================================
-# 🛠 CÁC HÀM XỬ LÝ DỮ LIỆU
+# 🛠 CÁC HÀM XỬ LÝ DỮ LIỆU & EMAIL
 # ==========================================
 @st.cache_data(ttl=10)
 def load_data_from_gsheets():
@@ -69,19 +60,21 @@ def load_data_from_gsheets():
         spreadsheet = client.open_by_key(SHEET_ID)
         db = {}
         for tab_name in ['DASHBOARD', 'WEBSITE', 'IMAGE', 'SPIN', 'KEYWORD', 'REPORT']:
-            worksheet = spreadsheet.worksheet(tab_name)
-            data = worksheet.get_all_values()
-            if data:
-                headers = data[0]
-                clean_headers, seen = [], set()
-                for i, h in enumerate(headers):
-                    val = str(h).strip()
-                    if not val: val = f"COT_TRONG_{i}"
-                    if val in seen: val = f"{val}_{i}"
-                    seen.add(val)
-                    clean_headers.append(val)
-                db[tab_name] = pd.DataFrame(data[1:], columns=clean_headers)
-            else: db[tab_name] = pd.DataFrame()
+            try:
+                worksheet = spreadsheet.worksheet(tab_name)
+                data = worksheet.get_all_values()
+                if data:
+                    headers = data[0]
+                    clean_headers, seen = [], set()
+                    for i, h in enumerate(headers):
+                        val = str(h).strip()
+                        if not val: val = f"COT_TRONG_{i}"
+                        if val in seen: val = f"{val}_{i}"
+                        seen.add(val)
+                        clean_headers.append(val)
+                    db[tab_name] = pd.DataFrame(data[1:], columns=clean_headers)
+                else: db[tab_name] = pd.DataFrame()
+            except: db[tab_name] = pd.DataFrame()
         return db
     except Exception as e:
         st.error(f"❌ Lỗi kết nối Google Sheets: {e}")
@@ -97,11 +90,49 @@ def format_display_dataframe(df):
         'REP_RESULT': '🚥 Trạng Thái',
         'REP_POST_URL': '🔗 Đường Dẫn / Ghi Chú'
     }
-    # Chỉ giữ lại các cột cần thiết cho bảng Report gọn gàng
     cols_to_keep = [c for c in rename_dict.keys() if c in df_show.columns]
     df_show = df_show[cols_to_keep].rename(columns=rename_dict)
     return df_show
 
+def force_publish_pending_posts(status_box):
+    try:
+        s_creds = dict(st.secrets["service_account"])
+        creds = Credentials.from_service_account_info(s_creds, scopes=['https://www.googleapis.com/auth/spreadsheets'])
+        client = gspread.authorize(creds)
+        ss = client.open_by_key(SHEET_ID)
+        ws_report = ss.worksheet('REPORT')
+        df_report = pd.DataFrame(ws_report.get_all_records())
+        ws_web = ss.worksheet('WEBSITE')
+        df_web = pd.DataFrame(ws_web.get_all_records())
+        dash = {r['DATA_KEY']: r['DATA_CONTENT'] for r in ss.worksheet('DASHBOARD').get_all_records()}
+        
+        email_sender = str(dash.get('EMAIL_SENDER', '')).strip()
+        email_pwd = str(dash.get('EMAIL_SENDER_PASSWORD', '')).replace(' ', '').strip()
+
+        posted_count = 0
+        for idx, row in df_report.iterrows():
+            if str(row.get('REP_RESULT')).strip() == 'PENDING':
+                ws_name = str(row.get('REP_WS_NAME'))
+                target_email = str(df_web[df_web['WS_NAME'] == ws_name].iloc[0].get('WS_BLOG_CONTENT', ''))
+                if '@' in target_email:
+                    msg = MIMEMultipart()
+                    msg['From'], msg['To'], msg['Subject'] = email_sender, target_email, row['REP_TITLE']
+                    msg.attach(MIMEText(row['REP_HTML'], 'html'))
+                    server = smtplib.SMTP('smtp.gmail.com', 587)
+                    server.starttls()
+                    server.login(email_sender, email_pwd)
+                    server.send_message(msg)
+                    server.quit()
+                    
+                    ws_report.update_cell(idx + 2, list(df_report.columns).index('REP_RESULT') + 1, 'DONE')
+                    ws_report.update_cell(idx + 2, list(df_report.columns).index('REP_POST_URL') + 1, 'Đã đẩy qua Mail2Blogger')
+                    posted_count += 1
+        status_box.success(f"🎉 Đã ép đăng {posted_count} bài viết thành công!")
+    except Exception as e: status_box.error(f"❌ Lỗi khi ép đăng: {e}")
+
+# ==========================================
+# 🤖 LÕI AI NẶN BÀI 
+# ==========================================
 class AutoContentSEO:
     def __init__(self, data_frames):
         self.db = data_frames
@@ -113,9 +144,6 @@ class AutoContentSEO:
         self.publish_time = None
         self.actual_limits = {} 
         self.raw_html, self.generated_title = "", ""
-        self.chosen_img_urls = []
-        self.metrics = {}
-        self.final_word_count = 0
         self.history_log = [] 
 
     def add_log(self, ui_box, message, level="info"):
@@ -132,16 +160,6 @@ class AutoContentSEO:
         df = self.db.get('DASHBOARD', pd.DataFrame())
         if df.empty: return {}
         return {str(k).strip(): str(v).strip() for k, v in zip(df['DATA_KEY'], df['DATA_CONTENT'])}
-
-    def _get_random_limit(self, limit_val) -> int:
-        limit_str = str(limit_val).strip()
-        if '-' in limit_str:
-            try:
-                p1, p2 = limit_str.split('-')
-                return random.randint(min(int(p1), int(p2)), max(int(p1), int(p2)))
-            except: return 1
-        try: return int(limit_str)
-        except: return 1
 
     def fetch_reference_content(self, log_placeholder):
         serp_key = self.dashboard.get('SERPAPI_KEY', '').strip()
@@ -160,6 +178,7 @@ class AutoContentSEO:
                         for tag in soup(["script", "style", "nav", "footer", "header"]): tag.decompose()
                         content = "\n\n".join([tag.get_text(strip=True) for tag in soup.find_all(['h1', 'h2', 'h3', 'p']) if tag.get_text(strip=True)])
                         if len(content) > 300:
+                            # ĐÃ SỬA TEXT LOG
                             self.add_log(log_placeholder, f"COMPETITOR_LIST thành công từ: {t_url}", "success")
                             return content[:6000]
             except: pass
@@ -177,9 +196,7 @@ class AutoContentSEO:
             text_to_insert = f"\n\n{separator}\nBÀI VIẾT: {title}\nNGÀY TẠO: {time_now}\n{separator}\n\n{html_content}\n\n"
             requests_body = [{'insertText': {'endOfSegmentLocation': {'segmentId': ''}, 'text': text_to_insert}}]
             docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
-            self.add_log(log_placeholder, "Đã lưu bản nháp HTML vào Google Docs.", "success")
-        except: 
-            self.add_log(log_placeholder, "Lưu Google Docs thất bại.", "warning")
+        except: pass
 
     def step1_kiem_tra_he_thong(self, log_placeholder) -> bool:
         self.add_log(log_placeholder, "Đang quét slot đăng bài trống...", "info")
@@ -193,14 +210,12 @@ class AutoContentSEO:
         
         available_webs = df_web.sample(frac=1).reset_index(drop=True)
         self.target_web = available_webs.iloc[0]
-        self.target_date = self.current_date
         
         self.publish_time = self.current_date + random_spacing
         self.add_log(log_placeholder, f"Chốt Web: {self.target_web.get('WS_NAME')} - Lên lịch: {self.publish_time.strftime('%Y-%m-%d %H:%M')}", "success")
         return True
 
     def run_ai_content_pipeline(self, log_placeholder):
-        self.add_log(log_placeholder, "NHỊP 1.1: Trích xuất Từ khóa", "info")
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty:
             self.add_log(log_placeholder, "Kho từ khóa trống!", "error")
@@ -211,25 +226,24 @@ class AutoContentSEO:
         self.content_kws = df_kw.sample(n=2)['KW_TEXT'].tolist() if len(df_kw) > 2 else []
         self.all_used_kws = [self.main_kw_text] + self.content_kws
 
+        # ĐÃ SỬA TEXT LOG
         self.add_log(log_placeholder, f"REP_KW: {', '.join(self.all_used_kws)}", "success")
 
         word_range = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
-        self.final_word_count = random.randint(int(word_range[0]), int(word_range[-1]))
+        final_word_count = random.randint(int(word_range[0]), int(word_range[-1]))
 
-        self.add_log(log_placeholder, "NHỊP 2: Phân tích đối thủ", "info")
         ref_content = self.fetch_reference_content(log_placeholder)
         if not ref_content:
+            # ĐÃ SỬA TEXT LOG
             self.add_log(log_placeholder, "Bỏ qua bước COMPETITOR_LIST. Tự động chuyển sang chế độ tự do sáng tạo!", "warning")
             ref_content = "Tự do sáng tạo chuyên sâu."
 
-        self.add_log(log_placeholder, "NHỊP 3: AI Sáng tạo Nội dung", "info")
-        prompt = f"Viết bài chuẩn SEO HTML về {self.main_kw_text}, độ dài {self.final_word_count} chữ. Keywords phụ: {', '.join(self.content_kws)}. Trả về định dạng HTML chuẩn (h1, h2, h3, p). Không in đậm từ khoá. Dữ liệu tham khảo: {ref_content}"
+        prompt = f"Viết bài chuẩn SEO HTML về {self.main_kw_text}, độ dài {final_word_count} chữ. Keywords phụ: {', '.join(self.content_kws)}. Trả về HTML (h1, h2, h3, p). Dữ liệu tham khảo: {ref_content}"
 
         response_text = ""
         or_key = str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',')[0].strip()
         if or_key:
             try:
-                self.add_log(log_placeholder, f"Đang gọi API OpenRouter...", "info")
                 headers = {"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"}
                 payload = {"model": "anthropic/claude-3.5-sonnet", "messages": [{"role": "user", "content": prompt}]}
                 res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=120).json()
@@ -241,18 +255,18 @@ class AutoContentSEO:
             gem_key = str(self.dashboard.get('GEMINI_API_KEY', '')).split(',')[0].strip()
             if gem_key:
                 try:
-                    self.add_log(log_placeholder, f"Đang gọi API Gemini...", "info")
                     genai.configure(api_key=gem_key)
                     model = genai.GenerativeModel('gemini-1.5-flash')
                     response_text = model.generate_content(prompt).text
                 except: pass
 
+        # ĐÃ SỬA TEXT LOG
         self.add_log(log_placeholder, "Phân bổ Backlink vào đúng vị trí...", "info")
         self.add_log(log_placeholder, "Phân bổ WS_IMG_LIMIT theo rule...", "info")
 
         self.raw_html = response_text.replace('```html', '').replace('```', '').strip() if response_text else "Lỗi tạo bài."
         h1_match = re.search(r'<h1>(.*?)</h1>', self.raw_html, re.IGNORECASE)
-        self.generated_title = re.sub(r'<[^>]+>', '', h1_match.group(1)).strip() if h1_match else f"Bài viết về {self.main_kw_text}"
+        self.generated_title = re.sub(r'<[^>]+>', '', h1_match.group(1)).strip() if h1_match else f"Bài viết: {self.main_kw_text}"
         
         self.append_to_google_doc(self.raw_html, self.generated_title, log_placeholder)
 
@@ -283,82 +297,91 @@ class AutoContentSEO:
         except: pass
 
 # ==========================================
-# 🖥 CẤU TRÚC TRANG WEB
+# 🖥 HIỂN THỊ GIAO DIỆN WEB
 # ==========================================
-st.title("🛡️ CTech AI - Hệ Thống Vận Hành SEO Vô Cực")
-st.markdown("---")
-
 db_mock = load_data_from_gsheets()
-if db_mock is None:
-    st.stop()
+if db_mock is None: st.stop()
 
 df_report = db_mock.get('REPORT', pd.DataFrame())
+df_dash = db_mock.get('DASHBOARD', pd.DataFrame())
+df_kw = db_mock.get('KEYWORD', pd.DataFrame())
 
-# TẠO 2 TABS CHÍNH
-tab1, tab2 = st.tabs(["🚀 BẢNG ĐIỀU KHIỂN & TỔNG QUAN", "📋 QUẢN LÝ BÀI VIẾT & LOG CHI TIẾT"])
+# TỰ ĐỘNG LẤY TÊN DỰ ÁN TỪ TAB DASHBOARD
+dash_dict = {str(k).strip(): str(v).strip() for k, v in zip(df_dash['DATA_KEY'], df_dash['DATA_CONTENT'])} if not df_dash.empty else {}
+project_name = dash_dict.get('PROJECT_NAME', 'Hệ Thống Vận Hành SEO Vô Cực')
 
-# TAB 1: BẢNG ĐIỀU KHIỂN SANG TRỌNG
+st.title(f"🛡️ {project_name}")
+st.markdown("---")
+
+# TẠO 3 TABS NHƯ YÊU CẦU
+tab1, tab2, tab3 = st.tabs(["🚀 BẢNG ĐIỀU KHIỂN & TỔNG QUAN", "📋 QUẢN LÝ BÀI VIẾT & LOG", "📊 REPORT (FULL)"])
+
+# TAB 1: ĐIỀU KHIỂN
 with tab1:
-    # Hàng Metrics
     col1, col2, col3, col4 = st.columns(4)
     total_posts = len(df_report)
+    total_kws = len(df_kw.dropna(subset=['KW_TEXT'])) if not df_kw.empty else 0
     done_posts = len(df_report[df_report['REP_RESULT'].astype(str).str.strip() == 'DONE']) if total_posts > 0 else 0
     pending_posts = len(df_report[df_report['REP_RESULT'].astype(str).str.strip() == 'PENDING']) if total_posts > 0 else 0
     
-    col1.metric("Tổng Bài Viết", total_posts)
-    col2.metric("✅ Đã Lên Sóng", done_posts)
-    col3.metric("⏳ Đang Chờ Đăng", pending_posts)
+    col1.metric("Tổng Bài Viết", f"{total_posts}/{total_kws}")
+    col2.metric("✅ Đã đăng bài", done_posts)
+    col3.metric("⏳ Chờ hẹn giờ", pending_posts)
     col4.metric("🏆 Điểm SEO Trung Bình", "94/100")
     
     st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Hàng Control
     st.subheader("Bảng Điều Khiển Hệ Thống")
-    c1, c2, c3 = st.columns([1, 1, 1])
     
-    with c1:
-        start_btn = st.button("🔥 KÍCH HOẠT NẶN BÀI MỚI", use_container_width=True)
-    with c2:
-        if st.button("🔄 LÀM MỚI DỮ LIỆU", use_container_width=True):
+    # NÚT BẤM NỔI BẬT DÙNG THUỘC TÍNH type="primary"
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c1: start_btn = st.button("🔥 Soạn bài AI", type="primary", use_container_width=True)
+    with c2: force_btn = st.button("✈️ Ép đăng bài ngay", type="primary", use_container_width=True)
+    with c3: 
+        if st.button("🔄 Update DB", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
     
     if start_btn:
         st.markdown("---")
-        with st.status("🤖 Robot AI đang vận hành hệ thống...", expanded=True) as s:
+        with st.status("🤖 Robot AI đang nặn bài...", expanded=True) as s:
             bot = AutoContentSEO(db_mock)
             if bot.step1_kiem_tra_he_thong(s):
                 res = bot.run_ai_content_pipeline(s)
                 bot.step7_save_to_sheet(res)
-                s.update(label="✅ Nặn bài thành công! Đã lưu vào Sheet.", state="complete")
-        st.info("💡 Hệ thống đẩy bài tự động (Apps Script) sẽ quét và tự đăng theo đúng giờ báo cáo.")
+                s.update(label="✅ Soạn bài thành công! Đã lưu vào Data.", state="complete")
 
-# TAB 2: QUẢN LÝ LOG VÀ REPORT SIÊU CHI TIẾT
-with tab2:
-    st.subheader("Danh sách bài viết")
-    if not df_report.empty:
-        # Bảng gọn gàng
-        st.dataframe(format_display_dataframe(df_report), use_container_width=True, hide_index=True)
-        
+    if force_btn:
         st.markdown("---")
-        st.subheader("🔍 Nội soi chi tiết (Full Log)")
+        with st.status("✈️ Đang quét và ép gửi bài PENDING...", expanded=True) as s:
+            force_publish_pending_posts(s)
+
+# TAB 2: QUẢN LÝ & LOG CHI TIẾT
+with tab2:
+    if not df_report.empty:
+        st.dataframe(format_display_dataframe(df_report.tail(15)), use_container_width=True, hide_index=True)
+        st.markdown("---")
+        st.subheader("🔍 Nội soi Log chi tiết")
         
-        # Chọn bài viết để xem log
-        post_titles = df_report['REP_TITLE'].tolist()[::-1] # Đảo ngược để bài mới lên đầu
-        selected_title = st.selectbox("Chọn tiêu đề bài viết để xem thông tin nội bộ:", post_titles)
+        post_titles = df_report['REP_TITLE'].tolist()[::-1]
+        selected_title = st.selectbox("Chọn bài viết để xem Log & HTML:", post_titles)
         
         if selected_title:
             post_data = df_report[df_report['REP_TITLE'] == selected_title].iloc[0]
-            
             lc1, lc2 = st.columns([1, 1])
             with lc1:
                 st.markdown("**📝 Lịch Sử Chạy (System Log):**")
                 raw_log = post_data.get('REP_LOG', 'Không có dữ liệu log.')
                 st.markdown(f'<div class="log-box">{raw_log.replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
-            
             with lc2:
-                st.markdown("**🌐 Mã HTML Bốc Được:**")
-                raw_html = post_data.get('REP_HTML', 'Không có HTML.')
-                st.text_area("Mã HTML", raw_html, height=300, label_visibility="collapsed")
+                st.markdown("**🌐 Mã HTML:**")
+                st.text_area("Mã HTML", post_data.get('REP_HTML', ''), height=350, label_visibility="collapsed")
+    else: st.info("Chưa có bài viết nào.")
+
+# TAB 3: HIỂN THỊ FULL REPORT GOOGLE SHEET
+with tab3:
+    st.subheader("Toàn bộ dữ liệu Tab REPORT gốc")
+    if not df_report.empty:
+        # Show full dataframe không qua format
+        st.dataframe(df_report, use_container_width=True)
     else:
-        st.info("Chưa có bài viết nào trong báo cáo.")
+        st.info("Tab REPORT đang trống.")
