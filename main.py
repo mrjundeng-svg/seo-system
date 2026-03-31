@@ -138,7 +138,7 @@ def force_publish_pending_posts(status_box):
                         skipped_future += 1
                 except: pass
                     
-        status_box.success(f"🎉 Đã lên sóng {posted_count} bài viết! (⚠️ Giữ nguyên {skipped_future} bài chưa tới giờ).")
+        status_box.success(f"🎉 Đã lên sóng {posted_count} bài viết! (⚠️ Giữ nguyên {skipped_future} bài chưa tới giờ hoặc của tương lai).")
     except Exception as e: status_box.error(f"❌ Lỗi khi lên bài: {e}")
 
 # ==========================================
@@ -150,15 +150,21 @@ class AutoContentSEO:
         self.dashboard = self._parse_dashboard()
         self.current_date = datetime.datetime.utcnow() + datetime.timedelta(hours=7) 
         self.target_date, self.target_web = None, None
+        
         self.main_kw_text = ""
-        self.content_kws, self.all_used_kws = [], []
-        self.kw_intent, self.ws_persona = "", ""
+        self.content_kws = []
+        self.all_used_kws = []
+        self.kw_intent = ""
+        self.ws_persona = ""
+        
         self.publish_time = None
         self.raw_html, self.generated_title = "", ""
         self.history_log = [] 
         self.kcs_results = {}
         self.used_img_urls = []
+        
         self.final_word_count = 0
+        self.target_img_count = 1
 
     def add_log(self, ui_box, message):
         time_str = (datetime.datetime.utcnow() + datetime.timedelta(hours=7)).strftime('%H:%M:%S')
@@ -173,47 +179,37 @@ class AutoContentSEO:
         try: return int(str(value).strip())
         except: return default
 
-    # --- NHỊP MEDIA & BACKLINK (THIẾT QUÂN LUẬT 4 BƯỚC) ---
+    # --- NHỊP 1.5: XỬ LÝ MEDIA VÀ LINK (GẮN ẢNH ĐỒNG BỘ KEYWORD) ---
     def process_html_media_and_links(self, html_content, log_placeholder):
         soup = BeautifulSoup(html_content, 'html.parser')
         
-        # 1. GẮN BACKLINK (NHỊP 1)
+        # 1. GẮN BACKLINK CHIẾN LƯỢC
         out_limit = self.safe_int(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0)
         in_limit = self.safe_int(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
         out_link = str(self.target_web.get('WS_LINK_OUT_BACKLINK', '')).strip()
         in_link = str(self.target_web.get('WS_LINK_IN_BACKLINK', '')).strip()
         
-        self.add_log(log_placeholder, f"Nhịp Xử lý: Gắn Backlink chiến lược ({out_limit} Link Ngoại, {in_limit} Link Nội).")
+        self.add_log(log_placeholder, f"Nhịp Xử lý: Phân bổ Backlink ({out_limit} Ngoại, {in_limit} Nội).")
         
         for i, kw in enumerate(self.all_used_kws):
             link_url = out_link if i < out_limit else in_link
             if not link_url: continue
             
             target_p = None
-            # Chỉ quét trong thẻ <p> để né Heading (Title)
             for p in soup.find_all('p'):
-                if p.find('a'): continue # Tránh bọc link lồng nhau
+                if p.find('a'): continue 
                 if re.search(r'(?i)\b' + re.escape(kw) + r'\b', p.get_text()):
                     target_p = p
                     break
             
             if target_p:
                 pattern = re.compile(r'(?i)\b' + re.escape(kw) + r'\b')
-                # Replace bảo toàn nguyên trạng ký tự HOA/thường của Keyword
                 new_html = pattern.sub(lambda m: f"<a href='{link_url}'>{m.group(0)}</a>", str(target_p), count=1)
                 new_p = BeautifulSoup(new_html, 'html.parser')
                 target_p.replace_with(new_p)
 
-        # 2. TUYỂN CHỌN & CHÈN ẢNH (NHỊP 2 & 3)
+        # 2. TUYỂN CHỌN & CHÈN ẢNH (Đồng bộ số lượng với Keyword)
         df_img = self.db.get('IMAGE', pd.DataFrame())
-        ws_img_limit = self.safe_int(self.target_web.get('WS_IMG_LIMIT', 3), 3)
-        
-        word_range_str = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200'))
-        max_words = self.safe_int(word_range_str.split('-')[-1], 1200)
-        
-        # Hạn ngạch bài ngắn (Short-form) hay Standard
-        is_short = self.final_word_count <= (max_words / 2)
-        actual_img_limit = 1 if is_short else ws_img_limit
         
         if not df_img.empty and 'IMG_URL' in df_img.columns:
             valid_imgs = df_img[df_img['IMG_URL'].astype(str).str.strip() != ''].copy()
@@ -221,50 +217,34 @@ class AutoContentSEO:
                 if 'IMG_STATUS' not in valid_imgs.columns: valid_imgs['IMG_STATUS'] = 0
                 valid_imgs['IMG_STATUS'] = pd.to_numeric(valid_imgs['IMG_STATUS'], errors='coerce').fillna(0)
                 
-                # Logic: Sắp xếp ưu tiên status thấp nhất, nếu bằng nhau thì random
                 valid_imgs = valid_imgs.sample(frac=1).sort_values('IMG_STATUS')
-                chosen_imgs = valid_imgs.head(actual_img_limit)
-                img_urls = chosen_imgs['IMG_URL'].tolist()
-                self.used_img_urls = img_urls
                 
-                if img_urls:
-                    p_tags = soup.find_all('p')
-                    if p_tags:
-                        idx_first = 0
-                        for i, p in enumerate(p_tags):
-                            if re.search(r'(?i)\b' + re.escape(self.all_used_kws[0]) + r'\b', p.get_text()):
-                                idx_first = i; break
+                # Số ảnh chốt đúng bằng chỉ tiêu Keyword đã setup (self.target_img_count)
+                actual_img_count = min(self.target_img_count, len(valid_imgs))
+                chosen_imgs = valid_imgs.head(actual_img_count)
+                self.used_img_urls = chosen_imgs['IMG_URL'].tolist()
+                
+                if self.used_img_urls:
+                    for idx, img_url in enumerate(self.used_img_urls):
+                        # Ánh xạ 1 Ảnh - 1 Keyword
+                        kw_to_match = self.all_used_kws[idx] if idx < len(self.all_used_kws) else self.all_used_kws[-1]
                         
-                        idx_last = len(p_tags) - 1
-                        if len(self.all_used_kws) > 1:
-                            for i, p in enumerate(reversed(p_tags)):
-                                if re.search(r'(?i)\b' + re.escape(self.all_used_kws[-1]) + r'\b', p.get_text()):
-                                    idx_last = len(p_tags) - 1 - i; break
-                                    
-                        if idx_last <= idx_first: idx_last = min(idx_first + 2, len(p_tags) - 1)
+                        target_p = None
+                        for p in soup.find_all('p'):
+                            if re.search(r'(?i)\b' + re.escape(kw_to_match) + r'\b', p.get_text()):
+                                target_p = p
+                                break
                         
-                        placement_indices = []
-                        if len(img_urls) == 1:
-                            placement_indices = [idx_first]
-                        else:
-                            placement_indices.append(idx_first)
-                            placement_indices.append(idx_last)
-                            remaining = len(img_urls) - 2
-                            if remaining > 0:
-                                step = max(1, (idx_last - idx_first) // (remaining + 1))
-                                for i in range(1, remaining + 1):
-                                    placement_indices.insert(i, idx_first + i * step)
-                        
-                        placement_indices = [min(idx, len(p_tags)-1) for idx in placement_indices]
-                        
-                        for img_url, p_idx in zip(img_urls, placement_indices):
-                            target_p = p_tags[p_idx]
-                            # Nhịp 4: Cú pháp bọc HTML căn giữa chuẩn SEO
-                            img_html = f"<br><p align='center'><img src='{img_url}'></p><br>"
+                        if not target_p:
+                            p_tags = soup.find_all('p')
+                            if p_tags: target_p = p_tags[min(idx * 2 + 1, len(p_tags) - 1)]
+                            
+                        if target_p:
+                            img_html = f"<br><p align='center'><img src='{img_url}' alt='{kw_to_match}'></p><br>"
                             img_soup = BeautifulSoup(img_html, 'html.parser')
                             target_p.insert_after(img_soup)
                             
-                    self.add_log(log_placeholder, f"Nhịp Xử lý: Phân bổ vị trí & Chèn {len(img_urls)} Ảnh minh họa (Thuật toán cân bằng).")
+                    self.add_log(log_placeholder, f"  > Đã chèn {len(self.used_img_urls)} ảnh, bám sát {len(self.all_used_kws)} từ khóa.")
         return str(soup)
 
     # --- NHỊP KIỂM ĐỊNH KCS ---
@@ -421,8 +401,8 @@ class AutoContentSEO:
     def run_ai_content_pipeline(self, log_placeholder):
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty: return None
-        
-        # Đồng bộ Quota Từ Khóa = Limit Ngoại + Limit Nội
+
+        # TÍNH TOÁN QUOTA TỪ KHÓA & ẢNH MỚI THEO LUẬT SẾP
         out_limit = self.safe_int(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0)
         in_limit = self.safe_int(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
         total_kws_needed = max(1, out_limit + in_limit)
@@ -440,10 +420,21 @@ class AutoContentSEO:
             self.content_kws = []
             
         self.all_used_kws = [self.main_kw_text] + self.content_kws
-        self.add_log(log_placeholder, f"REP_KW (Quota = {total_kws_needed}): {', '.join(self.all_used_kws)}")
+        self.add_log(log_placeholder, f"REP_KW (Số lượng = {total_kws_needed}): {', '.join(self.all_used_kws)}")
 
+        # LUẬT SHORT-FORM NẾU CHỈ CÓ 1 KEYWORD
         word_range_str = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200'))
-        self.final_word_count = random.randint(self.safe_int(word_range_str.split('-')[0], 900), self.safe_int(word_range_str.split('-')[-1], 1200))
+        min_words = self.safe_int(word_range_str.split('-')[0], 900)
+        max_words = self.safe_int(word_range_str.split('-')[-1], 1200)
+
+        if total_kws_needed == 1:
+            self.final_word_count = max_words // 2
+            self.target_img_count = 1
+            self.add_log(log_placeholder, f"Luật Short-form: Bài có 1 Keyword -> Ép độ dài {self.final_word_count} chữ, 1 Ảnh.")
+        else:
+            self.final_word_count = random.randint(min_words, max_words)
+            self.target_img_count = total_kws_needed
+            self.add_log(log_placeholder, f"Luật Standard: Độ dài {self.final_word_count} chữ, {self.target_img_count} Ảnh.")
 
         ref_content = self.fetch_reference_content(log_placeholder)
         if not ref_content: ref_content = "Không có dữ liệu đối thủ."
@@ -452,7 +443,7 @@ class AutoContentSEO:
         
         prompt = f"""Đóng vai: {self.ws_persona}.
 Mục đích bài viết (Intent): {self.kw_intent}.
-Chủ đề bài viết: "{self.main_kw_text}". Độ dài tối thiểu: {self.final_word_count} từ.
+Chủ đề bài viết: "{self.main_kw_text}". Độ dài mục tiêu: KHOẢNG {self.final_word_count} từ.
 
 YÊU CẦU TỐI ƯU SEO (ON-PAGE):
 1. Thẻ <h1> (Tiêu đề bài viết): TUYỆT ĐỐI NGẮN GỌN (từ 45 đến tối đa 55 ký tự). Phải chứa từ khóa chính "{self.main_kw_text}". Đánh thẳng vào trọng tâm, không dùng từ thừa.
@@ -491,7 +482,7 @@ Chỉ trả về mã định dạng HTML (<h1>, <h2>, <p>, <ul>), bắt đầu t
 
         raw_html = response_text.replace('```html', '').replace('```', '').strip() if response_text else "<h1>Lỗi tạo bài</h1><p>API Timeout</p>"
         
-        # BƯỚC XỬ LÝ MEDIA (CHÈN ẢNH + LINK)
+        # BƯỚC XỬ LÝ MEDIA (CHÈN ẢNH + LINK ĐỒNG BỘ 1:1)
         self.raw_html = self.process_html_media_and_links(raw_html, log_placeholder)
         
         h1_match = re.search(r'<h1>(.*?)</h1>', self.raw_html, re.IGNORECASE)
@@ -513,7 +504,7 @@ Chỉ trả về mã định dạng HTML (<h1>, <h2>, <p>, <ul>), bắt đầu t
             'REP_CREATED_AT': self.current_date.strftime('%Y-%m-%d %H:%M'),
             'REP_TITLE': self.generated_title,
             'REP_IMG_COUNT': str(self.raw_html.count('<img')),
-            'REP_KW_1': self.all_used_kws[0],
+            'REP_KW_1': self.all_used_kws[0] if len(self.all_used_kws) > 0 else "",
             'REP_KW_2': self.all_used_kws[1] if len(self.all_used_kws) > 1 else "",
             'REP_KW_3': self.all_used_kws[2] if len(self.all_used_kws) > 2 else "",
             'REP_SEO_SCORE': str(self.kcs_results.get('SEO', 0)),
