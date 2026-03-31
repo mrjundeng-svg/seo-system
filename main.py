@@ -320,59 +320,64 @@ class AutoContentSEO:
 
         final_prompt = f"{t_template}\n\n{strat}\n\n{search}\n\n{style_full}\n\n{persona_rule}\n\n{global_rule}\n\n{rule_phan_bo}\n\n{anti_bold_rule}\n\n{h1_rule}\n\n{humanizer}\n\n(Chỉ trả về HTML thô: H1, H2, H3, p)."
 
-        # --- CHIẾN THUẬT FALLBACK THÁC NƯỚC: OPENROUTER -> GEMINI ---
+        # --- CHIẾN THUẬT THÁC NƯỚC: OPENROUTER -> GEMINI ---
         response_text = ""
         last_error = ""
 
-        # 1. THỬ OPENROUTER TRƯỚC
+        # LẤY CẤU HÌNH TỪ GOOGLE SHEET
         openrouter_raw = str(self.dashboard.get('OPENROUTER_API_KEY', ''))
         openrouter_keys = [k.strip() for k in openrouter_raw.split(',') if k.strip()]
+        or_model = str(self.dashboard.get('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet')).strip()
+        
+        gemini_raw = str(self.dashboard.get('GEMINI_API_KEY', ''))
+        gemini_keys = [k.strip() for k in gemini_raw.split(',') if k.strip()]
+        gm_model = str(self.dashboard.get('GEMINI_MODEL', 'gemini-2.5-flash')).strip()
 
-        for i, current_key in enumerate(openrouter_keys):
-            try:
-                self.add_log(log_placeholder, f"Đang gọi OpenRouter - Claude 3.5 Sonnet (Key {i+1}/{len(openrouter_keys)})...", "info")
-                headers = {"Authorization": f"Bearer {current_key}", "Content-Type": "application/json"}
-                payload = {
-                    "model": "anthropic/claude-3.5-sonnet", 
-                    "messages": [{"role": "user", "content": final_prompt}]
-                }
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=120)
-                res_data = res.json()
-                if "choices" in res_data and len(res_data["choices"]) > 0:
-                    response_text = res_data["choices"][0]["message"]["content"]
-                    self.add_log(log_placeholder, f"OpenRouter (Key {i+1}) tạo bài thành công!", "success")
-                    break
-                else:
-                    raise Exception(str(res_data.get('error', res_data)))
-            except Exception as e:
-                last_error = str(e)
-                self.add_log(log_placeholder, f"OpenRouter Key {i+1} lỗi/hết tiền. Lỗi: {str(e)[:50]}...", "warning")
-                continue
-
-        # 2. NẾU OPENROUTER THẤT BẠI (HOẶC CHƯA ĐIỀN KEY), LÙI VỀ GEMINI
-        if not response_text:
-            gemini_raw = str(self.dashboard.get('GEMINI_API_KEY', ''))
-            gemini_keys = [k.strip() for k in gemini_raw.split(',') if k.strip()]
-            
-            if not gemini_keys and not openrouter_keys:
-                return {"Lỗi": "Thiếu thông tin API Key! Vui lòng điền OPENROUTER_API_KEY hoặc GEMINI_API_KEY."}
-
-            for i, current_key in enumerate(gemini_keys):
+        # 1. THỬ OPENROUTER
+        if openrouter_keys:
+            for i, current_key in enumerate(openrouter_keys):
                 try:
-                    self.add_log(log_placeholder, f"Đang chuyển sang AI Gemini dự phòng (Key {i+1}/{len(gemini_keys)})...", "info")
-                    genai.configure(api_key=current_key)
-                    model = genai.GenerativeModel('gemini-2.5-flash')
-                    response = model.generate_content(final_prompt)
-                    response_text = response.text
-                    self.add_log(log_placeholder, f"Gemini (Key {i+1}) tạo bài dự phòng thành công!", "success")
-                    break 
+                    self.add_log(log_placeholder, f"Đang gọi OpenRouter - {or_model} (Key {i+1}/{len(openrouter_keys)})...", "info")
+                    headers = {"Authorization": f"Bearer {current_key}", "Content-Type": "application/json"}
+                    payload = {
+                        "model": or_model, 
+                        "messages": [{"role": "user", "content": final_prompt}]
+                    }
+                    res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=120)
+                    res_data = res.json()
+                    if "choices" in res_data and len(res_data["choices"]) > 0:
+                        response_text = res_data["choices"][0]["message"]["content"]
+                        self.add_log(log_placeholder, f"OpenRouter ({or_model}) tạo bài thành công!", "success")
+                        break
+                    else:
+                        raise Exception(str(res_data.get('error', res_data)))
                 except Exception as e:
                     last_error = str(e)
-                    self.add_log(log_placeholder, f"Gemini Key {i+1} lỗi. Đang chuyển Key tiếp theo...", "warning")
+                    self.add_log(log_placeholder, f"OpenRouter Key {i+1} lỗi. Thử tiếp...", "warning")
                     continue
+
+        # 2. NẾU THẤT BẠI, LÙI VỀ GEMINI
+        if not response_text:
+            if not gemini_keys and not openrouter_keys:
+                return {"Lỗi": "Thiếu thông tin API Key! Vui lòng điền OPENROUTER_API_KEY hoặc GEMINI_API_KEY vào Sheet."}
+
+            if gemini_keys:
+                for i, current_key in enumerate(gemini_keys):
+                    try:
+                        self.add_log(log_placeholder, f"Đang chuyển sang {gm_model} dự phòng (Key {i+1}/{len(gemini_keys)})...", "info")
+                        genai.configure(api_key=current_key)
+                        model = genai.GenerativeModel(gm_model)
+                        response = model.generate_content(final_prompt)
+                        response_text = response.text
+                        self.add_log(log_placeholder, f"Gemini ({gm_model}) tạo bài thành công!", "success")
+                        break 
+                    except Exception as e:
+                        last_error = str(e)
+                        self.add_log(log_placeholder, f"Gemini Key {i+1} lỗi/hết Quota...", "warning")
+                        continue
                     
         if not response_text:
-            return {"Lỗi": f"Toàn bộ Key OpenRouter và Gemini đều lỗi hoặc hết hạn mức! Lỗi cuối cùng: {last_error}"}
+            return {"Lỗi": f"Toàn bộ Key OpenRouter và Gemini đều chết! Lỗi cuối: {last_error}"}
 
         self.raw_html = response_text.replace('```html', '').replace('```', '').strip()
 
