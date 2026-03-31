@@ -320,30 +320,30 @@ class AutoContentSEO:
 
         final_prompt = f"{t_template}\n\n{strat}\n\n{search}\n\n{style_full}\n\n{persona_rule}\n\n{global_rule}\n\n{rule_phan_bo}\n\n{anti_bold_rule}\n\n{h1_rule}\n\n{humanizer}\n\n(Chỉ trả về HTML thô: H1, H2, H3, p)."
 
-        # --- HỆ THỐNG TỰ ĐỘNG XOAY VÒNG API KEY (API KEY ROTATION) ---
+        # --- FIX: TÍNH NĂNG XOAY VÒNG API KEY (API KEY ROTATION) ---
         api_keys_raw = str(self.dashboard.get('GEMINI_API_KEY', ''))
         gemini_keys = [k.strip() for k in api_keys_raw.split(',') if k.strip()]
-        if not gemini_keys: return {"Lỗi": "Thiếu GEMINI_API_KEY trong cấu hình!"}
+        if not gemini_keys: return {"Lỗi": "Thiếu GEMINI_API_KEY trong cấu hình (Nhớ thêm dấu phẩy nếu có nhiều Key)!"}
 
         response_text = ""
         last_error = ""
         
         for i, current_key in enumerate(gemini_keys):
             try:
-                self.add_log(log_placeholder, f"Đang gọi AI Gemini (Thử Key {i+1}/{len(gemini_keys)})...", "info")
+                self.add_log(log_placeholder, f"Đang gọi AI Gemini (Đang dùng Key số {i+1}/{len(gemini_keys)})...", "info")
                 genai.configure(api_key=current_key)
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 response = model.generate_content(final_prompt)
                 response_text = response.text
                 self.add_log(log_placeholder, f"API Key {i+1} tạo bài thành công!", "success")
-                break # Thành công thì thoát vòng lặp, không cần thử key tiếp theo
+                break # Nếu thành công thì thoát vòng lặp
             except Exception as e:
                 last_error = str(e)
-                self.add_log(log_placeholder, f"Key {i+1} lỗi hoặc hết Quota. Tự động chuyển Key tiếp theo...", "warning")
-                continue # Nếu lỗi thì lặp tiếp sang Key tiếp theo
+                self.add_log(log_placeholder, f"Key {i+1} bị từ chối hoặc hết Quota. Đang chuyển Key tiếp theo...", "warning")
+                continue # Nếu lỗi thì lặp sang Key tiếp theo
                 
         if not response_text:
-            return {"Lỗi": f"Toàn bộ {len(gemini_keys)} API Key đều đã cạn kiệt hoặc bị lỗi. Lỗi cuối cùng: {last_error}"}
+            return {"Lỗi": f"Toàn bộ {len(gemini_keys)} API Key đều đã chết hoặc không hợp lệ. Lỗi cuối cùng báo về: {last_error}"}
 
         self.raw_html = response_text.replace('```html', '').replace('```', '').strip()
 
