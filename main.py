@@ -199,6 +199,11 @@ class AutoSEOPipeline:
             return val, val
         except: return default_min, default_max
 
+    # HÀM BỐC PROMPT NGẪU NHIÊN (SPIN PROMPT DYNAMIC)
+    def pick_random_prompt_variant(self, text):
+        parts = [p.strip() for p in re.split(r'\|\|\|', str(text)) if p.strip()]
+        return random.choice(parts) if parts else str(text).strip()
+
     # --- BƯỚC 1: SLOT ---
     def step1_allocate_slot(self, ui_log) -> bool:
         df_rep = self.db.get('REPORT', pd.DataFrame())
@@ -252,7 +257,7 @@ class AutoSEOPipeline:
         self.add_log(ui_log, "🛑 Đã full lịch.", "error")
         return False
 
-    # --- BƯỚC 2 & 3: TỪ KHÓA & SERP ---
+    # --- BƯỚC 2 & 3: TỪ KHÓA & SERP THÔNG MINH ---
     def step2_3_keyword_and_serp(self, ui_log) -> bool:
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty: return False
@@ -302,16 +307,17 @@ class AutoSEOPipeline:
                         soup = BeautifulSoup(r_html.text, 'html.parser')
                         for tag in soup(["script", "style", "nav", "footer"]): tag.decompose()
                         self.serp_style = "\n\n".join([tag.get_text(strip=True) for tag in soup.find_all(['h1', 'h2', 'h3', 'p'])])[:3000]
-                        self.add_log(ui_log, f"✅ [SERP] Cào văn phong thành công từ: {target_link}")
+                        self.add_log(ui_log, f"✅ [SERP] Trích xuất văn phong thành công từ: {target_link}")
                         serp_success = True
             except: pass
         if not serp_success: self.add_log(ui_log, f"🕵️ [SERP] Dùng Internal Cache.")
         return True
 
-    # --- BƯỚC 4: GỌI AI (ĐÃ FIX LỖI REP_KW_) ---
+    # --- BƯỚC 4: GỌI AI VỚI PROMPT TRỘN DYNAMIC & CẮT RÁC ---
     def step4_llm_generation(self, ui_log) -> bool:
         req_keys = ['PROMPT_TEMPLATE', 'PROMPT_CONTENT_STRATEGY', 'PROMPT_KEYWORD_SEARCH', 'PROMPT_SERP_STYLE', 'PROMPT_SEO_GLOBAL_RULE', 'PROMPT_AI_HUMANIZER']
-        prompts = {k: str(self.dashboard.get(k, '')).strip() for k in req_keys}
+        prompts = {k: self.pick_random_prompt_variant(self.dashboard.get(k, '')) for k in req_keys}
+        
         if any(not v for v in prompts.values()):
             self.add_log(ui_log, "🛑 Tab DASHBOARD trống ô PROMPT.", "error")
             return False
@@ -322,25 +328,27 @@ class AutoSEOPipeline:
         subs = ", ".join(self.all_kws[1:])
         dist = self.target_length // max(len(self.all_kws), 1)
 
-        self.add_log(ui_log, f"🧠 [PROMPT BUILDER] Đang rắp ráp lệnh từ 6 Keys trong DASHBOARD...", "detail")
+        self.add_log(ui_log, f"🧠 [PROMPT BUILDER] Đã kích hoạt trộn Prompt ngẫu nhiên. Lắp ráp lệnh...", "detail")
 
+        # CẤP LỆNH CHỐNG SPAM VÀ CHỐNG CHÀO HỎI "KÍNH THƯA"
         force_kw = f"""
-        \n[LỆNH ÉP TỐI THƯỢNG - BẮT BUỘC TUÂN THỦ 100%]:
+        \n[LỆNH ÉP TỐI THƯỢNG - VI PHẠM SẼ BỊ PHẠT]:
         1. TIÊU ĐỀ (THẺ H1): Bắt buộc chứa cụm từ "{main_kw}". Cụm từ này phải nằm NGẪU NHIÊN ở GIỮA hoặc CUỐI tiêu đề (TUYỆT ĐỐI KHÔNG ĐẶT Ở ĐẦU CÂU).
         2. TỪ KHÓA TRONG BÀI (Giữ đúng 100% từng ký tự, không tự đổi dấu):
         - Từ khóa chính: "{main_kw}" (rải tự nhiên 2-3 lần trong phần thân bài)
         - Từ khóa phụ: "{subs}" (Mỗi từ xuất hiện đúng 1 lần, rải đều cách nhau {dist} chữ).
         3. TỔNG SỐ CHỮ: Chính xác khoảng {self.target_length} chữ.
+        4. CẤM TUYỆT ĐỐI CÁC TỪ NGỮ CHÀO HỎI: Cấm viết "Kính thưa các Sếp", "Chào quý vị", "Thân gửi", "Xin chào". VÀO THẲNG VẤN ĐỀ BẰNG ĐOẠN SAPO MỞ BÀI SẮC BÉN.
         """
         
-        # BƯỚC FIX LỖI CỐT LÕI: Dịch toàn bộ mã REP_KW_... trong Prompt của Sếp thành TỪ KHÓA THẬT
         master_prompt_raw = f"{prompts['PROMPT_TEMPLATE']}\n{prompts['PROMPT_CONTENT_STRATEGY']}\n{prompts['PROMPT_KEYWORD_SEARCH']}\n{prompts['PROMPT_SERP_STYLE']}\n[Dữ liệu SERP]:\n{self.serp_style}\n{prompts['PROMPT_SEO_GLOBAL_RULE']}\n{prompts['PROMPT_AI_HUMANIZER']}"
         master_prompt_raw = master_prompt_raw.replace('{{ws_persona}}', ws_per).replace('{{kw_intent}}', kw_int).replace('{{keyword}}', main_kw).replace('{{word_count}}', str(self.target_length))
         
+        # DỊCH NGƯỢC CODE THÀNH TỪ KHÓA TRƯỚC KHI ĐƯA CHO AI
         for i, kw in enumerate(self.all_kws):
             master_prompt_raw = re.sub(rf'\[?REP_KW_{i+1}\]?', kw, master_prompt_raw, flags=re.IGNORECASE)
         
-        mut = f"\n[Tiến Hóa]: Cấm lặp cấu trúc: {st.session_state.evolution_cache}." if st.session_state.evolution_cache else ""
+        mut = f"\n[Tiến Hóa]: Cấm lặp cấu trúc: {st.session_state.evolution_cache}. Biến đổi góc nhìn hoàn toàn mới so với bài trước." if st.session_state.evolution_cache else ""
         master_prompt = f"{master_prompt_raw}{mut}\n{force_kw}\nCHỈ TRẢ VỀ ĐÚNG HTML, BẮT ĐẦU BẰNG THẺ <h1>."
 
         gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
@@ -378,13 +386,14 @@ class AutoSEOPipeline:
             return False
             
         self.raw_html = response.replace('```html', '').replace('```', '').strip()
-        soup = BeautifulSoup(self.raw_html, 'html.parser')
-        st.session_state.evolution_cache = f"{len(soup.find_all('h2'))} H2, {len(soup.find_all('p'))} P"
         
-        # BƯỚC QUÉT RÁC CUỐI CÙNG: Lỡ AI vẫn ngoan cố in chữ REP_KW_... ra bài viết thì dịch ngược lại
+        # QUÉT DỌN SẠCH CODE RÁC (NẾU AI VẪN CỐ TÌNH IN CHỮ REP_KW RA)
         for i, kw in enumerate(self.all_kws):
             self.raw_html = re.sub(rf'\[?REP_KW_{i+1}\]?', kw, self.raw_html, flags=re.IGNORECASE)
             if i == 0: self.raw_html = re.sub(r'\{\{keyword\}\}', kw, self.raw_html, flags=re.IGNORECASE)
+
+        soup = BeautifulSoup(self.raw_html, 'html.parser')
+        st.session_state.evolution_cache = f"{len(soup.find_all('h2'))} H2, {len(soup.find_all('p'))} P"
         
         h1_m = re.search(r'<h1>(.*?)</h1>', self.raw_html, re.IGNORECASE)
         self.final_title = html.unescape(re.sub(r'<[^>]+>', '', h1_m.group(1)).strip()) if h1_m else f"Bài: {self.all_kws[0]}"
@@ -392,7 +401,7 @@ class AutoSEOPipeline:
         
         return True
 
-    # --- BƯỚC 5 & 6: GẮN LINK (CHỐNG SPAM) ---
+    # --- BƯỚC 5 & 6: GẮN LINK (CƯỠNG CHẾ TINH TẾ) ---
     def step5_6_spin_and_dom(self, ui_log):
         df_spin = self.db.get('SPIN', pd.DataFrame())
         html_txt = self.raw_html
@@ -412,7 +421,6 @@ class AutoSEOPipeline:
         for h in soup.find_all(['h1', 'h2']):
             if h.find('a'): h.a.unwrap()
 
-        # ÉP GẮN BẰNG ĐƯỢC MÀ KHÔNG SPAM
         for kw in self.all_kws:
             url = ""
             is_ext = False
@@ -431,16 +439,17 @@ class AutoSEOPipeline:
                     found_and_injected = True
                     break
             
-            # FIX: GHÉP CÂU TỰ NHIÊN VÀO GIỮA BÀI, KHÔNG LÀM 1 CỤC SPAM Ở ĐÁY
+            # FIX: GHÉP CÂU TỰ NHIÊN VÀO MỘT ĐOẠN VĂN GIỮA BÀI, KHÔNG DỒN ĐÁY
             if not found_and_injected:
                 p_tags = soup.find_all('p')
                 if p_tags:
                     target_p = random.choice(p_tags)
-                    target_p.append(BeautifulSoup(f" Hơn nữa, các Sếp cũng có thể tham khảo thêm về <a href='{url}'>{kw}</a> để tối ưu hóa trải nghiệm.", 'html.parser'))
-                    self.add_log(ui_log, f"⚠️ AI sót từ '{kw}', đã lồng tự nhiên vào 1 đoạn văn.", "warn")
+                    target_p.append(BeautifulSoup(f" Hơn nữa, việc tham khảo thêm <a href='{url}'>{kw}</a> sẽ mang đến cho Sếp một góc nhìn bao quát hơn.", 'html.parser'))
+                    self.add_log(ui_log, f"⚠️ AI sót từ '{kw}', đã tự động lồng mượt mà vào đoạn văn.", "warn")
                     found_and_injected = True
                 else:
-                    soup.append(BeautifulSoup(f"<p>Đặc biệt, dịch vụ <a href='{url}'>{kw}</a> luôn sẵn sàng đồng hành cùng các Sếp.</p>", 'html.parser'))
+                    soup.append(BeautifulSoup(f"<p>Các Sếp cũng có thể tham khảo thêm về dịch vụ <a href='{url}'>{kw}</a> để tối ưu hóa lựa chọn.</p>", 'html.parser'))
+                    self.add_log(ui_log, f"⚠️ AI không sinh thẻ <p>, đã tự động đẻ thẻ mới chứa link '{kw}'.", "warn")
                     found_and_injected = True
                     
             if found_and_injected:
@@ -473,7 +482,7 @@ class AutoSEOPipeline:
         self.raw_html = str(soup)
         return True
 
-    # --- BƯỚC 7: KCS ---
+    # --- BƯỚC 7: KCS (CẮT THẺ H1 TRƯỚC KHI TRẢ VỀ ĐỂ KHỎI LẶP TIÊU ĐỀ) ---
     def step7_qa_validation(self, ui_log) -> str:
         self.add_log(ui_log, "⚖️ [KCS] Máy quét AI bắt đầu chấm điểm...")
         soup = BeautifulSoup(self.raw_html, 'html.parser')
@@ -512,7 +521,10 @@ class AutoSEOPipeline:
         if fails:
             self.add_log(ui_log, f"❌ [KCS FAILED] Bị loại do: {', '.join(fails)}", "error")
             return "FAIL"
-        self.add_log(ui_log, f"✅ [KCS PASSED] Bài viết đạt chuẩn!", "success")
+            
+        # ĐÃ FIX LỖI LẶP TIÊU ĐỀ: Chấm điểm KCS xong, CẮT NGAY thẻ H1 khỏi nội dung!
+        self.raw_html = re.sub(r'<h1[^>]*>.*?</h1>', '', self.raw_html, count=1, flags=re.IGNORECASE | re.DOTALL).strip()
+        self.add_log(ui_log, f"✅ [KCS PASSED] Đã chấm điểm xong và cắt thẻ H1 để tránh lặp tiêu đề trên Web.", "success")
         return "PENDING"
 
     # --- BƯỚC 8: LƯU ---
@@ -604,20 +616,18 @@ with tab1:
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    btn_container = st.empty()
-    with btn_container.container():
-        btn_col1, btn_col2, btn_col3 = st.columns(3)
-        btn_start = btn_col1.button("🔥 Bắt đầu Soạn bài AI", use_container_width=True, type="primary")
-        btn_force = btn_col2.button("⚡ Ép Lên bài ngay", use_container_width=True)
-        btn_refresh = btn_col3.button("🔄 Làm mới dữ liệu", use_container_width=True)
+    btn_col1, btn_col2, btn_col3 = st.columns(3)
+    btn_start = btn_col1.button("🔥 Bắt đầu Soạn bài AI", use_container_width=True, type="primary")
+    btn_force = btn_col2.button("⚡ Ép Lên bài ngay", use_container_width=True)
+    btn_refresh = btn_col3.button("🔄 Làm mới dữ liệu", use_container_width=True)
     
     if btn_refresh:
         load_data_from_gsheets.clear()
         st.rerun()
         
     if btn_force:
-        btn_container.empty()
-        st.info("⏳ ĐANG XỬ LÝ ĐĂNG BÀI LÊN WEBSITE... VUI LÒNG KHÔNG ĐÓNG TRÌNH DUYỆT HOẶC F5 MÀN HÌNH NÀY!")
+        st.markdown("---")
+        st.info("⏳ ĐANG XỬ LÝ ĐĂNG BÀI LÊN WEBSITE... VUI LÒNG KHÔNG ĐÓNG TRÌNH DUYỆT!")
         load_data_from_gsheets.clear()
         ui_log = st.empty()
         bot = AutoSEOPipeline(db_mock, [])
@@ -666,16 +676,14 @@ with tab1:
                     if upd:
                         ws.batch_update(upd)
                         st.success(f"🎉 Đã chốt sổ và bắn bài thành công {count} bài!")
-                        time.sleep(2)
-                        st.rerun()
                     else: bot.add_log(ui_log, "ℹ️ Không có bài PENDING nào đăng thành công hôm nay.", "warn")
                 else: bot.add_log(ui_log, "🛑 Không tìm thấy cột trạng thái trong Sheet REPORT.", "error")
         except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi hệ thống Đăng bài: {str(e)[:150]}", "error")
 
     if btn_start:
-        btn_container.empty() 
+        st.markdown("---")
         st.info("⏳ HỆ THỐNG ĐANG SOẠN BÀI TỰ ĐỘNG... BẠN CỨ ĐỂ YÊN MÀN HÌNH NÀY CHO TỚI KHI BÁO XONG NHA!")
-        load_data_from_gsheets.clear() 
+        load_data_from_gsheets.clear()
         
         ui_log = st.empty()
         needed = batch - p_today
@@ -699,7 +707,7 @@ with tab1:
                     bot.add_log(ui_log, "🛑 Quá 5 phút, tự ngắt để cứu hệ thống.", "error")
                     break
             bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
-            st.success("🎉 TẠO BÀI XONG! BẤM TẢI LẠI TRANG NẾU GIAO DIỆN CHƯA CẬP NHẬT.")
+            st.success("🎉 TẠO BÀI XONG! BẤM NÚT LÀM MỚI Ở TRÊN ĐỂ XEM KẾT QUẢ NHA SẾP!")
 
 with tab2:
     if not df_rep.empty:
