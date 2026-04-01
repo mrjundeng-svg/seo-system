@@ -84,7 +84,7 @@ class AutoSEOPipeline:
         self.db = db
         self.dash = {str(k).strip(): str(v).strip() for k, v in zip(self.db.get('DASHBOARD', pd.DataFrame())['DATA_KEY'], self.db.get('DASHBOARD', pd.DataFrame())['DATA_CONTENT'])}
         self.now, self.logs = get_vn_now(), logs
-        self.web, self.pub_time, self.kws, self.raw_html, self.title = None, None, [], "", ""
+        self.web, self.pub_time, self.main_kw_row, self.kws, self.raw_html, self.title = None, None, None, [], "", ""
         self.out_lim, self.in_lim, self.inj_ext, self.inj_int = 0, 0, 0, 0
         self.metrics, self.imgs = {}, []
         if 'evo_cache' not in st.session_state: st.session_state.evo_cache = ""
@@ -99,6 +99,10 @@ class AutoSEOPipeline:
             if '-' in str(val): return random.randint(*sorted([int(x) for x in str(val).split('-')]))
             return int(str(val))
         except: return def_val
+
+    def pick_random_prompt_variant(self, text):
+        parts = [p.strip() for p in re.split(r'\|\|\|', str(text)) if p.strip()]
+        return random.choice(parts) if parts else str(text).strip()
 
     def step1_slot(self, ui):
         df_rep, df_web = self.db.get('REPORT', pd.DataFrame()), self.db.get('WEBSITE', pd.DataFrame())
@@ -142,9 +146,11 @@ class AutoSEOPipeline:
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty: return False
         df_kw['KW_STATUS'] = pd.to_numeric(df_kw.get('KW_STATUS', 0), errors='coerce').fillna(0)
-        kw_row = df_kw.sample(frac=1).sort_values('KW_STATUS').iloc[0]
         
-        m_kw, m_cat, m_grp = str(kw_row['KW_TEXT']).strip(), str(kw_row.get('KW_CONTENT', '')).strip(), str(kw_row.get('KW_GROUP', '')).strip()
+        # ĐÃ FIX: Khôi phục lại biến self.main_kw_row
+        self.main_kw_row = df_kw.sample(frac=1).sort_values('KW_STATUS').iloc[0]
+        
+        m_kw, m_cat, m_grp = str(self.main_kw_row['KW_TEXT']).strip(), str(self.main_kw_row.get('KW_CONTENT', '')).strip(), str(self.main_kw_row.get('KW_GROUP', '')).strip()
         self.out_lim, self.in_lim = self.parse_rng(self.web.get('WS_LINK_OUT_LIMIT', 0)), self.parse_rng(self.web.get('WS_LINK_IN_LIMIT', 0))
         subs_needed = max(0, (self.out_lim + self.in_lim) - 1)
         
@@ -172,17 +178,16 @@ class AutoSEOPipeline:
         return True
 
     def step4_llm(self, ui):
-        pmt = {k: random.choice([x.strip() for x in str(self.dash.get(k, '')).split('|||') if x.strip()]) for k in ['PROMPT_TEMPLATE', 'PROMPT_CONTENT_STRATEGY', 'PROMPT_KEYWORD_SEARCH', 'PROMPT_SERP_STYLE', 'PROMPT_SEO_GLOBAL_RULE', 'PROMPT_AI_HUMANIZER']}
+        pmt = {k: self.pick_random_prompt_variant(self.dash.get(k, '')) for k in ['PROMPT_TEMPLATE', 'PROMPT_CONTENT_STRATEGY', 'PROMPT_KEYWORD_SEARCH', 'PROMPT_SERP_STYLE', 'PROMPT_SEO_GLOBAL_RULE', 'PROMPT_AI_HUMANIZER']}
         dist = self.target_length // max(len(self.kws), 1)
 
-        # ĐÃ CẬP NHẬT: Ép độ dài đoạn văn ngẫu nhiên và cấm chào hỏi
         strict_rules = f"""
         [SYSTEM STRICT RULE - BẮT BUỘC TUÂN THỦ MỌI KHOẢN]:
-        1. CẤM TUYỆT ĐỐI các từ ngữ chào hỏi/dẫn dắt ở đầu bài: "Kính thưa các Sếp", "Chào quý vị", "Thân gửi", "Tuyệt vời", "Dưới đây là". VÀO THẲNG VẤN ĐỀ BẰNG ĐOẠN SAPO HẤP DẪN.
-        2. TỪ KHÓA CHÍNH "{self.kws[0]}": PHẢI NẰM Ở GIỮA HOẶC CUỐI TIÊU ĐỀ (Thẻ <h1>). TUYỆT ĐỐI KHÔNG ĐỂ Ở ĐẦU CÂU. Rải thêm 2 lần trong nội dung.
-        3. TỪ KHÓA PHỤ: "{', '.join(self.kws[1:])}". Mỗi cụm xuất hiện 1 lần, cách nhau khoảng {dist} chữ. Không đổi dấu, không viết hoa đầu câu vô lý.
-        4. TỔNG SỐ CHỮ: Chính xác khoảng {self.target_length} chữ. 
-        5. ĐA DẠNG HÓA ĐOẠN VĂN (ANTI-AI): Cấm viết các đoạn dài bằng nhau. Phải đan xen đoạn ngắn (1-2 câu) và đoạn dài (5-7 câu) phân tích sâu. KHÔNG LẶP CẤU TRÚC: {st.session_state.evo_cache}.
+        1. CẤM TUYỆT ĐỐI các từ ngữ chào hỏi/dẫn dắt: "Kính thưa các Sếp", "Chào quý vị", "Thân gửi", "Tuyệt vời", "Dưới đây là". VÀO THẲNG VẤN ĐỀ BẰNG ĐOẠN SAPO.
+        2. TỪ KHÓA CHÍNH "{self.kws[0]}": PHẢI NẰM Ở GIỮA HOẶC CUỐI TIÊU ĐỀ (Thẻ <h1>). TUYỆT ĐỐI KHÔNG ĐỂ Ở ĐẦU. Rải thêm 2 lần trong nội dung.
+        3. TỪ KHÓA PHỤ: "{', '.join(self.kws[1:])}". Mỗi cụm xuất hiện 1 lần, cách nhau {dist} chữ. Không đổi dấu, không viết hoa đầu câu vô lý.
+        4. TỔNG SỐ CHỮ: Chính xác {self.target_length} chữ. KHÔNG LẶP CẤU TRÚC: {st.session_state.evo_cache}.
+        5. ĐA DẠNG ĐOẠN VĂN: Các đoạn văn phải có độ dài ngắn khác nhau ngẫu nhiên. Cấm viết các đoạn dài bằng nhau.
         6. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>.
         """
         
@@ -207,9 +212,7 @@ class AutoSEOPipeline:
         if not self.raw_html: return self.log(ui, "🛑 API Sập.", "error") or False
             
         self.raw_html = self.raw_html.replace('```html', '').replace('```', '').strip()
-        
-        # FIX CỐT LÕI: Lột sạch dấu in đậm ** của AI trước khi xử lý
-        self.raw_html = re.sub(r'\*\*(.*?)\*\*', r'\1', self.raw_html)
+        self.raw_html = re.sub(r'\*\*(.*?)\*\*', r'\1', self.raw_html) # Xóa dấu **
         
         for i, k in enumerate(self.kws): self.raw_html = re.sub(rf'\[?REP_KW_{i+1}\]?', k, self.raw_html, flags=re.IGNORECASE)
         self.raw_html = re.sub(r'\{\{keyword\}\}', self.kws[0], self.raw_html, flags=re.IGNORECASE)
@@ -254,29 +257,19 @@ class AutoSEOPipeline:
                 if u in ou: self.inj_ext += 1
                 else: self.inj_int += 1
 
-        # FIX SPAM LINK: Thay thế cụm từ đồng nghĩa để ép link tự nhiên
         if missed_kws:
-            self.log(ui, f"⚠️ AI sót {len(missed_kws)} từ khóa. Đang xử lý khéo léo...", "warn")
             avail_p = [p for p in soup.find_all('p') if not p.find('a') and len(p.get_text().split()) > 10]
-            
             for k, u in missed_kws:
                 success = False
                 if avail_p:
-                    target_p = random.choice(avail_p)
-                    txt_p = target_p.get_text()
-                    
-                    # Tìm một danh từ ngẫu nhiên trong đoạn (dài > 3 ký tự) để thay thế bằng từ khóa phụ
-                    words = [w for w in txt_p.split() if len(w) > 3 and w.isalpha()]
+                    tp = random.choice(avail_p)
+                    words = [w for w in tp.get_text().split() if len(w) > 3 and w.isalpha()]
                     if words:
-                        word_to_replace = random.choice(words)
-                        new_txt = txt_p.replace(word_to_replace, f"<a href='{u}'>{k}</a>", 1)
-                        target_p.replace_with(BeautifulSoup(f"<p>{new_txt}</p>", 'html.parser'))
-                        avail_p.remove(target_p)
+                        new_txt = tp.get_text().replace(random.choice(words), f"<a href='{u}'>{k}</a>", 1)
+                        tp.replace_with(BeautifulSoup(f"<p>{new_txt}</p>", 'html.parser'))
+                        avail_p.remove(tp)
                         success = True
-                
-                # Cứu cánh cuối cùng nếu không thay thế được
-                if not success:
-                    soup.append(BeautifulSoup(f"<p>Để tối ưu hành trình, Sếp có thể tìm hiểu thêm về dịch vụ <a href='{u}'>{k}</a>.</p>", 'html.parser'))
+                if not success: soup.append(BeautifulSoup(f"<p>Gợi ý thêm cho dịch vụ <a href='{u}'>{k}</a>.</p>", 'html.parser'))
                 
                 if u in ou: self.inj_ext += 1
                 else: self.inj_int += 1
