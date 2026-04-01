@@ -227,7 +227,7 @@ class AutoSEOPipeline:
                 ws_limit = self.parse_random_range(web.get('WS_POST_LIMIT', 1), 1)
                 posts_day_x = df_rep[(df_rep['REP_WS_NAME'].astype(str).str.strip() == ws_name) & (df_rep['REP_PUBLISH_DATE'].astype(str).str.strip().str.startswith(day_x_str))] if not df_rep.empty and 'REP_PUBLISH_DATE' in df_rep.columns else pd.DataFrame()
                 
-                self.add_log(ui_log, f"🔍 [QUOTA] Global: {posts_today}/{batch_size} | Local '{ws_name}' ({day_x_str}): {len(posts_day_x)}/{ws_limit}", "quota")
+                self.add_log(ui_log, f"🔍 [QUOTA] Local '{ws_name}' ({day_x_str}): {len(posts_day_x)}/{ws_limit}", "quota")
                 if len(posts_day_x) < ws_limit:
                     st_vn = VN_TZ.localize(datetime.datetime.combine(day_x, datetime.time(start_h, start_m)))
                     ed_vn = VN_TZ.localize(datetime.datetime.combine(day_x, datetime.time(end_h, end_m)))
@@ -326,7 +326,7 @@ class AutoSEOPipeline:
         self.add_log(ui_log, f"   + PROMPT_CONTENT_STRATEGY: Định hướng nội dung.", "detail")
         self.add_log(ui_log, f"   + PROMPT_KEYWORD_SEARCH: Quy tắc rải từ khóa.", "detail")
         self.add_log(ui_log, f"   + PROMPT_SERP_STYLE: Giả lập văn phong.", "detail")
-        self.add_log(ui_log, f"   + PROMPT_SEO_GLOBAL_RULE: Luật SEO chống Spam (Ép H1, Đánh số H3).", "detail")
+        self.add_log(ui_log, f"   + PROMPT_SEO_GLOBAL_RULE: Luật SEO chống Spam.", "detail")
         self.add_log(ui_log, f"   + PROMPT_AI_HUMANIZER: Khử văn phong máy móc.", "detail")
 
         force_kw = f"""
@@ -334,7 +334,7 @@ class AutoSEOPipeline:
         1. CẤM TUYỆT ĐỐI các từ ngữ chào hỏi ở đầu bài: "Kính thưa các Sếp", "Chào quý vị", "Thân gửi", "Tuyệt vời". VÀO THẲNG VẤN ĐỀ BẰNG Sapo.
         2. TIÊU ĐỀ (THẺ H1): Bắt buộc chứa cụm từ "{main_kw}". Nằm NGẪU NHIÊN ở GIỮA hoặc CUỐI tiêu đề.
         3. TỪ KHÓA TRONG BÀI:
-        - Từ khóa chính: "{main_kw}" (rải tự nhiên 2-3 lần)
+        - Từ khóa chính: "{main_kw}" (rải tự nhiên 2-3 lần trong phần thân bài)
         - Từ khóa phụ: "{subs}" (Mỗi từ xuất hiện đúng 1 lần, rải đều). Tuyệt đối không dùng dấu in đậm `**` cho các từ khóa này.
         4. CẤU TRÚC SEO H3: Nếu có chia các đề mục nhỏ (thẻ <h3>) nằm dưới thẻ <h2>, BẮT BUỘC phải đánh số thứ tự (ví dụ: 1., 2., 3.,...) cho các thẻ <h3> đó.
         5. ĐA DẠNG ĐOẠN VĂN: Cấm viết các đoạn dài bằng nhau. Phải đan xen đoạn rất ngắn và đoạn phân tích dài.
@@ -364,7 +364,7 @@ class AutoSEOPipeline:
                 try:
                     with concurrent.futures.ThreadPoolExecutor() as ex:
                         response = ex.submit(lambda: genai.GenerativeModel(gm).generate_content(master_prompt).text).result(timeout=90)
-                except Exception as e: self.add_log(ui_log, f"⚠️ Gemini sập (Lỗi 429). Đang chuyển key/model dự phòng...", "warn")
+                except Exception as e: self.add_log(ui_log, f"⚠️ Gemini sập (Lỗi 429). Hệ thống tự động chuyển sang API/Model dự phòng...", "warn")
 
         if not response:
             for ok in or_keys:
@@ -386,13 +386,16 @@ class AutoSEOPipeline:
             
         self.raw_html = response.replace('```html', '').replace('```', '').strip()
         
-        # FIX: TẨY SẠCH MARKDOWN AI TỰ IN ĐẬM ĐỂ TRÁNH LỖI GẮN LINK
+        # TẨY TRANG MARKDOWN (XÓA DẤU IN ĐẬM) DO AI TỰ ĐẺ RA
         self.raw_html = re.sub(r'\*\*(.*?)\*\*', r'\1', self.raw_html)
         
         # DỊCH NGƯỢC CODE VỀ TỪ KHÓA THẬT
         for i, kw in enumerate(self.all_kws):
             self.raw_html = re.sub(rf'\[?REP_KW_{i+1}\]?', kw, self.raw_html, flags=re.IGNORECASE)
             if i == 0: self.raw_html = re.sub(r'\{\{keyword\}\}', kw, self.raw_html, flags=re.IGNORECASE)
+
+        # QUÉT DỌN RÁC DƯ THỪA (REP_KW_...)
+        self.raw_html = re.sub(r'\[?REP_KW_\d+\]?', '', self.raw_html, flags=re.IGNORECASE)
 
         soup = BeautifulSoup(self.raw_html, 'html.parser')
         st.session_state.evolution_cache = f"{len(soup.find_all('h2'))} H2, {len(soup.find_all('p'))} P"
@@ -403,7 +406,7 @@ class AutoSEOPipeline:
         
         return True
 
-    # --- BƯỚC 5 & 6: GẮN LINK ---
+    # --- BƯỚC 5 & 6: GẮN LINK ĐÚNG QUOTA (KHÔNG SPAM ĐÁY BÀI) ---
     def step5_6_spin_and_dom(self, ui_log):
         df_spin = self.db.get('SPIN', pd.DataFrame())
         html_txt = self.raw_html
@@ -427,11 +430,15 @@ class AutoSEOPipeline:
         for kw in self.all_kws:
             url = ""
             is_ext = False
+            
+            # ĐÃ FIX: TRỪ QUOTA NGAY LÚC CHIA BÀI
             if self.injected_ext < self.out_lim and o_urls:
                 url = random.choice(o_urls)
                 is_ext = True
+                self.injected_ext += 1
             elif self.injected_int < self.in_lim and i_urls:
                 url = random.choice(i_urls)
+                self.injected_int += 1
                 
             if not url: continue 
             
@@ -440,18 +447,16 @@ class AutoSEOPipeline:
                 if not p.find('a') and re.search(r'(?i)' + re.escape(kw), p.get_text()):
                     p.replace_with(BeautifulSoup(re.sub(r'(?i)' + re.escape(kw), lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(p), count=1), 'html.parser'))
                     found_and_injected = True
-                    if is_ext: self.injected_ext += 1
-                    else: self.injected_int += 1
                     break
             
-            if not found_and_injected: missed_kws.append((kw, url, is_ext))
+            if not found_and_injected: missed_kws.append((kw, url))
 
-        # FIX SPAM: Rải đều vào các thẻ P khác nhau
+        # ĐÃ FIX: RẢI ĐỀU CÂU VÀO CÁC ĐOẠN VĂN CÓ SẴN (KHÔNG SPAM ĐÁY BÀI)
         if missed_kws:
             prefixes = ["Hơn nữa, Sếp có thể tham khảo thêm về", "Một lựa chọn đáng cân nhắc là", "Tìm hiểu thêm thông tin về", "Để tối ưu lịch trình, đừng bỏ qua"]
             avail_p = [p for p in soup.find_all('p') if len(p.get_text(strip=True)) > 20 and not p.find('a')]
             
-            for k, u, is_e in missed_kws:
+            for k, u in missed_kws:
                 if avail_p:
                     target_p = random.choice(avail_p)
                     avail_p.remove(target_p)
@@ -461,14 +466,14 @@ class AutoSEOPipeline:
                     soup.append(BeautifulSoup(f"<p>{random.choice(prefixes)} <a href='{u}'>{k}</a>.</p>", 'html.parser'))
                     self.add_log(ui_log, f"⚠️ AI không sinh đủ đoạn văn, đành phải tạo đoạn mới chứa link '{k}'.", "warn")
                     
-                if is_e: self.injected_ext += 1
-                else: self.injected_int += 1
-                    
         self.add_log(ui_log, f"🛠️ [GẮN LINK] Thành công: {self.injected_ext}/{self.out_lim} Link Ngoại | {self.injected_int}/{self.in_lim} Link Nội.", "success")
 
-        df_img = self.db.get('IMAGE', pd.DataFrame())
+        # LOG QUÉT HẠN MỨC ẢNH
         max_img = self.parse_random_range(self.target_web.get('WS_IMG_LIMIT', 1), 1)
-        req_img = min(len(self.all_kws), max_img)
+        self.add_log(ui_log, f"🖼️ [QUOTA ẢNH] Web cho phép tối đa {max_img} ảnh. Đang tiến hành quét và chèn...", "detail")
+        
+        df_img = self.db.get('IMAGE', pd.DataFrame())
+        req_img = 1 
         if not df_img.empty and 'IMG_URL' in df_img.columns:
             df_img['IMG_STATUS'] = pd.to_numeric(df_img.get('IMG_STATUS', 0), errors='coerce').fillna(0)
             sorted_imgs = df_img.sample(frac=1).sort_values('IMG_STATUS')
@@ -477,20 +482,27 @@ class AutoSEOPipeline:
                 try:
                     if requests.head(url, timeout=5).status_code == 200:
                         self.used_imgs.append(url)
-                        if len(self.used_imgs) >= req_img: break
+                        break 
                 except: continue
+                
             if self.used_imgs:
-                for idx, i_url in enumerate(self.used_imgs):
-                    kw_tag = self.all_kws[idx] if idx < len(self.all_kws) else self.all_kws[-1]
-                    for p in soup.find_all('p'):
-                        if re.search(r'(?i)' + re.escape(kw_tag), p.get_text()):
-                            p.insert_after(BeautifulSoup(f"<br><p align='center'><img src='{i_url}' alt='{kw_tag}'></p><br>", 'html.parser'))
-                            break
-        self.add_log(ui_log, f"🖼️ [GẮN ẢNH] Quota cho phép {max_img}. Thành công {len(self.used_imgs)} ảnh.")
+                main_kw = self.all_kws[0]
+                img_html = f"<br><p align='center'><img src='{self.used_imgs[0]}' alt='{main_kw}'></p><br>"
+                inserted = False
+                for p in soup.find_all('p'):
+                    if re.search(r'(?i)' + re.escape(main_kw), p.get_text()):
+                        p.insert_after(BeautifulSoup(img_html, 'html.parser'))
+                        inserted = True
+                        break
+                if not inserted:
+                    p_tags = soup.find_all('p')
+                    if p_tags: p_tags[0].insert_after(BeautifulSoup(img_html, 'html.parser'))
+                    
+        self.add_log(ui_log, f"🖼️ [GẮN ẢNH] Thành công {len(self.used_imgs)} ảnh.")
         self.raw_html = str(soup)
         return True
 
-    # --- BƯỚC 7: KCS ---
+    # --- BƯỚC 7: KCS (DIỆT TẬN GỐC THẺ H1 SAU KHI CHẤM) ---
     def step7_qa_validation(self, ui_log) -> str:
         self.add_log(ui_log, "⚖️ [KCS] Máy quét AI bắt đầu chấm điểm...")
         soup = BeautifulSoup(self.raw_html, 'html.parser')
@@ -530,12 +542,12 @@ class AutoSEOPipeline:
             self.add_log(ui_log, f"❌ [KCS FAILED] Bị loại do: {', '.join(fails)}", "error")
             return "FAIL"
             
-        # FIX: SỬA LẠI LỖI CẮT H1 TRIỆT ĐỂ BẰNG THƯ VIỆN HTML
+        # ĐÃ FIX: Sử dụng BeautifulSoup để phá hủy toàn bộ thẻ H1 chính xác 100%
         h1_tag = soup.find('h1')
         if h1_tag: h1_tag.decompose()
         self.raw_html = str(soup)
         
-        self.add_log(ui_log, f"✅ [KCS PASSED] Đã chấm xong và tự động cắt thẻ H1 để tránh lặp tiêu đề.", "success")
+        self.add_log(ui_log, f"✅ [KCS PASSED] Đã chấm xong và cắt thẻ H1 để tránh lặp tiêu đề.", "success")
         return "PENDING"
 
     # --- BƯỚC 8: LƯU ---
@@ -591,6 +603,8 @@ class AutoSEOPipeline:
 
                 batch_upd(ss.worksheet('KEYWORD'), 'KW_TEXT', self.all_kws, 'KW_STATUS', 'KW_DATE')
                 if self.used_imgs: batch_upd(ss.worksheet('IMAGE'), 'IMG_URL', self.used_imgs, 'IMG_STATUS', 'IMG_DATE')
+                if self.used_spins: batch_upd(ss.worksheet('SPIN'), 'SPIN_ORIGINAL', self.used_spins, None, 'SPIN_DATE')
+                
                 self.add_log(ui_log, f"✅ [HOÀN TẤT] Lưu thành công. Status: PENDING", "success")
             else: self.add_log(ui_log, f"⚠️ [THẤT BẠI] Đã ghi log lỗi vào Sheet.", "warn")
                 
@@ -627,6 +641,7 @@ with tab1:
     
     st.markdown("<br>", unsafe_allow_html=True)
     
+    # CÁC NÚT BẤM CỦA SẾP ĐÃ TRỞ LẠI
     btn_col1, btn_col2, btn_col3 = st.columns(3)
     btn_start = btn_col1.button("🔥 Bắt đầu Soạn bài AI", use_container_width=True, type="primary")
     btn_force = btn_col2.button("⚡ Ép Lên bài ngay", use_container_width=True)
@@ -655,7 +670,6 @@ with tab1:
                 idx_res = headers.index('REP_RESULT') if 'REP_RESULT' in headers else -1
                 idx_pub = headers.index('REP_PUBLISH_DATE') if 'REP_PUBLISH_DATE' in headers else -1
                 idx_html = headers.index('REP_HTML') if 'REP_HTML' in headers else -1
-                idx_log = headers.index('REP_LOG') if 'REP_LOG' in headers else -1
                 idx_ws = headers.index('REP_WS_NAME') if 'REP_WS_NAME' in headers else -1
                 idx_title = headers.index('REP_TITLE') if 'REP_TITLE' in headers else -1
 
@@ -718,7 +732,7 @@ with tab1:
                     bot.add_log(ui_log, "🛑 Quá 5 phút, tự ngắt để cứu hệ thống.", "error")
                     break
             bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
-            st.success("🎉 TẠO BÀI XONG! BẤM LÀM MỚI Ở TRÊN ĐỂ CẬP NHẬT KẾT QUẢ NHA SẾP!")
+            st.success("🎉 TẠO BÀI XONG! BẤM TẢI LẠI TRANG NẾU GIAO DIỆN CHƯA CẬP NHẬT.")
 
 with tab2:
     if not df_rep.empty:
