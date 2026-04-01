@@ -166,7 +166,6 @@ class AutoSEOPipeline:
         self.all_kws = [m_kw] + subs
         self.add_log(ui_log, f"📦 [KWs ĐÃ GOM] Cần {len(self.all_kws)} KWs: {', '.join(self.all_kws)}", "detail")
         
-        # THUẬT TOÁN ĐỘ DÀI: Lấy Random Range -> Set làm MIN -> Tính MAX = MIN + 30%
         try:
             wrng = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
             mn, mx = int(wrng[0]), int(wrng[1])
@@ -236,6 +235,7 @@ class AutoSEOPipeline:
         dist = self.min_w // max(len(self.all_kws), 1)
         seed_sang_tao = random.randint(10000, 99999)
         
+        # SỬA LẠI PROMPT: CẤP SỐ MIN & MAX THỰC TẾ ĐỂ BẢO TOÀN KEYWORD DENSITY
         force = f"""\n[YÊU CẦU SINH TỬ - BẮT BUỘC TUÂN THỦ]:
         1. CẤM CHÀO HỎI (Cấm 'Kính thưa', 'Chào các Sếp'). Vào thẳng Sapo.
         2. H1: Chứa "{self.all_kws[0]}" ở GIỮA/CUỐI. Cấm đặt đầu câu.
@@ -246,7 +246,7 @@ class AutoSEOPipeline:
         - TUYỆT ĐỐI KHÔNG DÙNG ký tự Markdown như `*` hay `-` để gạch đầu dòng. KHÔNG in đậm `**` từ khóa.
         - H3 phải đánh số 1., 2..
         5. SỐ LƯỢNG CHỮ (QUAN TRỌNG NHẤT):
-        - BẮT BUỘC BÀI VIẾT PHẢI CÓ TỔNG SỐ CHỮ NẰM TRONG KHOẢNG TỪ {self.min_w} ĐẾN TỐI ĐA {self.max_w} CHỮ. Bạn hãy phân tích sâu để đạt tối thiểu {self.min_w} chữ, nhưng KHÔNG ĐƯỢC vượt quá {self.max_w} chữ. BỊ PHẠT NẾU VIẾT QUÁ NGẮN.
+        - BẮT BUỘC BÀI VIẾT PHẢI CÓ TỔNG SỐ CHỮ NẰM TRONG KHOẢNG TỪ {self.min_w} ĐẾN TỐI ĐA {self.max_w} CHỮ. Bạn hãy phân tích thật sâu, chia làm nhiều luận điểm nhỏ để đạt TỐI THIỂU {self.min_w} chữ. BỊ PHẠT NẾU VIẾT NGẮN HƠN HOẶC DÀI HƠN MỨC NÀY.
         - Ngắn dài đan xen (3-4 câu/đoạn). Mỗi đoạn bọc trong 1 thẻ <p> riêng biệt. Xóa cấu trúc cũ: {st.session_state.evolution_cache}.
         6. GÓC NHÌN (Seed: {seed_sang_tao}): Lập luận theo một góc độ hoàn toàn khác so với bài trước.
         7. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>."""
@@ -333,7 +333,6 @@ class AutoSEOPipeline:
         for h in soup.find_all(['h1', 'h2']):
             if h.find('a'): h.a.unwrap()
 
-        # LINK INJECTION VỚI STRICT QUOTA LOCK
         missed = []
         for k in self.all_kws:
             injected = False
@@ -352,7 +351,19 @@ class AutoSEOPipeline:
             
             if not injected: missed.append(k)
 
-        # RẢI BÙ BẰNG AI
+        pfx_list = [
+            "Bên cạnh đó, kinh nghiệm cho thấy việc hiểu rõ về {kw} mang lại góc nhìn toàn diện hơn.",
+            "Nhiều người đi trước chia sẻ rằng, tối ưu hóa yếu tố {kw} thường giải quyết được vấn đề lõi.",
+            "Trong quá trình triển khai, nếu áp dụng chuẩn xác {kw} sẽ thấy sự khác biệt rõ rệt.",
+            "Thực tế, một chiến lược khôn ngoan không thể bỏ qua việc ứng dụng {kw} đúng lúc.",
+            "Ngoài ra, Sếp hoàn toàn có thể cân nhắc giải pháp {kw} để tối ưu chi phí.",
+            "Nếu Sếp đang cần thêm thông tin, chủ đề về {kw} này rất đáng để xem qua.",
+            "Nhiều chuyên gia trong ngành cũng thường xuyên nhắc đến vai trò của {kw} trong hệ thống.",
+            "Một yếu tố bổ trợ không kém phần quan trọng chính là {kw}.",
+            "Đôi khi, nút thắt của vấn đề lại nằm ở việc chúng ta áp dụng {kw} như thế nào.",
+            "Để có quyết định chính xác nhất, việc tham khảo thêm góc nhìn về {kw} là cần thiết."
+        ]
+        
         gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
         gem_mods = [m.strip() for m in str(self.dashboard.get('GEMINI_MODEL', 'gemini-1.5-flash')).split(',') if m.strip()]
         
@@ -368,14 +379,14 @@ class AutoSEOPipeline:
                 if gem_keys:
                     try:
                         genai.configure(api_key=gem_keys[0])
-                        fb_pmt = f"Chủ đề bài viết: '{self.final_title}'. Viết 1-2 câu tiếp nối tự nhiên để bổ sung ý cho một đoạn văn phân tích. BẮT BUỘC chứa chính xác cụm từ '{k}' tự nhiên trong câu. TRẢ VỀ VĂN BẢN TRƠN, KHÔNG DÙNG MARKDOWN."
+                        fb_pmt = f"Chủ đề bài viết: '{self.final_title}'. Viết 1-2 câu tiếp nối tự nhiên (TỐI ĐA 30 CHỮ) để bổ sung ý cho một đoạn văn. BẮT BUỘC chứa chính xác cụm từ '{k}' tự nhiên trong câu. TRẢ VỀ VĂN BẢN TRƠN, KHÔNG DÙNG MARKDOWN."
                         with concurrent.futures.ThreadPoolExecutor() as ex:
                             gen_txt = ex.submit(lambda: genai.GenerativeModel(gem_mods[0]).generate_content(fb_pmt).text).result(timeout=15).strip()
                             gen_txt = gen_txt.replace('**', '')
                     except: pass
                 
-                if not gen_txt or k.lower() not in gen_txt.lower():
-                    gen_txt = f"Bên cạnh đó, việc tìm hiểu thêm về {k} cũng là một lựa chọn đáng cân nhắc."
+                if not gen_txt or len(gen_txt.split()) > 40 or k.lower() not in gen_txt.lower():
+                    gen_txt = random.choice(pfx_list).replace('{kw}', k)
                 
                 pattern = re.compile(re.escape(k), re.IGNORECASE)
                 gen_txt = pattern.sub(f"<a href='{url}'>{k}</a>", gen_txt, count=1)
@@ -395,7 +406,7 @@ class AutoSEOPipeline:
                 if is_e: self.injected_ext += 1
                 else: self.injected_int += 1
 
-        self.add_log(ui_log, f"🛠️ [GẮN LINK] Đã chốt Quota: {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int.", "success")
+        self.add_log(ui_log, f"🛠️ [GẮN LINK] {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int.", "success")
 
         mx_img = self.parse_rng(self.target_web.get('WS_IMG_LIMIT', 1), 1)
         req_img = min(len(self.all_kws), mx_img)
@@ -446,7 +457,7 @@ class AutoSEOPipeline:
         txt, k0 = soup.get_text(' ', strip=True), self.all_kws[0].lower()
         
         wc = len(txt.split())
-        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết đạt {wc} chữ (Yêu cầu khắt khe: {self.min_w} - {self.max_w} chữ).", "detail")
+        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết đạt {wc} chữ (Target gốc: {self.min_w} - {self.max_w} chữ).", "detail")
         
         h1 = soup.find('h1')
         s_h1 = 30 if h1 and k0 in h1.get_text().lower() else 0
@@ -470,6 +481,7 @@ class AutoSEOPipeline:
         if ai > 20: fails.append(f"AI ({ai}%)")
         if read < 60: fails.append(f"Read ({read})")
         
+        # CHẤM ĐIỂM NGHIÊM KHẮC: KHÔNG NỚI LỎNG
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
         if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
