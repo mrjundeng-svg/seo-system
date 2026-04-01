@@ -49,7 +49,7 @@ def load_data_from_gsheets():
             if data: db[tab] = pd.DataFrame(data[1:], columns=[str(h).strip() for h in data[0]])
             else: db[tab] = pd.DataFrame()
         return db
-    except Exception as e: return None
+    except: return None
 
 def post_to_cms(website_row, title, html_content, dash_config):
     blog_receiver = str(website_row.get('WS_BLOG_CONTENT', '')).strip()
@@ -87,7 +87,7 @@ class AutoSEOPipeline:
         self.all_kws, self.target_length, self.raw_html, self.final_title = [], 0, "", ""
         self.kcs_metrics, self.used_imgs, self.used_spins, self.failed_imgs = {}, [], [], []
         self.out_lim, self.in_lim, self.injected_ext, self.injected_int = 0, 0, 0, 0
-        self.is_short_form, self.serp_style = False, ""
+        self.is_short_form, self.serp_style, self.prompt_content = False, "", ""
         if 'evolution_cache' not in st.session_state: st.session_state.evolution_cache = ""
 
     def safe_int(self, value, default=0):
@@ -129,7 +129,6 @@ class AutoSEOPipeline:
                 ws_name, ws_limit = str(web.get('WS_NAME', '')).strip(), self.parse_rng(web.get('WS_POST_LIMIT', 1), 1)
                 day_posts = df_rep[(df_rep['REP_WS_NAME'] == ws_name) & (df_rep['REP_PUBLISH_DATE'].astype(str).str.startswith(day_x_str))] if not df_rep.empty else pd.DataFrame()
                 
-                self.add_log(ui_log, f"🔍 [CHECK QUOTA] Local '{ws_name}' ({day_x_str}): {len(day_posts)}/{ws_limit}", "quota")
                 if len(day_posts) < ws_limit:
                     try:
                         trange = str(self.dashboard.get('AUTO_RUN_TIME', '09:30-19:30')).split('-')
@@ -169,14 +168,13 @@ class AutoSEOPipeline:
             wrng = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
             mn, mx = int(wrng[0]), int(wrng[1])
         except: mn, mx = 900, 1200
-        
         self.is_short_form = len(self.all_kws) < 3
         self.target_length = random.randint(mn, mx) if not self.is_short_form else random.randint(mn, mx)//2
         
         s_key = self.dashboard.get('SERPAPI_KEY', '').strip()
         c_list = [c.strip() for c in str(self.dashboard.get('COMPETITOR_LIST', '')).split(',') if c.strip()]
-        serp_chunks = []
-        scraped_urls = []
+        gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
+        serp_chunks, scraped_urls = [], []
 
         if s_key:
             self.add_log(ui_log, f"🕵️ [SERP] Bắt đầu quét cào data đa từ khóa...", "detail")
@@ -198,9 +196,20 @@ class AutoSEOPipeline:
                 except: pass
             
             if serp_chunks:
-                self.serp_style = "\n\n".join(serp_chunks)[:5000]
+                raw_serp_text = "\n\n".join(serp_chunks)[:4000]
                 url_list_str = "\n".join([f"   + {u}" for u in scraped_urls])
-                self.add_log(ui_log, f"✅ [SERP] Đã trộn data từ {len(serp_chunks)} đối thủ:\n{url_list_str}", "success")
+                self.add_log(ui_log, f"✅ [SERP] Đã cào data từ {len(serp_chunks)} đối thủ:\n{url_list_str}", "success")
+                
+                # GỌI LLM ĐỂ TÓM TẮT SERP_STYLE
+                if gem_keys:
+                    try:
+                        genai.configure(api_key=gem_keys[0])
+                        prompt_style = f"Đọc nội dung cào từ đối thủ sau và tóm tắt thành 3 gạch đầu dòng: Văn phong cách viết bài, Nhịp điệu của bài viết, Thể loại bài viết hướng tới.\n\nData:\n{raw_serp_text}"
+                        with concurrent.futures.ThreadPoolExecutor() as ex:
+                            self.serp_style = ex.submit(lambda: genai.GenerativeModel('gemini-1.5-flash').generate_content(prompt_style).text).result(timeout=15)
+                    except: self.serp_style = "Văn phong chuyên gia, nhịp điệu logic, thể loại chia sẻ kiến thức."
+                else: self.serp_style = "Văn phong chuyên gia, nhịp điệu logic, thể loại chia sẻ kiến thức."
+                self.add_log(ui_log, f"🎯 [SERP_STYLE_AI_EXTRACT]: {self.serp_style}", "detail")
             else:
                 self.serp_style = "Văn phong chuyên gia, logic."
                 self.add_log(ui_log, f"⚠️ [SERP] Cào thất bại, dùng Internal Cache.", "warn")
@@ -208,28 +217,25 @@ class AutoSEOPipeline:
         return True
 
     def step4_llm_generation(self, ui_log) -> bool:
-        keys_to_pull = ['PROMPT_TEMPLATE', 'PROMPT_CONTENT_STRATEGY', 'PROMPT_KEYWORD_SEARCH', 'PROMPT_SERP_STYLE', 'PROMPT_SEO_GLOBAL_RULE', 'PROMPT_AI_HUMANIZER']
+        keys_to_pull = ['PROMPT_TEMPLATE', 'PROMPT_CONTENT_STRATEGY', 'PROMPT_KEYWORD_SEARCH', 'PROMPT_SEO_GLOBAL_RULE', 'PROMPT_AI_HUMANIZER']
         pmts = {k: self.pick_random_prompt_variant(self.dashboard.get(k, '')) for k in keys_to_pull}
         
-        # IN LOG PROMPT ĐỂ SẾP KIỂM TRA
-        self.add_log(ui_log, f"🧠 [PROMPT CONTENT STRATEGY]: {pmts.get('PROMPT_CONTENT_STRATEGY', '')[:300]}...", "detail")
-        self.add_log(ui_log, f"🧠 [PROMPT SERP STYLE]: {pmts.get('PROMPT_SERP_STYLE', '')[:300]}...", "detail")
-
         dist = self.target_length // max(len(self.all_kws), 1)
         force = f"""\n[ÉP LUẬT TỐI THƯỢNG - SOP MẶC ĐỊNH]:
-        1. CẤM CHÀO HỎI (Cấm 'Kính thưa', 'Chào các Sếp'). Vào thẳng Sapo.
-        2. H1: Chứa "{self.all_kws[0]}" ở GIỮA/CUỐI. Cấm đặt đầu câu.
-        3. THUẬT TOÁN RẢI TỪ KHÓA:
+        1. CẤM CHÀO HỎI. Vào thẳng Sapo. H1: Chứa "{self.all_kws[0]}" ở GIỮA/CUỐI. Cấm đặt đầu câu.
+        2. THUẬT TOÁN RẢI TỪ KHÓA (CỰC KỲ QUAN TRỌNG):
         - Từ khóa chính "{self.all_kws[0]}" (x3). Các từ "{', '.join(self.all_kws[1:])}" mỗi từ x1.
-        - Bắt buộc rải đều từ khóa tuần tự từ trên xuống. Khoảng cách xấp xỉ {dist} chữ. Đặt tự nhiên lọt thỏm giữa câu. Cấm nhồi nhét 1 chỗ.
-        4. ĐỊNH DẠNG HTML (QUAN TRỌNG):
-        - BẮT BUỘC dùng thẻ <ul> và <li> nếu có liệt kê danh sách.
-        - TUYỆT ĐỐI KHÔNG DÙNG ký tự Markdown như `*` hay `-` để gạch đầu dòng.
-        - H3 phải đánh số 1., 2.. KHÔNG in đậm `**` từ khóa.
-        5. CẤU TRÚC ĐOẠN VĂN: Cấm viết dài thoòng. Ngắn dài đan xen (3-4 câu/đoạn). Mỗi đoạn bọc trong 1 thẻ <p> riêng biệt. Xóa cấu trúc: {st.session_state.evolution_cache}.
-        6. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>."""
+        - Bài viết dài {self.target_length} chữ, chia thành {len(self.all_kws)} phần. Trong mỗi phần {dist} chữ, BẮT BUỘC chèn NGẪU NHIÊN 1 từ khóa. Từ khóa phải nằm lọt thỏm ở giữa câu, KHÔNG ĐẶT ở đầu hoặc cuối câu.
+        3. ĐỊNH DẠNG HTML:
+        - BẮT BUỘC dùng thẻ <ul> và <li> nếu liệt kê.
+        - TUYỆT ĐỐI KHÔNG DÙNG ký tự Markdown như `*` hay `-`. KHÔNG in đậm `**` từ khóa. H3 đánh số 1., 2..
+        4. CẤU TRÚC ĐOẠN: Ngắn dài đan xen (3-4 câu/đoạn). Mỗi đoạn bọc trong thẻ <p>. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>."""
         
-        m_prompt = f"{pmts['PROMPT_TEMPLATE']}\n{pmts['PROMPT_CONTENT_STRATEGY']}\n{pmts['PROMPT_KEYWORD_SEARCH']}\n{pmts['PROMPT_SERP_STYLE']}\n[SERP Data Hỗn Hợp]:\n{self.serp_style}\n{pmts['PROMPT_SEO_GLOBAL_RULE']}\n{pmts['PROMPT_AI_HUMANIZER']}\n{force}"
+        # GỘP THÀNH PROMPT_CONTENT
+        self.prompt_content = f"{pmts['PROMPT_TEMPLATE']}\n{pmts['PROMPT_CONTENT_STRATEGY']}\n{pmts['PROMPT_KEYWORD_SEARCH']}\n[SERP_STYLE]: {self.serp_style}"
+        self.add_log(ui_log, f"🧠 [PROMPT_CONTENT TỔNG HỢP (Chuẩn bị gửi AI)]:\n{self.prompt_content[:300]}...", "detail")
+
+        m_prompt = f"{self.prompt_content}\n{pmts['PROMPT_SEO_GLOBAL_RULE']}\n{pmts['PROMPT_AI_HUMANIZER']}\n{force}"
         m_prompt = m_prompt.replace('{{ws_persona}}', str(self.target_web.get('WS_PERSONA', ''))).replace('{{kw_intent}}', str(self.main_kw_row.get('KW_INTENT', ''))).replace('{{keyword}}', self.all_kws[0]).replace('{{word_count}}', str(self.target_length))
         for i, k in enumerate(self.all_kws): m_prompt = re.sub(rf'\[?REP_KW_{i+1}\]?', k, m_prompt, flags=re.IGNORECASE)
 
@@ -243,7 +249,7 @@ class AutoSEOPipeline:
             for gk in gem_keys:
                 if response_text: break
                 genai.configure(api_key=gk)
-                self.add_log(ui_log, f"🌐 [API CALL] Gemini ({gm})...", "detail")
+                self.add_log(ui_log, f"🌐 [API CALL] Gemini ({gm}) [Timeout 90s]...", "detail")
                 try:
                     with concurrent.futures.ThreadPoolExecutor() as ex:
                         response_text = ex.submit(lambda: genai.GenerativeModel(gm).generate_content(m_prompt).text).result(timeout=90)
@@ -255,7 +261,7 @@ class AutoSEOPipeline:
             for om in or_mods:
                 for ok in or_keys:
                     if response_text: break
-                    self.add_log(ui_log, f"🌐 [API CALL] OpenRouter ({om})...", "detail")
+                    self.add_log(ui_log, f"🌐 [API CALL] OpenRouter ({om}) [Timeout 90s]...", "detail")
                     try:
                         with concurrent.futures.ThreadPoolExecutor() as ex:
                             def call_or():
@@ -268,7 +274,7 @@ class AutoSEOPipeline:
                 if response_text: break
 
         if not response_text:
-            self.add_log(ui_log, "🛑 [FATAL] Toàn bộ API đều sập hoặc không phản hồi. Xin kiểm tra lại Quota!", "error")
+            self.add_log(ui_log, "🛑 [FATAL] LLM Gateway Timeout: API không phản hồi.", "error")
             return False
 
         self.raw_html = response_text
@@ -311,47 +317,59 @@ class AutoSEOPipeline:
         for h in soup.find_all(['h1', 'h2']):
             if h.find('a'): h.a.unwrap()
 
-        # FIX BUG 4/3: CẤM ĐẾM ĐÚP LINK
         missed = []
         for k in self.all_kws:
+            url, is_e = ("", False)
+            if self.injected_ext < self.out_lim and ou: url, is_e = random.choice(ou), True
+            elif self.injected_int < self.in_lim and iu: url, is_e = random.choice(iu), False
+            if not url: continue 
+            
             injected = False
             for p in soup.find_all('p'):
                 if not p.find('a') and re.search(r'(?i)' + re.escape(k), p.get_text()):
-                    url, is_e = "", False
-                    if self.injected_ext < self.out_lim and ou: url, is_e = random.choice(ou), True
-                    elif self.injected_int < self.in_lim and iu: url, is_e = random.choice(iu), False
-                    
-                    if url:
-                        p.replace_with(BeautifulSoup(re.sub(r'(?i)' + re.escape(k), lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(p), count=1), 'html.parser'))
-                        if is_e: self.injected_ext += 1
-                        else: self.injected_int += 1
-                        injected = True
-                    break 
-            if not injected: missed.append(k)
+                    p.replace_with(BeautifulSoup(re.sub(r'(?i)' + re.escape(k), lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(p), count=1), 'html.parser'))
+                    injected = True
+                    if is_e: self.injected_ext += 1
+                    else: self.injected_int += 1
+                    break
+            
+            if not injected: missed.append((k, url, is_e))
 
+        # ĐỘNG CƠ RẢI LINK SÓT BẰNG AI (DYNAMIC PARAGRAPH)
+        gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
+        gem_mods = [m.strip() for m in str(self.dashboard.get('GEMINI_MODEL', 'gemini-1.5-flash')).split(',') if m.strip()]
+        
         if missed:
-            avail_p = [p for p in soup.find_all('p') if len(p.get_text(strip=True)) > 20 and not p.find('a') and not p.find('img')]
-            for k in missed:
-                url, is_e = "", False
-                if self.injected_ext < self.out_lim and ou: url, is_e = random.choice(ou), True
-                elif self.injected_int < self.in_lim and iu: url, is_e = random.choice(iu), False
+            all_p = soup.find_all('p')
+            for k, u, is_e in missed:
+                gen_txt = ""
+                if gem_keys:
+                    try:
+                        genai.configure(api_key=gem_keys[0])
+                        fb_pmt = f"Chủ đề bài viết: '{self.final_title}'. Viết 1 đoạn văn mở rộng (khoảng 2-4 câu, ngẫu nhiên số chữ) phân tích sâu hơn về chủ đề. BẮT BUỘC chứa chính xác cụm từ '{k}'. TRẢ VỀ VĂN BẢN TRƠN, KHÔNG DÙNG MARKDOWN."
+                        with concurrent.futures.ThreadPoolExecutor() as ex:
+                            gen_txt = ex.submit(lambda: genai.GenerativeModel(gem_mods[0]).generate_content(fb_pmt).text).result(timeout=15).strip()
+                            gen_txt = gen_txt.replace('**', '')
+                    except: pass
                 
-                if not url: continue 
+                if not gen_txt or k.lower() not in gen_txt.lower():
+                    gen_txt = f"Bên cạnh những yếu tố trên, để tối ưu trải nghiệm và đảm bảo an toàn, việc tìm hiểu thêm về {k} là một sự chuẩn bị cần thiết."
                 
-                pfx = random.choice(["Tham khảo thêm thông tin", "Để tối ưu hành trình, hãy xem qua"])
-                new_sentence = f" {pfx} <a href='{url}'>{k}</a>."
+                # Chèn thẻ a vào đoạn văn vừa tạo
+                pattern = re.compile(re.escape(k), re.IGNORECASE)
+                gen_txt = pattern.sub(f"<a href='{u}'>{k}</a>", gen_txt, count=1)
                 
-                if avail_p:
-                    target = random.choice(avail_p); avail_p.remove(target)
-                    target.append(BeautifulSoup(new_sentence, 'html.parser'))
+                new_p = BeautifulSoup(f"<p>{gen_txt}</p>", 'html.parser')
+                
+                if len(all_p) > 2:
+                    idx = random.randint(1, len(all_p) - 2)
+                    all_p[idx].insert_after(new_p)
+                elif all_p:
+                    all_p[0].insert_after(new_p)
                 else:
-                    all_p = soup.find_all('p')
-                    if len(all_p) > 2:
-                        idx = random.randint(1, len(all_p) - 2)
-                        all_p[idx].insert_after(BeautifulSoup(f"<p>{new_sentence.strip()}</p>", 'html.parser'))
-                    else:
-                        soup.append(BeautifulSoup(f"<p>{new_sentence.strip()}</p>", 'html.parser'))
-                
+                    soup.append(new_p)
+                    
+                self.add_log(ui_log, f"⚠️ AI sót '{k}', đã tạo 1 đoạn văn content riêng cấy ẩn vào giữa bài.", "warn")
                 if is_e: self.injected_ext += 1
                 else: self.injected_int += 1
 
@@ -376,28 +394,38 @@ class AutoSEOPipeline:
             if self.is_short_form or len(self.used_imgs) == 1:
                 img_html = f"<br><p align='center'><img src='{self.used_imgs[0]}' alt='{self.all_kws[0]}'></p><br>"
                 inserted = False
-                for p in soup.find_all('p'):
-                    if re.search(r'(?i)' + re.escape(self.all_kws[0]), p.get_text()):
-                        p.insert_after(BeautifulSoup(img_html, 'html.parser')); inserted = True; break
-                if not inserted and soup.find_all('p'): soup.find_all('p')[0].insert_after(BeautifulSoup(img_html, 'html.parser'))
+                for tag in soup.find_all(['p', 'li', 'h2', 'h3']):
+                    if re.search(r'(?i)' + re.escape(self.all_kws[0]), tag.get_text()):
+                        tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
+                        inserted = True
+                        break
+                if not inserted and len(soup.find_all('p')) > 1: 
+                    soup.find_all('p')[1].insert_after(BeautifulSoup(img_html, 'html.parser'))
             else:
                 for idx, img_u in enumerate(self.used_imgs):
                     kw_t = self.all_kws[idx] if idx < len(self.all_kws) else self.all_kws[-1]
                     img_html = f"<br><p align='center'><img src='{img_u}' alt='{kw_t}'></p><br>"
                     inserted = False
-                    for p in soup.find_all('p'):
-                        if re.search(r'(?i)' + re.escape(kw_t), p.get_text()) and not p.find_next_sibling('p', align='center'):
-                            p.insert_after(BeautifulSoup(img_html, 'html.parser')); inserted = True; break
-                    if not inserted and len(soup.find_all('p')) > idx:
-                        soup.find_all('p')[idx].insert_after(BeautifulSoup(img_html, 'html.parser'))
+                    for tag in soup.find_all(['p', 'li', 'h2', 'h3']):
+                        if re.search(r'(?i)' + re.escape(kw_t), tag.get_text()) and not tag.find_next_sibling('p', align='center'):
+                            tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
+                            inserted = True
+                            break
+                    if not inserted and len(soup.find_all('p')) > idx * 2:
+                        soup.find_all('p')[idx * 2].insert_after(BeautifulSoup(img_html, 'html.parser'))
 
+        if self.failed_imgs: self.add_log(ui_log, f"⚠️ Đã loại {len(self.failed_imgs)} ảnh lỗi (Sẽ mark 999).", "warn")
         self.add_log(ui_log, f"🖼️ [GẮN ẢNH] DOM Inject thành công {len(self.used_imgs)} ảnh.")
         self.raw_html = str(soup); return True
 
     def step7_qa_validation(self, ui_log) -> str:
-        self.add_log(ui_log, "⚖️ [KCS] Chấm điểm và xóa H1 lặp...")
+        self.add_log(ui_log, "⚖️ [KCS] Máy quét AI bắt đầu chấm điểm...")
         soup = BeautifulSoup(self.raw_html, 'html.parser')
         txt, k0 = soup.get_text(' ', strip=True), self.all_kws[0].lower()
+        
+        wc = len(txt.split())
+        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết đạt {wc} chữ (Target: {self.target_length} chữ trong khoảng {self.dashboard.get('WORD_COUNT_RANGE', '')}).", "detail")
+        
         h1 = soup.find('h1')
         s_h1 = 30 if h1 and k0 in h1.get_text().lower() else 0
         s_h2 = 20 if any(k0 in h.get_text().lower() for h in soup.find_all('h2')) else 0
@@ -409,7 +437,8 @@ class AutoSEOPipeline:
         lens = [len(s.split()) for s in re.split(r'[.!?\n]+', txt) if len(s.split()) > 3]
         ai, rd = min(max(round(max(5, 50-((statistics.stdev(lens) if len(lens)>3 else 0)*4)),1), 2.0), 99.0), round(max(10, min(206.835-(1.015*(sum(lens)/max(len(lens),1)))-84.6*1.2, 100)), 1)
         self.kcs_metrics = {'SEO': seo, 'AI': ai, 'READ': rd}
-        self.add_log(ui_log, f"   > SEO {seo}/100 | AI {ai}% | READ {rd}/100", "detail")
+        self.add_log(ui_log, f"   > KCS Tổng kết: SEO {seo}/100 | AI {ai}% | READ {rd}/100", "detail")
+        
         if h1: h1.decompose()
         self.raw_html = str(soup).strip()
         req = 35 if self.is_short_form else 70
@@ -453,110 +482,169 @@ class AutoSEOPipeline:
                 batch('KEYWORD', 'KW_TEXT', self.all_kws, 'KW_STATUS', 'KW_DATE')
                 batch('IMAGE', 'IMG_URL', self.used_imgs, 'IMG_STATUS', 'IMG_DATE')
                 if self.used_spins: batch('SPIN', 'SPIN_ORIGINAL', self.used_spins, None, 'SPIN_DATE')
+                
+                if hasattr(self, 'failed_imgs') and self.failed_imgs:
+                    s_img, d_img = ss.worksheet('IMAGE'), ss.worksheet('IMAGE').get_all_values()
+                    if len(d_img) > 1:
+                        h_img = [str(x).strip() for x in d_img[0]]
+                        im_img, is_img = h_img.index('IMG_URL'), h_img.index('IMG_STATUS') if 'IMG_STATUS' in h_img else -1
+                        u_img = []
+                        for i, r in enumerate(d_img[1:], 2):
+                            if r[im_img].strip() in self.failed_imgs and is_img != -1:
+                                u_img.append({'range': f'{gspread.utils.rowcol_to_a1(i, is_img+1)}', 'values': [[999]]})
+                        if u_img: s_img.batch_update(u_img)
                         
         except Exception as e: self.add_log(ui_log, f"🛑 Lỗi DB: {e}", "error")
 
 # ==========================================
 # 🖥 UI CHUẨN CLASSIC CỦA SẾP
 # ==========================================
-db = load_data_from_gsheets()
-if not db: st.stop()
-d_rep, dash = db['REPORT'], {str(k).strip(): str(v).strip() for k, v in zip(db['DASHBOARD']['DATA_KEY'], db['DASHBOARD']['DATA_CONTENT'])}
+db_mock = load_data_from_gsheets()
+if db_mock is None: st.stop()
 
-st.title(f"🛡️ {dash.get('PROJECT_NAME', 'Auto SEO Pipeline')}")
+df_rep = db_mock.get('REPORT', pd.DataFrame())
+df_dash = db_mock.get('DASHBOARD', pd.DataFrame())
+dash_dict = {str(k).strip(): str(v).strip() for k, v in zip(df_dash['DATA_KEY'], df_dash['DATA_CONTENT'])} if not df_dash.empty else {}
+
+st.title(f"🛡️ {dash_dict.get('PROJECT_NAME', 'Hệ Thống Lái Hộ Auto SEO')}")
 st.markdown("---")
-t1, t2, t3 = st.tabs(["📊 DASHBOARD", "📋 CONTENT", "🗄️ DATABASE"])
+tab1, tab2, tab3 = st.tabs(["📊 DASHBOARD", "📋 CONTENT", "🗄️ DATABASE"])
 
-with t1:
-    tdy = get_vn_now().strftime('%Y-%m-%d')
-    p_tdy = len(d_rep[d_rep['REP_CREATED_AT'].astype(str).str.startswith(tdy)]) if not d_rep.empty else 0
-    try: b_val = int(str(dash.get('BATCH_SIZE', '10')).split('-')[0])
-    except: b_val = 10
+with tab1:
     c1, c2, c3 = st.columns(3)
-    c1.metric("Generated Today", f"{p_tdy}/{b_val}")
-    c2.metric("DONE", len(d_rep[d_rep['REP_RESULT'] == 'DONE']) if not d_rep.empty else 0)
-    c3.metric("PENDING", len(d_rep[d_rep['REP_RESULT'] == 'PENDING']) if not d_rep.empty else 0)
+    today_str = get_vn_now().strftime('%Y-%m-%d')
+    p_today = len(df_rep[df_rep['REP_CREATED_AT'].astype(str).str.strip().str.startswith(today_str)]) if not df_rep.empty and 'REP_CREATED_AT' in df_rep.columns else 0
+    
+    b_val = dash_dict.get('BATCH_SIZE', '10')
+    try:
+        if '-' in str(b_val): batch = random.randint(int(str(b_val).split('-')[0]), int(str(b_val).split('-')[1]))
+        else: batch = int(b_val)
+    except: batch = 10
+    
+    c1.metric("Generated (Hôm nay)", f"{p_today} / {batch}")
+    c2.metric("✅ Published (DONE)", len(df_rep[df_rep['REP_RESULT'].astype(str).str.strip() == 'DONE']) if not df_rep.empty and 'REP_RESULT' in df_rep.columns else 0)
+    c3.metric("⏳ Scheduled (PENDING)", len(df_rep[df_rep['REP_RESULT'].astype(str).str.strip() == 'PENDING']) if not df_rep.empty and 'REP_RESULT' in df_rep.columns else 0)
+    
     st.markdown("<br>", unsafe_allow_html=True)
-    bc1, bc2, bc3 = st.columns(3)
-    b_run, b_frc, b_ref = bc1.button("🔥 Soạn bài AI", use_container_width=True, type="primary"), bc2.button("⚡ Ép Lên bài ngay", use_container_width=True), bc3.button("🔄 Làm mới", use_container_width=True)
     
-    if b_ref: load_data_from_gsheets.clear(); st.rerun()
+    btn_col1, btn_col2, btn_col3 = st.columns(3)
+    btn_start = btn_col1.button("🔥 Bắt đầu Soạn bài AI", use_container_width=True, type="primary")
+    btn_force = btn_col2.button("⚡ Ép Lên bài ngay", use_container_width=True)
+    btn_refresh = btn_col3.button("🔄 Làm mới dữ liệu", use_container_width=True)
     
-    # FIX LỖI TREO KHI BẤM ÉP BÀI QUÁ HẠN
-    if b_frc:
+    if btn_refresh:
+        load_data_from_gsheets.clear()
+        st.rerun()
+        
+    if btn_force:
+        st.markdown("---")
         info_msg = st.empty()
         info_msg.info("⏳ ĐANG KIỂM TRA BÀI QUÁ HẠN...")
-        ui = st.empty()
-        bot = AutoSEOPipeline(db, [])
+        ui_log = st.empty()
+        bot = AutoSEOPipeline(db_mock, [])
+        
         try:
             ss = gspread.authorize(Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=['https://www.googleapis.com/auth/spreadsheets'])).open_by_key(SHEET_ID)
-            ws, data = ss.worksheet('REPORT'), ss.worksheet('REPORT').get_all_values()
-            df_w = db['WEBSITE']
+            ws = ss.worksheet('REPORT')
+            data = ws.get_all_values()
+            ws_df = db_mock.get('WEBSITE', pd.DataFrame())
+            
             if len(data) > 1:
-                h = [str(x).strip() for x in data[0]]
-                ir, ip, ih, iw, it = h.index('REP_RESULT'), h.index('REP_PUBLISH_DATE'), h.index('REP_HTML'), h.index('REP_WS_NAME'), h.index('REP_TITLE')
-                upds, cnt = [], 0
-                now = get_vn_now()
-                
-                for i, r in enumerate(data[1:], 2):
-                    if r[ir].strip() == 'PENDING':
-                        try:
-                            pub_dt = VN_TZ.localize(datetime.datetime.strptime(str(r[ip]).strip(), '%Y-%m-%d %H:%M'))
-                            is_due = pub_dt <= now
-                        except: is_due = False
-                        
-                        if is_due:
-                            bot.add_log(ui, f"➤ Bắt đầu đăng: '{r[it]}' -> {r[iw]}")
-                            w_row = df_w[df_w['WS_NAME'].astype(str).str.strip() == str(r[iw]).strip()]
-                            if not w_row.empty:
-                                ok, msg = post_to_cms(w_row.iloc[0], r[it], r[ih], dash)
-                                if ok:
-                                    bot.add_log(ui, f"✅ {msg}", "success")
-                                    upds.append({'range': f'{gspread.utils.rowcol_to_a1(i, ir+1)}', 'values': [['DONE']]})
-                                    cnt += 1
-                                else: bot.add_log(ui, f"🛑 {msg}", "error")
-                            else:
-                                bot.add_log(ui, f"🛑 Không tìm thấy Web {r[iw]}", "error")
-                
-                info_msg.empty()
-                if upds: 
-                    ws.batch_update(upds)
-                    st.success(f"🎉 Đã bắn thành công {cnt} bài quá hạn!")
-                    time.sleep(2)
-                    st.rerun()
-                else:
-                    bot.add_log(ui, "ℹ️ Không có bài PENDING nào đã quá giờ đăng để ép lên.", "warn")
-        except Exception as e: 
-            info_msg.empty()
-            st.error(f"Lỗi: {e}")
+                headers = [str(h).strip() for h in data[0]]
+                idx_res = headers.index('REP_RESULT') if 'REP_RESULT' in headers else -1
+                idx_pub = headers.index('REP_PUBLISH_DATE') if 'REP_PUBLISH_DATE' in headers else -1
+                idx_html = headers.index('REP_HTML') if 'REP_HTML' in headers else -1
+                idx_ws = headers.index('REP_WS_NAME') if 'REP_WS_NAME' in headers else -1
+                idx_title = headers.index('REP_TITLE') if 'REP_TITLE' in headers else -1
 
-    if b_run:
-        load_data_from_gsheets.clear(); ui = st.empty(); need = b_val - p_tdy
-        if need > 0:
-            m_logs = []
-            for i in range(need):
-                bot = AutoSEOPipeline(db, m_logs)
-                bot.add_log(ui, f"<br>🚀 --- BÀI {i+1}/{need} ---", "success")
+                if idx_res != -1 and idx_pub != -1:
+                    upd, count = [], 0
+                    now = get_vn_now()
+                    for i, row in enumerate(data[1:], 2):
+                        if len(row) > max(idx_res, idx_pub) and row[idx_res].strip() == 'PENDING':
+                            try:
+                                pub_dt = VN_TZ.localize(datetime.datetime.strptime(str(row[idx_pub]).strip(), '%Y-%m-%d %H:%M'))
+                                is_due = pub_dt <= now
+                            except: is_due = False
+                            
+                            if is_due:
+                                ws_name = row[idx_ws] if idx_ws != -1 else ""
+                                title = row[idx_title] if idx_title != -1 else "No Title"
+                                html_content = row[idx_html] if idx_html != -1 else ""
+                                
+                                bot.add_log(ui_log, f"➤ Xử lý bài: '{title}' -> Web: {ws_name}")
+                                
+                                web_info = ws_df[ws_df['WS_NAME'].astype(str).str.strip() == ws_name.strip()]
+                                if not web_info.empty:
+                                    w_row = web_info.iloc[0]
+                                    success, msg = post_to_cms(w_row, title, html_content, dash_dict)
+                                    if success:
+                                        bot.add_log(ui_log, f"✅ {msg}", "success")
+                                        upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_res+1)}', 'values': [['DONE']]})
+                                        count += 1
+                                    else:
+                                        bot.add_log(ui_log, f"🛑 {msg}", "error")
+                                else:
+                                    bot.add_log(ui_log, f"⚠️ Không tìm thấy cấu hình tài khoản cho Web '{ws_name}'", "warn")
+                                    
+                    info_msg.empty()
+                    if upd:
+                        ws.batch_update(upd)
+                        st.success(f"🎉 Đã chốt sổ và bắn bài thành công {count} bài!")
+                        time.sleep(2)
+                        st.rerun()
+                    else: 
+                        auto_time = dash_dict.get('AUTO_RUN_TIME', '')
+                        bot.add_log(ui_log, f"ℹ️ Đã quá giờ đăng bài {auto_time}, check lại nghen ^^!", "warn")
+                else: bot.add_log(ui_log, "🛑 Không tìm thấy cột trạng thái trong Sheet REPORT.", "error")
+        except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi hệ thống Đăng bài: {str(e)[:150]}", "error")
+
+    if btn_start:
+        st.markdown("---")
+        st.info("⏳ HỆ THỐNG ĐANG SOẠN BÀI TỰ ĐỘNG... BẠN CỨ ĐỂ YÊN MÀN HÌNH NÀY CHO TỚI KHI BÁO XONG NHA!")
+        load_data_from_gsheets.clear()
+        
+        ui_log = st.empty()
+        needed = batch - p_today
+        if needed <= 0: ui_log.markdown('<div class="log-box"><span class="log-error">🛑 Đã đạt BATCH_SIZE hôm nay. Không chạy thêm.</span></div>', unsafe_allow_html=True)
+        else:
+            master_logs = []
+            for i in range(needed):
+                bot = AutoSEOPipeline(db_mock, master_logs)
+                bot.add_log(ui_log, f"<br>🚀 --- BẮT ĐẦU CHẠY BÀI {i+1}/{needed} ---", "success")
                 st_t = time.time()
                 try:
-                    if bot.step1_allocate_slot(ui) and bot.step2_3_keyword_and_serp(ui) and bot.step4_llm_generation(ui):
-                        bot.step5_6_spin_and_dom(ui); bot.step8_sync_db(ui, bot.step7_qa_validation(ui))
-                        db = load_data_from_gsheets()
-                except Exception as e: bot.add_log(ui, f"🛑 Lỗi: {e}", "error")
-                if time.time() - st_t > 300: break
-            st.success("🎉 HOÀN TẤT!")
+                    if bot.step1_allocate_slot(ui_log):
+                        if bot.step2_3_keyword_and_serp(ui_log):
+                            if bot.step4_llm_generation(ui_log):
+                                bot.step5_6_spin_and_dom(ui_log)
+                                res = bot.step7_qa_validation(ui_log)
+                                bot.step8_sync_db(ui_log, res)
+                                db_mock = load_data_from_gsheets()
+                except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi chí mạng: {str(e)[:150]}", "error")
+                if time.time() - st_t > 300:
+                    bot.add_log(ui_log, "🛑 Quá 5 phút, tự ngắt để cứu hệ thống.", "error")
+                    break
+            bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
+            st.success("🎉 TẠO BÀI XONG! BẤM LÀM MỚI Ở TRÊN ĐỂ CẬP NHẬT KẾT QUẢ NHA SẾP!")
 
 with t2:
-    if not d_rep.empty:
-        df_vn = d_rep[['REP_CREATED_AT', 'REP_PUBLISH_DATE', 'REP_TITLE', 'REP_WS_NAME', 'REP_RESULT']].copy()
+    if not df_rep.empty:
+        df_vn = df_rep[['REP_CREATED_AT', 'REP_PUBLISH_DATE', 'REP_TITLE', 'REP_WS_NAME', 'REP_RESULT']].copy()
         df_vn.columns = ['Ngày tạo bài', 'Ngày đăng bài', 'Tiêu đề', 'Trang web', 'Trạng thái']
         st.dataframe(df_vn.tail(15), use_container_width=True, hide_index=True)
-        sel = st.selectbox("🔍 Soi Log:", d_rep['REP_TITLE'].tolist()[::-1])
+        st.markdown("---")
+        titles = df_rep['REP_TITLE'].tolist()[::-1]
+        sel = st.selectbox("🔍 Nội soi chi tiết bài viết (Log & HTML):", titles)
         if sel:
-            r = d_rep[d_rep['REP_TITLE'] == sel].iloc[0]
-            c1, c2 = st.columns(2)
-            c1.markdown(f'<div class="log-box">{str(r["REP_LOG"]).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
-            c2.text_area("HTML:", str(r["REP_HTML"]), height=800)
+            row = df_rep[df_rep['REP_TITLE'] == sel].iloc[0]
+            lc1, lc2 = st.columns(2)
+            with lc1:
+                st.markdown("**📝 Nhật ký chạy (System Log):**")
+                st.markdown(f'<div class="log-box">{str(row.get("REP_LOG", "")).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
+            with lc2:
+                st.markdown("**🌐 Mã nguồn (Raw HTML):**")
+                st.text_area("", str(row.get('REP_HTML', '')), height=800, label_visibility="collapsed")
 
 with t3:
-    st.dataframe(d_rep, use_container_width=True)
+    st.dataframe(df_rep, use_container_width=True)
