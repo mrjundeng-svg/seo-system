@@ -84,10 +84,11 @@ class AutoSEOPipeline:
         self.dashboard = {str(k).strip(): str(v).strip() for k, v in zip(self.db['DASHBOARD']['DATA_KEY'], self.db['DASHBOARD']['DATA_CONTENT'])}
         self.now_vn, self.history_log = get_vn_now(), master_log_list
         self.target_web, self.publish_time, self.main_kw_row = None, None, None
-        self.all_kws, self.target_length, self.raw_html, self.final_title = [], 0, "", ""
+        self.all_kws, self.raw_html, self.final_title = [], "", ""
         self.kcs_metrics, self.used_imgs, self.used_spins, self.failed_imgs = {}, [], [], []
         self.out_lim, self.in_lim, self.injected_ext, self.injected_int = 0, 0, 0, 0
         self.is_short_form, self.serp_style, self.prompt_content = False, "", ""
+        self.min_w, self.max_w = 0, 0
         if 'evolution_cache' not in st.session_state: st.session_state.evolution_cache = ""
 
     def safe_int(self, value, default=0):
@@ -165,13 +166,17 @@ class AutoSEOPipeline:
         self.all_kws = [m_kw] + subs
         self.add_log(ui_log, f"📦 [KWs ĐÃ GOM] Cần {len(self.all_kws)} KWs: {', '.join(self.all_kws)}", "detail")
         
+        # ĐÃ CẬP NHẬT: THIẾT LẬP MIN_W VÀ MAX_W (MIN + 30%)
         try:
             wrng = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
-            mn, mx = int(wrng[0]), int(wrng[1])
-        except: mn, mx = 900, 1200
+            self.min_w = int(wrng[0])
+        except: self.min_w = 900
         
         self.is_short_form = len(self.all_kws) < 3
-        self.target_length = random.randint(mn, mx) if not self.is_short_form else random.randint(mn, mx)//2
+        if self.is_short_form: self.min_w = self.min_w // 2
+        
+        self.max_w = int(self.min_w * 1.3)
+        self.add_log(ui_log, f"📏 [RULE BÀI] Khóa cứng Word Count: Tối thiểu {self.min_w} chữ, Tối đa {self.max_w} chữ (+30%).", "detail")
         
         s_key = self.dashboard.get('SERPAPI_KEY', '').strip()
         c_list = [c.strip() for c in str(self.dashboard.get('COMPETITOR_LIST', '')).split(',') if c.strip()]
@@ -224,27 +229,27 @@ class AutoSEOPipeline:
         self.prompt_content = f"{pmts['PROMPT_TEMPLATE']}\n{pmts['PROMPT_CONTENT_STRATEGY']}\n{pmts['PROMPT_KEYWORD_SEARCH']}\n[SERP_STYLE_AI_EXTRACT]: {self.serp_style}"
         self.add_log(ui_log, f"🧠 [PROMPT_CONTENT TỔNG HỢP (Chuẩn bị gửi AI)]:\n{self.prompt_content[:300]}...", "detail")
 
-        dist = self.target_length // max(len(self.all_kws), 1)
+        dist = self.min_w // max(len(self.all_kws), 1)
         seed_sang_tao = random.randint(10000, 99999)
         
-        force = f"""\n[ÉP LUẬT TỐI THƯỢNG - SOP MẶC ĐỊNH]:
+        # ĐÃ CẬP NHẬT LUẬT ÉP WORD COUNT: NẰM CHÍNH XÁC TRONG KHOẢNG MIN - MAX
+        force = f"""\n[YÊU CẦU SINH TỬ - BẮT BUỘC TUÂN THỦ]:
         1. CẤM CHÀO HỎI (Cấm 'Kính thưa', 'Chào các Sếp'). Vào thẳng Sapo.
         2. H1: Chứa "{self.all_kws[0]}" ở GIỮA/CUỐI. Cấm đặt đầu câu.
-        3. THUẬT TOÁN RẢI TỪ KHÓA:
-        - Từ khóa chính "{self.all_kws[0]}" (x3). Các từ "{', '.join(self.all_kws[1:])}" mỗi từ x1.
-        - Bắt buộc rải đều từ khóa tuần tự từ trên xuống. Khoảng cách xấp xỉ {dist} chữ. Đặt tự nhiên lọt thỏm giữa câu. Cấm nhồi nhét 1 chỗ.
+        3. RẢI TỪ KHÓA: Từ khóa chính "{self.all_kws[0]}" (x3). Các từ "{', '.join(self.all_kws[1:])}" mỗi từ x1.
+        Rải đều từ khóa tuần tự từ trên xuống. Khoảng cách xấp xỉ {dist} chữ. Đặt tự nhiên lọt thỏm giữa câu. Cấm nhồi nhét 1 chỗ.
         4. ĐỊNH DẠNG HTML (QUAN TRỌNG):
         - BẮT BUỘC dùng thẻ <ul> và <li> nếu có liệt kê danh sách.
         - TUYỆT ĐỐI KHÔNG DÙNG ký tự Markdown như `*` hay `-` để gạch đầu dòng. KHÔNG in đậm `**` từ khóa.
         - H3 phải đánh số 1., 2..
-        5. ĐỘ DÀI BẮT BUỘC & CẤU TRÚC ĐOẠN VĂN:
-        - BẮT BUỘC BÀI VIẾT PHẢI ĐẠT ĐỘ DÀI TỐI THIỂU {self.target_length} CHỮ. Bạn hãy phân tích sâu và mở rộng luận điểm.
-        - Cấm viết dài thoòng. Ngắn dài đan xen (3-4 câu/đoạn). Mỗi đoạn bọc trong 1 thẻ <p> riêng biệt. Xóa cấu trúc cũ: {st.session_state.evolution_cache}.
-        6. GÓC NHÌN SÁNG TẠO (Seed: {seed_sang_tao}): Bắt buộc lập luận theo một góc độ hoàn toàn khác so với bài trước.
+        5. SỐ LƯỢNG CHỮ (QUAN TRỌNG NHẤT):
+        - BẮT BUỘC BÀI VIẾT PHẢI CÓ TỔNG SỐ CHỮ NẰM TRONG KHOẢNG TỪ {self.min_w} ĐẾN TỐI ĐA {self.max_w} CHỮ. Bạn hãy phân tích sâu để đạt tối thiểu {self.min_w} chữ, nhưng KHÔNG ĐƯỢC vượt quá {self.max_w} chữ. BỊ PHẠT NẾU VIẾT QUÁ NGẮN.
+        - Ngắn dài đan xen (3-4 câu/đoạn). Mỗi đoạn bọc trong 1 thẻ <p> riêng biệt. Xóa cấu trúc cũ: {st.session_state.evolution_cache}.
+        6. GÓC NHÌN (Seed: {seed_sang_tao}): Lập luận theo một góc độ hoàn toàn khác so với bài trước.
         7. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>."""
         
         m_prompt = f"{self.prompt_content}\n{pmts['PROMPT_SEO_GLOBAL_RULE']}\n{pmts['PROMPT_AI_HUMANIZER']}\n{force}"
-        m_prompt = m_prompt.replace('{{ws_persona}}', str(self.target_web.get('WS_PERSONA', ''))).replace('{{kw_intent}}', str(self.main_kw_row.get('KW_INTENT', ''))).replace('{{keyword}}', self.all_kws[0]).replace('{{word_count}}', str(self.target_length))
+        m_prompt = m_prompt.replace('{{ws_persona}}', str(self.target_web.get('WS_PERSONA', ''))).replace('{{kw_intent}}', str(self.main_kw_row.get('KW_INTENT', ''))).replace('{{keyword}}', self.all_kws[0])
         for i, k in enumerate(self.all_kws): m_prompt = re.sub(rf'\[?REP_KW_{i+1}\]?', k, m_prompt, flags=re.IGNORECASE)
 
         gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
@@ -325,67 +330,72 @@ class AutoSEOPipeline:
         for h in soup.find_all(['h1', 'h2']):
             if h.find('a'): h.a.unwrap()
 
-        # LINK INJECTION VỚI STRICT QUOTA LOCK
         missed = []
         for k in self.all_kws:
-            url, is_e = "", False
-            if self.injected_ext < self.out_lim and ou: url, is_e = random.choice(ou), True
-            elif self.injected_int < self.in_lim and iu: url, is_e = random.choice(iu), False
-            if not url: continue 
-            
             injected = False
             for p in soup.find_all('p'):
                 if not p.find('a') and re.search(r'(?i)' + re.escape(k), p.get_text()):
-                    p.replace_with(BeautifulSoup(re.sub(r'(?i)' + re.escape(k), lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(p), count=1), 'html.parser'))
-                    injected = True
-                    if is_e: self.injected_ext += 1
-                    else: self.injected_int += 1
+                    url, is_e = "", False
+                    if self.injected_ext < self.out_lim and ou: url, is_e = random.choice(ou), True
+                    elif self.injected_int < self.in_lim and iu: url, is_e = random.choice(iu), False
+                    
+                    if url:
+                        p.replace_with(BeautifulSoup(re.sub(r'(?i)' + re.escape(k), lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(p), count=1), 'html.parser'))
+                        injected = True
+                        if is_e: self.injected_ext += 1
+                        else: self.injected_int += 1
                     break
             
             if not injected: missed.append(k)
 
-        # RẢI BÙ BẰNG AI VỚI STRICT QUOTA LOCK
+        # ĐÃ CẬP NHẬT: RẢI LINK BÙ VÀO ĐOẠN VĂN SẴN CÓ (CHỐNG CÂU CỤT LỦN)
+        pfx_list = [
+            "Bên cạnh đó, kinh nghiệm cho thấy việc hiểu rõ về {kw} mang lại góc nhìn toàn diện hơn.",
+            "Nhiều người đi trước chia sẻ rằng, tối ưu hóa yếu tố {kw} thường giải quyết được vấn đề lõi.",
+            "Trong quá trình triển khai, nếu áp dụng chuẩn xác {kw} sẽ thấy sự khác biệt rõ rệt.",
+            "Thực tế, một chiến lược khôn ngoan không thể bỏ qua việc ứng dụng {kw} đúng lúc."
+        ]
+        
         gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
         gem_mods = [m.strip() for m in str(self.dashboard.get('GEMINI_MODEL', 'gemini-1.5-flash')).split(',') if m.strip()]
         
         if missed:
-            all_p = soup.find_all('p')
             for k in missed:
                 url, is_e = "", False
-                # CHECK LẠI QUOTA MỘT LẦN NỮA TRƯỚC KHI RẢI BÙ
                 if self.injected_ext < self.out_lim and ou: url, is_e = random.choice(ou), True
                 elif self.injected_int < self.in_lim and iu: url, is_e = random.choice(iu), False
                 
-                # NẾU HẾT QUOTA -> BỎ QUA LUÔN TỪ KHÓA NÀY, KHÔNG CHÈN, KHÔNG ĐẾM.
                 if not url: continue 
                 
                 gen_txt = ""
                 if gem_keys:
                     try:
                         genai.configure(api_key=gem_keys[0])
-                        fb_pmt = f"Chủ đề bài viết: '{self.final_title}'. Viết 1 đoạn văn mở rộng (khoảng 2-4 câu) phân tích sâu hơn về chủ đề. BẮT BUỘC chứa chính xác cụm từ '{k}' tự nhiên trong câu. TRẢ VỀ VĂN BẢN TRƠN, KHÔNG DÙNG MARKDOWN."
+                        fb_pmt = f"Chủ đề bài viết: '{self.final_title}'. Viết 1-2 câu tiếp nối tự nhiên để bổ sung ý cho một đoạn văn phân tích. BẮT BUỘC chứa chính xác cụm từ '{k}' tự nhiên trong câu. TRẢ VỀ VĂN BẢN TRƠN, KHÔNG DÙNG MARKDOWN."
                         with concurrent.futures.ThreadPoolExecutor() as ex:
                             gen_txt = ex.submit(lambda: genai.GenerativeModel(gem_mods[0]).generate_content(fb_pmt).text).result(timeout=15).strip()
                             gen_txt = gen_txt.replace('**', '')
                     except: pass
                 
                 if not gen_txt or k.lower() not in gen_txt.lower():
-                    gen_txt = f"Bên cạnh những yếu tố trên, để tối ưu trải nghiệm và đảm bảo an toàn, việc tìm hiểu thêm về {k} là một sự chuẩn bị vô cùng cần thiết cho mọi Sếp."
+                    gen_txt = random.choice(pfx_list).replace('{kw}', k)
                 
                 pattern = re.compile(re.escape(k), re.IGNORECASE)
                 gen_txt = pattern.sub(f"<a href='{url}'>{k}</a>", gen_txt, count=1)
-                new_p = BeautifulSoup(f"<p>{gen_txt}</p>", 'html.parser')
                 
-                if len(all_p) > 2:
-                    idx = random.randint(1, len(all_p) - 2)
-                    all_p[idx].insert_after(new_p)
-                elif all_p:
-                    all_p[0].insert_after(new_p)
+                # NỐI TRỰC TIẾP VÀO ĐOẠN VĂN CÓ SẴN
+                avail_p = [p for p in soup.find_all('p') if len(p.get_text(strip=True)) > 20 and not p.find('a') and not p.find('img')]
+                if avail_p:
+                    target_p = random.choice(avail_p)
+                    target_p.append(BeautifulSoup(f" {gen_txt}", 'html.parser'))
                 else:
-                    soup.append(new_p)
+                    all_p = soup.find_all('p')
+                    if len(all_p) > 1:
+                        all_p[random.randint(1, len(all_p) - 1)].append(BeautifulSoup(f" {gen_txt}", 'html.parser'))
+                    elif all_p:
+                        all_p[0].append(BeautifulSoup(f" {gen_txt}", 'html.parser'))
                     
-                self.add_log(ui_log, f"⚠️ AI sót '{k}', đã tạo 1 đoạn văn content riêng cấy ẩn vào giữa bài.", "warn")
-                # Trừ Quota NGAY LẬP TỨC ĐỂ CẤM 4/3
+                self.add_log(ui_log, f"⚠️ AI sót '{k}', đã gắn bù liền mạch vào 1 đoạn văn đang có.", "warn")
                 if is_e: self.injected_ext += 1
                 else: self.injected_int += 1
 
@@ -440,7 +450,7 @@ class AutoSEOPipeline:
         txt, k0 = soup.get_text(' ', strip=True), self.all_kws[0].lower()
         
         wc = len(txt.split())
-        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết đạt {wc} chữ (Target: {self.target_length} chữ trong khoảng {self.dashboard.get('WORD_COUNT_RANGE', '')}).", "detail")
+        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết đạt {wc} chữ (Yêu cầu: {self.min_w} - {self.max_w} chữ).", "detail")
         
         h1 = soup.find('h1')
         s_h1 = 30 if h1 and k0 in h1.get_text().lower() else 0
@@ -463,6 +473,10 @@ class AutoSEOPipeline:
         if seo < req: fails.append(f"SEO ({seo}/{req})")
         if ai > 20: fails.append(f"AI ({ai}%)")
         if read < 60: fails.append(f"Read ({read})")
+        
+        # ĐÃ CẬP NHẬT: KCS ÉP ĐÁNH RỚT NẾU SAI ĐỘ DÀI
+        if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
+        if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
         if h1: h1.decompose()
         self.raw_html = str(soup)
@@ -622,12 +636,12 @@ with tab1:
                     info_msg.empty()
                     if upd:
                         ws.batch_update(upd)
-                        st.success(f"🎉 Đã chốt sổ và bắn bài thành công {count} bài!")
+                        st.success(f"🎉 Đã chốt sổ và bắn thành công {count} bài quá hạn!")
                         time.sleep(2)
                         st.rerun()
                     else: 
                         auto_time = dash_dict.get('AUTO_RUN_TIME', '')
-                        bot.add_log(ui_log, f"ℹ️ Không có bài PENDING nào đã quá giờ đăng ({auto_time}) để ép lên.", "warn")
+                        bot.add_log(ui_log, f"ℹ️ Không có bài viết ở trạng thái PENDING hoặc đang ngoài giờ lên bài lúc ({auto_time}). Kiểm tra lại nhé Ní ^^!", "warn")
                 else: bot.add_log(ui_log, "🛑 Không tìm thấy cột trạng thái trong Sheet REPORT.", "error")
         except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi hệ thống Đăng bài: {str(e)[:150]}", "error")
 
