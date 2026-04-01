@@ -108,11 +108,12 @@ def load_data_from_gsheets():
 # 🤖 CORE ENGINE: AUTO SEO PIPELINE
 # ==========================================
 class AutoSEOPipeline:
-    def __init__(self, data_frames):
+    def __init__(self, data_frames, master_log_list):
         self.db = data_frames
         self.dashboard = self._parse_dashboard()
         self.now_vn = get_vn_now()
-        self.history_log = []
+        # Dùng List Log chung để không bị mất hiển thị bài cũ
+        self.history_log = master_log_list
         
         self.target_web = None
         self.publish_time = None
@@ -140,7 +141,9 @@ class AutoSEOPipeline:
         
         self.history_log.append(f"[{t_str}] {formatted_msg}")
         if ui_placeholder: 
-            ui_placeholder.markdown(f'<div class="log-box">{"<br>".join(self.history_log)}</div>', unsafe_allow_html=True)
+            # Auto scroll xuống dưới cùng
+            log_html = f'<div class="log-box" id="logbox">{"<br>".join(self.history_log)}</div><script>var objDiv = document.getElementById("logbox"); objDiv.scrollTop = objDiv.scrollHeight;</script>'
+            ui_placeholder.markdown(log_html, unsafe_allow_html=True)
 
     def _parse_dashboard(self) -> dict:
         df = self.db.get('DASHBOARD', pd.DataFrame())
@@ -185,6 +188,9 @@ class AutoSEOPipeline:
                 ws_limit = self.safe_int(web.get('WS_POST_LIMIT', 1), 1)
                 posts_on_day_x = df_report[(df_report['REP_WS_NAME'].astype(str).str.strip() == ws_name) & (df_report['REP_PUBLISH_DATE'].astype(str).str.strip().str.startswith(day_x_str))] if not df_report.empty and 'REP_PUBLISH_DATE' in df_report.columns else pd.DataFrame()
                 
+                # CẬP NHẬT: In rõ Log kiểm tra Quota như Sếp yêu cầu
+                self.add_log(ui_log, f"🔍 [QUOTA CHECK] Global ({posts_today}/{batch_size}) | Local ({ws_name}: {len(posts_on_day_x)}/{ws_limit})")
+                
                 if len(posts_on_day_x) < ws_limit:
                     start_time_vn = VN_TZ.localize(datetime.datetime.combine(day_x, datetime.time(start_h, start_m)))
                     end_time_vn = VN_TZ.localize(datetime.datetime.combine(day_x, datetime.time(end_h, end_m)))
@@ -206,7 +212,7 @@ class AutoSEOPipeline:
                     
                     self.target_web = web
                     self.publish_time = pub_time
-                    self.add_log(ui_log, f"✅ [ALLOCATED] Target Domain locked: '{ws_name}' | Scheduled for: {pub_time.strftime('%H:%M %d/%m/%Y')}.")
+                    self.add_log(ui_log, f"✅ [ALLOCATED] Target Domain locked: '{ws_name}' | Scheduled for: {pub_time.strftime('%H:%M %d/%m/%Y')}.", "success")
                     return True
                     
         self.add_log(ui_log, f"🛑 Đã quét full {max_days} ngày. Không còn Slot.", "error")
@@ -277,13 +283,10 @@ class AutoSEOPipeline:
             
         return True
 
-    # --- BƯỚC 4: LLM ENGINE (FALLBACK LIÊN HOÀN - CẮT ĐỨT CLAUDE SONNET) ---
+    # --- BƯỚC 4: LLM ENGINE ---
     def call_llm_with_timeout(self, prompt, timeout=90, ui_log=None):
-        # Bốc mảng API Keys và Cắt dấu phẩy
         gem_keys_raw = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
         or_keys_raw = [k.strip() for k in str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',') if k.strip()]
-        
-        # Bốc mảng Tên Models và Cắt dấu phẩy
         gem_models_raw = [m.strip() for m in str(self.dashboard.get('GEMINI_MODEL', 'gemini-1.5-flash')).split(',') if m.strip()]
         or_models_raw = [m.strip() for m in str(self.dashboard.get('OPENROUTER_MODEL', 'openai/gpt-4o-mini')).split(',') if m.strip()]
 
@@ -291,7 +294,6 @@ class AutoSEOPipeline:
             self.add_log(ui_log, "🛑 [API ERROR] Không tìm thấy API Key nào ở Tab DASHBOARD.", "error")
             return None
 
-        # 1. Thử Vòng Lặp Gemini (Quét từng Model, từng Key)
         if gem_keys_raw:
             for gem_key in gem_keys_raw:
                 genai.configure(api_key=gem_key)
@@ -303,13 +305,11 @@ class AutoSEOPipeline:
                     
                     with concurrent.futures.ThreadPoolExecutor() as executor:
                         future = executor.submit(run_gemini)
-                        try: 
-                            return future.result(timeout=timeout) # Thành công -> Thoát
+                        try: return future.result(timeout=timeout) 
                         except Exception as e:
                             err_msg = str(e).replace('\n', ' ')
-                            self.add_log(ui_log, f"⚠️ [API WARN] Gemini sập ({gem_model}): {err_msg[:120]}. Thử Model tiếp theo...", "warn")
+                            self.add_log(ui_log, f"⚠️ [API WARN] Gemini sập ({gem_model}): {err_msg[:120]}", "warn")
 
-        # 2. Thử Vòng Lặp OpenRouter (TUYỆT ĐỐI TUÂN THỦ TÊN MODEL TRONG SHEET)
         if or_keys_raw:
             for or_key in or_keys_raw:
                 for or_model in or_models_raw:
@@ -324,8 +324,7 @@ class AutoSEOPipeline:
                     
                     with concurrent.futures.ThreadPoolExecutor() as executor:
                         future = executor.submit(run_openrouter)
-                        try: 
-                            return future.result(timeout=timeout) # Thành công -> Thoát
+                        try: return future.result(timeout=timeout)
                         except requests.exceptions.RequestException as e:
                             err_details = e.response.text if e.response else str(e)
                             self.add_log(ui_log, f"🛑 [API FAIL] OpenRouter sập ({or_model}): {err_details[:120]}", "error")
@@ -352,9 +351,10 @@ class AutoSEOPipeline:
         
         self.add_log(ui_log, f"🧠 [PROMPT BUILDER] Injecting Persona: '{ws_persona}' | Search Intent: '{kw_intent}'")
         
-        p_template = prompts['PROMPT_TEMPLATE'].replace('{{ws_persona}}', ws_persona).replace('{{kw_intent}}', kw_intent).replace('{{keyword}}', main_kw).replace('{{word_count}}', str(self.target_length)).replace('{{secondary_keywords}}', subs)
-        dist_cmd = f"\nBắt buộc rải đều từ khóa tuần tự. Khoảng cách xấp xỉ {distance} chữ. Đặt tự nhiên lọt thỏm giữa câu, KHÔNG mặc định đầu câu."
+        # CẬP NHẬT: Trị dứt điểm chứng gõ nhầm REP_KW_1 của Sếp trong Prompt
+        p_template = prompts['PROMPT_TEMPLATE'].replace('{{ws_persona}}', ws_persona).replace('{{kw_intent}}', kw_intent).replace('{{keyword}}', main_kw).replace('[REP_KW_1]', main_kw).replace('REP_KW_1', main_kw).replace('{{secondary_keywords}}', subs)
         
+        dist_cmd = f"\nBắt buộc rải đều từ khóa tuần tự. Khoảng cách xấp xỉ {distance} chữ. Đặt tự nhiên lọt thỏm giữa câu, KHÔNG mặc định đầu câu."
         chain_1 = f"{p_template}\n{prompts['PROMPT_CONTENT_STRATEGY']}\n{prompts['PROMPT_KEYWORD_SEARCH']}{dist_cmd}\n{prompts['PROMPT_SERP_STYLE']}\n[Dữ liệu SERP]:\n{self.serp_style}"
         mutation = f"\n[Lệnh Tự Tiến Hóa]: CẤM sử dụng lại cấu trúc cũ sau đây: {st.session_state.evolution_cache}. Đảo số lượng Heading và độ dài câu hoàn toàn khác." if st.session_state.evolution_cache else ""
         chain_2 = f"{prompts['PROMPT_SEO_GLOBAL_RULE']}{mutation}\n{prompts['PROMPT_AI_HUMANIZER']}\nCHỈ TRẢ VỀ HTML (Bắt đầu bằng <h1>)."
@@ -362,9 +362,7 @@ class AutoSEOPipeline:
         master_prompt = f"{chain_1}\n\n{chain_2}"
 
         response = self.call_llm_with_timeout(master_prompt, timeout=90, ui_log=ui_log)
-        if not response:
-            self.add_log(ui_log, "🛑 [LLM TIMEOUT] Bó tay, mọi Gateway đều không phản hồi. Terminate Task.", "error")
-            return False
+        if not response: return False
             
         self.raw_html = response.replace('```html', '').replace('```', '').strip()
         soup = BeautifulSoup(self.raw_html, 'html.parser')
@@ -461,7 +459,8 @@ class AutoSEOPipeline:
         
         seo_score = 0
         h1 = soup.find('h1')
-        if h1 and str(h1.get_text(strip=True)).lower().startswith(self.all_kws[0].lower()): seo_score += 30
+        # CẬP NHẬT: H1 Chấp nhận Random vị trí từ khóa (Gỡ bỏ hàm .startswith)
+        if h1 and self.all_kws[0].lower() in str(h1.get_text(strip=True)).lower(): seo_score += 30
         if any(self.all_kws[0].lower() in str(h2.get_text()).lower() for h2 in soup.find_all('h2')): seo_score += 20
         if self.all_kws[0].lower() in " ".join(words[:100]).lower(): seo_score += 10
         if soup.find('img', alt=re.compile(r'(?i)' + re.escape(self.all_kws[0]))): seo_score += 10
@@ -599,9 +598,11 @@ with tab1:
         if needed <= 0:
             ui_log.markdown('<div class="log-box"><span class="log-error">🛑 Đã đạt BATCH_SIZE hôm nay.</span></div>', unsafe_allow_html=True)
         else:
+            # CẬP NHẬT: Tạo biến master_logs nối tiếp toàn bộ quá trình chạy
+            master_logs = []
             for i in range(needed):
-                bot = AutoSEOPipeline(db_mock)
-                bot.add_log(ui_log, f"🚀 --- INITIATING GENERATION SEQUENCE {i+1}/{needed} ---")
+                bot = AutoSEOPipeline(db_mock, master_logs)
+                bot.add_log(ui_log, f"<br>🚀 --- INITIATING GENERATION SEQUENCE {i+1}/{needed} ---", "success")
                 
                 start_time = time.time()
                 try:
