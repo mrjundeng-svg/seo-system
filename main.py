@@ -36,8 +36,12 @@ st.markdown("""
     div[data-testid="metric-container"] div { font-size: 2.2rem !important; color: #1e293b; font-weight: bold; }
     .log-box {
         background-color: #0f172a; color: #10b981; font-family: 'Courier New', monospace; font-size: 14px;
-        padding: 15px; border-radius: 8px; height: 450px; overflow-y: auto; border: 1px solid #334155; line-height: 1.6;
+        padding: 15px; border-radius: 8px; height: 500px; overflow-y: auto; border: 1px solid #334155; line-height: 1.6;
+        word-wrap: break-word;
     }
+    .log-error { color: #ef4444; font-weight: bold; }
+    .log-warn { color: #f59e0b; }
+    .log-success { color: #3b82f6; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -45,7 +49,7 @@ st.markdown("""
 SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw' 
 
 # ==========================================
-# 🔐 TẦNG AUTHENTICATION (BẢO MẬT)
+# 🔐 TẦNG AUTHENTICATION
 # ==========================================
 def check_password():
     if "logged_in" not in st.session_state:
@@ -56,7 +60,6 @@ def check_password():
         username = st.text_input("Username", key="username")
         password = st.text_input("Password", type="password", key="password")
         if st.button("Access Pipeline"):
-            # Lấy thông tin đăng nhập từ st.secrets
             if username == st.secrets.get("admin_user", "admin") and password == st.secrets.get("admin_pass", "admin123"):
                 st.session_state["logged_in"] = True
                 st.rerun()
@@ -128,9 +131,14 @@ class AutoSEOPipeline:
         if 'evolution_cache' not in st.session_state:
             st.session_state.evolution_cache = ""
 
-    def add_log(self, ui_placeholder, message):
+    def add_log(self, ui_placeholder, message, level="info"):
         t_str = get_vn_now().strftime('%H:%M:%S')
-        self.history_log.append(f"[{t_str}] {message}")
+        formatted_msg = message
+        if level == "error": formatted_msg = f'<span class="log-error">{message}</span>'
+        elif level == "warn": formatted_msg = f'<span class="log-warn">{message}</span>'
+        elif level == "success": formatted_msg = f'<span class="log-success">{message}</span>'
+        
+        self.history_log.append(f"[{t_str}] {formatted_msg}")
         if ui_placeholder: 
             ui_placeholder.markdown(f'<div class="log-box">{"<br>".join(self.history_log)}</div>', unsafe_allow_html=True)
 
@@ -157,18 +165,17 @@ class AutoSEOPipeline:
             srange = str(self.dashboard.get('POST_SPACING_MINUTES', '30-90')).split('-')
             min_space, max_space = self.safe_int(srange[0], 30), self.safe_int(srange[-1], 90)
         except:
-            self.add_log(ui_log, "🛑 Lỗi parse Config Thời gian. Terminate.")
+            self.add_log(ui_log, "🛑 [SYSTEM ERROR] Lỗi định dạng thời gian ở DASHBOARD.", "error")
             return False
 
         today_str = self.now_vn.strftime('%Y-%m-%d')
         posts_today = len(df_report[df_report['REP_CREATED_AT'].astype(str).str.strip().str.startswith(today_str)]) if not df_report.empty and 'REP_CREATED_AT' in df_report.columns else 0
         
         if posts_today >= batch_size:
-            self.add_log(ui_log, f"🛑 Global Quota Exceeded (Đã đạt {batch_size} bài/ngày). Terminate Task.")
+            self.add_log(ui_log, f"🛑 Global Quota Exceeded (Đã đạt {batch_size} bài/ngày).", "error")
             return False
 
         available_webs = df_web.sample(frac=1).reset_index(drop=True)
-        
         for day_offset in range(max_days + 1):
             day_x = self.now_vn.date() + datetime.timedelta(days=day_offset)
             day_x_str = day_x.strftime('%Y-%m-%d')
@@ -176,16 +183,13 @@ class AutoSEOPipeline:
             for _, web in available_webs.iterrows():
                 ws_name = str(web.get('WS_NAME', '')).strip()
                 ws_limit = self.safe_int(web.get('WS_POST_LIMIT', 1), 1)
-                
-                posts_on_day_x = df_report[(df_report['REP_WS_NAME'].astype(str).str.strip() == ws_name) & 
-                                           (df_report['REP_PUBLISH_DATE'].astype(str).str.strip().str.startswith(day_x_str))] if not df_report.empty and 'REP_PUBLISH_DATE' in df_report.columns else pd.DataFrame()
+                posts_on_day_x = df_report[(df_report['REP_WS_NAME'].astype(str).str.strip() == ws_name) & (df_report['REP_PUBLISH_DATE'].astype(str).str.strip().str.startswith(day_x_str))] if not df_report.empty and 'REP_PUBLISH_DATE' in df_report.columns else pd.DataFrame()
                 
                 if len(posts_on_day_x) < ws_limit:
                     start_time_vn = VN_TZ.localize(datetime.datetime.combine(day_x, datetime.time(start_h, start_m)))
                     end_time_vn = VN_TZ.localize(datetime.datetime.combine(day_x, datetime.time(end_h, end_m)))
                     
                     if day_offset == 0 and self.now_vn > end_time_vn: continue
-                    
                     base_time = max(self.now_vn, start_time_vn) if day_offset == 0 else start_time_vn
                     
                     if posts_on_day_x.empty:
@@ -205,7 +209,7 @@ class AutoSEOPipeline:
                     self.add_log(ui_log, f"✅ [ALLOCATED] Target Domain locked: '{ws_name}' | Scheduled for: {pub_time.strftime('%H:%M %d/%m/%Y')}.")
                     return True
                     
-        self.add_log(ui_log, f"🛑 Đã quét full {max_days} ngày. Không còn Slot hợp lệ. Terminate.")
+        self.add_log(ui_log, f"🛑 Đã quét full {max_days} ngày. Không còn Slot.", "error")
         return False
 
     # --- BƯỚC 2 & 3: KEYWORD, SERP & CLUSTERING ---
@@ -236,7 +240,7 @@ class AutoSEOPipeline:
         content_kws = sub_df.head(kws_to_take)['KW_TEXT'].tolist() if not sub_df.empty else []
         self.all_kws = [main_kw] + content_kws
         
-        # Log chi tiết Keyword
+        # In chi tiết danh sách từ khóa được chọn
         self.add_log(ui_log, f"📦 [DATA INGESTION] Assigned {len(self.all_kws)} Keywords Cluster: {', '.join(self.all_kws)}")
 
         wrange = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
@@ -267,49 +271,55 @@ class AutoSEOPipeline:
                         self.add_log(ui_log, f"🕵️ [SERP Analysis] Extracted Competitor Content Framework from: {links[0]}")
                         serp_success = True
             except Exception as e:
-                self.add_log(ui_log, f"⚠️ [SERP TIMEOUT] Lỗi cào Google: {str(e)[:50]}. Chuyển qua Internal Check.")
+                self.add_log(ui_log, f"⚠️ [SERP TIMEOUT] Lỗi cào Google: {str(e)[:100]}", "warn")
         
         if not serp_success:
             self.add_log(ui_log, f"🕵️ [SERP Analysis] Fallback: Sử dụng Internal Content Framework (Cache).")
             
         return True
 
-    # --- BƯỚC 4: LLM ENGINE ---
+    # --- BƯỚC 4: LLM ENGINE (VỚI RAW EXCEPTION LOGGING) ---
     def call_llm_with_timeout(self, prompt, timeout=90, ui_log=None):
-        gem_key = str(self.dashboard.get('GEMINI_API_KEY', '')).split(',')[0].strip()
-        or_key = str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',')[0].strip()
+        gem_key_raw = str(self.dashboard.get('GEMINI_API_KEY', '')).split(',')[0].strip()
+        or_key_raw = str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',')[0].strip()
 
-        if not gem_key and not or_key:
-            self.add_log(ui_log, "🛑 [API ERROR] Không tìm thấy API Key nào ở DASHBOARD.")
+        if not gem_key_raw and not or_key_raw:
+            self.add_log(ui_log, "🛑 [API ERROR] Không tìm thấy API Key nào ở Tab DASHBOARD.", "error")
             return None
 
         def run_gemini():
-            genai.configure(api_key=gem_key)
-            model = genai.GenerativeModel('gemini-1.5-pro-latest')
+            genai.configure(api_key=gem_key_raw)
+            # Dùng model ổn định thay vì latest để tránh lỗi 404
+            model = genai.GenerativeModel('gemini-1.5-pro') 
             return model.generate_content(prompt).text
 
         def run_openrouter():
             res = requests.post("https://openrouter.ai/api/v1/chat/completions",
-                                headers={"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"},
+                                headers={"Authorization": f"Bearer {or_key_raw}", "Content-Type": "application/json"},
                                 json={"model": "google/gemini-pro", "messages": [{"role": "user", "content": prompt}]}, 
                                 timeout=timeout)
-            res.raise_for_status()
+            res.raise_for_status() # Bắt buộc quăng lỗi nếu HTTP != 200
             return res.json()["choices"][0]["message"]["content"]
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            if gem_key:
+            if gem_key_raw:
                 self.add_log(ui_log, f"🌐 [API CALL] Requesting Generation via Gemini API...")
                 future = executor.submit(run_gemini)
                 try: return future.result(timeout=timeout)
                 except Exception as e:
-                    self.add_log(ui_log, f"⚠️ [API WARN] Gemini Lỗi/Timeout: {str(e)[:60]}. Chuyển qua OpenRouter...")
+                    err_msg = str(e).replace('\n', ' ')
+                    self.add_log(ui_log, f"⚠️ [API WARN] Gemini (Key: {gem_key_raw[:5]}***) Lỗi: {err_msg[:150]}", "warn")
             
-            if or_key:
+            if or_key_raw:
                 self.add_log(ui_log, f"🌐 [API CALL] Requesting Generation via OpenRouter (LLM)...")
                 future = executor.submit(run_openrouter)
                 try: return future.result(timeout=timeout)
+                except requests.exceptions.RequestException as e:
+                    err_details = e.response.text if e.response else str(e)
+                    self.add_log(ui_log, f"🛑 [API FAIL] OpenRouter (Key: {or_key_raw[:5]}***) Lỗi: {err_details[:150]}", "error")
                 except Exception as e:
-                    self.add_log(ui_log, f"🛑 [API FAIL] OpenRouter Lỗi/Timeout: {str(e)[:60]}.")
+                    self.add_log(ui_log, f"🛑 [API FAIL] OpenRouter Lỗi cục bộ: {str(e)[:100]}", "error")
+                    
         return None
 
     def step4_llm_generation(self, ui_log) -> bool:
@@ -317,7 +327,8 @@ class AutoSEOPipeline:
         prompts = {k: str(self.dashboard.get(k, '')).strip() for k in req_keys}
         
         if any(not v for v in prompts.values()):
-            self.add_log(ui_log, "🛑 [KINGS CHECK FAIL] Thiếu dữ liệu lõi Prompt ở DASHBOARD. Terminate.")
+            empty_keys = [k for k, v in prompts.items() if not v]
+            self.add_log(ui_log, f"🛑 [KINGS CHECK FAIL] Thiếu cấu hình Prompt ở DASHBOARD: {', '.join(empty_keys)}", "error")
             return False
 
         ws_persona = str(self.target_web.get('WS_PERSONA', ''))
@@ -329,7 +340,6 @@ class AutoSEOPipeline:
         self.add_log(ui_log, f"🧠 [PROMPT BUILDER] Injecting Persona: '{ws_persona}' | Search Intent: '{kw_intent}'")
         
         p_template = prompts['PROMPT_TEMPLATE'].replace('{{ws_persona}}', ws_persona).replace('{{kw_intent}}', kw_intent).replace('{{keyword}}', main_kw).replace('{{word_count}}', str(self.target_length)).replace('{{secondary_keywords}}', subs)
-        
         dist_cmd = f"\nBắt buộc rải đều từ khóa tuần tự. Khoảng cách xấp xỉ {distance} chữ. Đặt tự nhiên lọt thỏm giữa câu, KHÔNG mặc định đầu câu."
         
         chain_1 = f"{p_template}\n{prompts['PROMPT_CONTENT_STRATEGY']}\n{prompts['PROMPT_KEYWORD_SEARCH']}{dist_cmd}\n{prompts['PROMPT_SERP_STYLE']}\n[Dữ liệu SERP]:\n{self.serp_style}"
@@ -340,15 +350,12 @@ class AutoSEOPipeline:
 
         response = self.call_llm_with_timeout(master_prompt, timeout=90, ui_log=ui_log)
         if not response:
-            self.add_log(ui_log, "🛑 [LLM TIMEOUT] Gateways hoàn toàn không phản hồi. Terminate Task.")
+            self.add_log(ui_log, "🛑 [LLM TIMEOUT] Gateways hoàn toàn không phản hồi. Terminate Task.", "error")
             return False
             
         self.raw_html = response.replace('```html', '').replace('```', '').strip()
-        
         soup = BeautifulSoup(self.raw_html, 'html.parser')
-        h2_count = len(soup.find_all('h2'))
-        p_count = len(soup.find_all('p'))
-        st.session_state.evolution_cache = f"{h2_count} thẻ H2 và {p_count} thẻ P"
+        st.session_state.evolution_cache = f"{len(soup.find_all('h2'))} thẻ H2 và {len(soup.find_all('p'))} thẻ P"
         
         return True
 
@@ -471,7 +478,7 @@ class AutoSEOPipeline:
         if read_score < 60: fails.append(f"Khó đọc ({read_score})")
         
         if fails:
-            self.add_log(ui_log, f"❌ [KCS FAILED] {', '.join(fails)}")
+            self.add_log(ui_log, f"❌ [KCS FAILED] Bài viết bị loại do: {', '.join(fails)}", "error")
             return f"FAIL: {' | '.join(fails)}"
         
         return "PENDING"
@@ -523,6 +530,10 @@ class AutoSEOPipeline:
                 batch_inc(kw_sheet, 'KW_TEXT', self.all_kws, 'KW_STATUS', 'KW_DATE')
                 if self.used_imgs: batch_inc(img_sheet, 'IMG_URL', self.used_imgs, 'IMG_STATUS', 'IMG_DATE')
                 
+                self.add_log(ui_log, f"✅ [TASK COMPLETED] Lưu thành công. Status: {final_result}", "success")
+            else:
+                self.add_log(ui_log, f"⚠️ [TASK FAILED] Log lỗi đã được ghi vào Sheet. Status: {final_result}", "warn")
+                
             bot_token = str(self.dashboard.get('TELEGRAM_BOT_TOKEN', '')).strip()
             chat_id = str(self.dashboard.get('TELEGRAM_CHAT_ID', '')).strip()
             if bot_token and chat_id:
@@ -530,7 +541,8 @@ class AutoSEOPipeline:
                 try: requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", data={'chat_id': chat_id, 'text': msg}, timeout=10)
                 except: pass
 
-        except Exception as e: pass
+        except Exception as e: 
+            self.add_log(ui_log, f"🛑 [DB ERROR] Lỗi ghi Google Sheet: {str(e)[:100]}", "error")
 
 # ==========================================
 # 🖥 MAIN WORKSPACE (UI TABS)
@@ -572,7 +584,7 @@ with tab1:
         needed = batch - p_today
         
         if needed <= 0:
-            ui_log.markdown('<div class="log-box">🛑 Đã đạt BATCH_SIZE hôm nay.</div>', unsafe_allow_html=True)
+            ui_log.markdown('<div class="log-box"><span class="log-error">🛑 Đã đạt BATCH_SIZE hôm nay.</span></div>', unsafe_allow_html=True)
         else:
             for i in range(needed):
                 bot = AutoSEOPipeline(db_mock)
@@ -588,15 +600,14 @@ with tab1:
                                 bot.step8_sync_db(ui_log, res)
                                 db_mock = load_data_from_gsheets() # Update RAM
                 except Exception as e:
-                    bot.add_log(ui_log, f"🛑 [CRITICAL ERROR] Hệ thống Crash: {e}")
+                    bot.add_log(ui_log, f"🛑 [CRITICAL ERROR] Hệ thống Crash: {str(e)[:150]}", "error")
                 
                 if time.time() - start_time > 300:
-                    bot.add_log(ui_log, "🛑 [WATCHDOG] Task Timeout Error (>5m). Force Kill.")
+                    bot.add_log(ui_log, "🛑 [WATCHDOG] Task Timeout Error (>5m). Force Kill để bảo vệ hệ thống.", "error")
                     break
                     
-            bot.add_log(ui_log, "<br>✅ BATCH EXECUTION COMPLETED.")
+            bot.add_log(ui_log, "<br>✅ BATCH EXECUTION COMPLETED.", "success")
             
-            # --- Bổ sung Notification & Reload ---
             st.success("🎉 QUÁ TRÌNH TẠO BÀI ĐÃ HOÀN TẤT!")
             if st.button("🔄 Bấm vào đây để Tải lại dữ liệu (Reload)", type="primary"):
                 load_data_from_gsheets.clear()
@@ -608,7 +619,7 @@ with tab2:
         st.dataframe(df_show, use_container_width=True, hide_index=True)
         st.markdown("---")
         titles = df_rep['REP_TITLE'].tolist()[::-1]
-        sel = st.selectbox("🔍 Deep Dive Inspection (Chọn bài viết):", titles)
+        sel = st.selectbox("🔍 Deep Dive Inspection (Chọn bài viết để nội soi log & HTML):", titles)
         if sel:
             row = df_rep[df_rep['REP_TITLE'] == sel].iloc[0]
             lc1, lc2 = st.columns(2)
@@ -617,7 +628,7 @@ with tab2:
                 st.markdown(f'<div class="log-box">{row.get("REP_LOG", "").replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
             with lc2:
                 st.markdown("**🌐 DOM Payload (Raw HTML):**")
-                st.text_area("", row.get('REP_HTML', ''), height=450, label_visibility="collapsed")
+                st.text_area("", row.get('REP_HTML', ''), height=500, label_visibility="collapsed")
     else: st.info("Chưa có dữ liệu bài viết.")
 
 with tab3:
