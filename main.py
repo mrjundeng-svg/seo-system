@@ -94,34 +94,25 @@ def load_data_from_gsheets():
         return None
 
 # ==========================================
-# 🚀 HÀM BẮN BÀI LÊN CMS (BLOGSPOT / WORDPRESS) - SỬA LẠI ĐÚNG BIẾN CỦA SẾP
+# 🚀 HÀM BẮN BÀI LÊN CMS (BLOGSPOT / WORDPRESS)
 # ==========================================
 def post_to_cms(website_row, title, html_content, dash_config):
-    # Lấy mail NHẬN của vệ tinh (Ví dụ: ...@blogger.com) từ cột WS_BLOG_CONTENT
     blog_receiver_email = str(website_row.get('WS_BLOG_CONTENT', '')).strip()
-    
     ws_user = str(website_row.get('WS_LOGIN_USER', '')).strip()
     ws_pass = str(website_row.get('WS_LOGIN_PASS', '')).strip()
     
-    # Kịch bản 1: BLOGSPOT (Gửi qua Mail-to-Blogger)
     if "@blogger.com" in blog_receiver_email.lower():
-        # Lấy mail GỬI ĐI từ DASHBOARD ĐÚNG THEO TÊN CỦA SẾP
         smtp_email = dash_config.get('EMAIL_SENDER', '').strip()
         smtp_pass = dash_config.get('EMAIL_SENDER_PASSWORD', '').strip()
-        
         if not smtp_email or not smtp_pass:
-            return False, f"Thiếu cấu hình EMAIL_SENDER hoặc EMAIL_SENDER_PASSWORD trong tab DASHBOARD."
-            
+            return False, f"Thiếu EMAIL_SENDER hoặc EMAIL_SENDER_PASSWORD trong tab DASHBOARD."
         try:
             msg = MIMEMultipart()
             msg['From'] = smtp_email
             msg['To'] = blog_receiver_email
             msg['Subject'] = title
-            
-            # Gắn HTML vào body
             msg.attach(MIMEText(html_content, 'html'))
             
-            # Gửi
             server = smtplib.SMTP('smtp.gmail.com', 587)
             server.starttls()
             server.login(smtp_email, smtp_pass) 
@@ -131,22 +122,17 @@ def post_to_cms(website_row, title, html_content, dash_config):
         except Exception as e:
             return False, f"Lỗi gửi Mail tới Blogger: {e}"
             
-    # Kịch bản 2: WORDPRESS (REST API)
     else:
         domain = str(website_row.get('WS_LINK_IN_BACKLINK', '')).split(',')[0].strip()
         if not domain: return False, "Không tìm thấy domain trong cột WS_LINK_IN_BACKLINK để cấu hình API WordPress."
         if not domain.endswith('/'): domain += '/'
         api_url = f"{domain}wp-json/wp/v2/posts"
-        
         data = {'title': title, 'content': html_content, 'status': 'publish'}
         try:
             res = requests.post(api_url, auth=(ws_user, ws_pass), json=data, timeout=30)
-            if res.status_code in [200, 201]:
-                return True, f"Đăng WordPress thành công (Post ID: {res.json().get('id')})"
-            else:
-                return False, f"Lỗi WP API ({res.status_code}): {res.text[:100]}"
-        except Exception as e:
-            return False, f"Lỗi kết nối WP: {e}"
+            if res.status_code in [200, 201]: return True, f"Đăng WordPress thành công (Post ID: {res.json().get('id')})"
+            else: return False, f"Lỗi WP API ({res.status_code}): {res.text[:100]}"
+        except Exception as e: return False, f"Lỗi kết nối WP: {e}"
 
 # ==========================================
 # 🤖 LÕI ĐỘNG CƠ: AUTO SEO PIPELINE
@@ -266,7 +252,7 @@ class AutoSEOPipeline:
         self.add_log(ui_log, "🛑 Đã full lịch.", "error")
         return False
 
-    # --- BƯỚC 2 & 3: TỪ KHÓA & SERP THÔNG MINH ---
+    # --- BƯỚC 2 & 3: TỪ KHÓA & SERP ---
     def step2_3_keyword_and_serp(self, ui_log) -> bool:
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty: return False
@@ -308,16 +294,7 @@ class AutoSEOPipeline:
                 org_results = res.get("organic_results", [])
                 
                 comp_links = [r["link"] for r in org_results[:10] if comp_list and any(c in r.get("link","") for c in comp_list)]
-                target_link = None
-                
-                if comp_links:
-                    target_link = comp_links[0]
-                    self.add_log(ui_log, f"🕵️ [SERP] Bắt được Đối thủ, đang cào bài: {target_link}")
-                else:
-                    top3_links = [r["link"] for r in org_results[:3]]
-                    if top3_links:
-                        target_link = top3_links[0]
-                        self.add_log(ui_log, f"🕵️ [SERP] Không thấy đối thủ. Lấy Top 3 Google: {target_link}", "warn")
+                target_link = comp_links[0] if comp_links else (org_results[0]["link"] if org_results else None)
                 
                 if target_link:
                     r_html = requests.get(target_link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
@@ -325,18 +302,13 @@ class AutoSEOPipeline:
                         soup = BeautifulSoup(r_html.text, 'html.parser')
                         for tag in soup(["script", "style", "nav", "footer"]): tag.decompose()
                         self.serp_style = "\n\n".join([tag.get_text(strip=True) for tag in soup.find_all(['h1', 'h2', 'h3', 'p'])])[:3000]
-                        self.add_log(ui_log, f"✅ [SERP] Trích xuất văn phong thành công!")
+                        self.add_log(ui_log, f"✅ [SERP] Cào văn phong thành công từ: {target_link}")
                         serp_success = True
-                    else: self.add_log(ui_log, f"⚠️ [SERP] Web chặn truy cập ({r_html.status_code}).", "warn")
-                else:
-                    self.add_log(ui_log, f"⚠️ [SERP] API không trả về link hợp lệ.", "warn")
-            except Exception as e:
-                self.add_log(ui_log, f"🛑 [SERP] Lỗi kết nối API: {str(e)[:80]}.", "error")
-                
-        if not serp_success: self.add_log(ui_log, f"🕵️ [SERP] Fallback: Sử dụng Internal Cache (Văn phong mặc định).")
+            except: pass
+        if not serp_success: self.add_log(ui_log, f"🕵️ [SERP] Dùng Internal Cache.")
         return True
 
-    # --- BƯỚC 4: GỌI AI VỚI PROMPT KỶ LUẬT ---
+    # --- BƯỚC 4: GỌI AI (ĐÃ FIX LỖI REP_KW_) ---
     def step4_llm_generation(self, ui_log) -> bool:
         req_keys = ['PROMPT_TEMPLATE', 'PROMPT_CONTENT_STRATEGY', 'PROMPT_KEYWORD_SEARCH', 'PROMPT_SERP_STYLE', 'PROMPT_SEO_GLOBAL_RULE', 'PROMPT_AI_HUMANIZER']
         prompts = {k: str(self.dashboard.get(k, '')).strip() for k in req_keys}
@@ -350,27 +322,26 @@ class AutoSEOPipeline:
         subs = ", ".join(self.all_kws[1:])
         dist = self.target_length // max(len(self.all_kws), 1)
 
-        self.add_log(ui_log, f"🧠 [PROMPT BUILDER] Đang rắp ráp lệnh từ 6 Keys trong DASHBOARD:", "detail")
-        self.add_log(ui_log, f"   + PROMPT_TEMPLATE: Sườn bài viết cơ bản.", "detail")
-        self.add_log(ui_log, f"   + PROMPT_CONTENT_STRATEGY: Định hướng nội dung.", "detail")
-        self.add_log(ui_log, f"   + PROMPT_KEYWORD_SEARCH: Quy tắc rải từ khóa.", "detail")
-        self.add_log(ui_log, f"   + PROMPT_SERP_STYLE: Giả lập văn phong.", "detail")
-        self.add_log(ui_log, f"   + PROMPT_SEO_GLOBAL_RULE: Luật SEO chống Spam (Ép H1).", "detail")
-        self.add_log(ui_log, f"   + PROMPT_AI_HUMANIZER: Khử văn phong máy móc.", "detail")
+        self.add_log(ui_log, f"🧠 [PROMPT BUILDER] Đang rắp ráp lệnh từ 6 Keys trong DASHBOARD...", "detail")
 
         force_kw = f"""
-        \n[LỆNH ÉP TỐI THƯỢNG - VI PHẠM SẼ BỊ PHẠT]:
-        1. TIÊU ĐỀ (THẺ H1): Bắt buộc chứa cụm từ "{main_kw}". Cụm từ này phải nằm NGẪU NHIÊN ở GIỮA hoặc CUỐI tiêu đề (TUYỆT ĐỐI KHÔNG ĐẶT Ở ĐẦU CÂU để tránh spam).
+        \n[LỆNH ÉP TỐI THƯỢNG - BẮT BUỘC TUÂN THỦ 100%]:
+        1. TIÊU ĐỀ (THẺ H1): Bắt buộc chứa cụm từ "{main_kw}". Cụm từ này phải nằm NGẪU NHIÊN ở GIỮA hoặc CUỐI tiêu đề (TUYỆT ĐỐI KHÔNG ĐẶT Ở ĐẦU CÂU).
         2. TỪ KHÓA TRONG BÀI (Giữ đúng 100% từng ký tự, không tự đổi dấu):
         - Từ khóa chính: "{main_kw}" (rải tự nhiên 2-3 lần trong phần thân bài)
         - Từ khóa phụ: "{subs}" (Mỗi từ xuất hiện đúng 1 lần, rải đều cách nhau {dist} chữ).
         3. TỔNG SỐ CHỮ: Chính xác khoảng {self.target_length} chữ.
         """
-        p_tpl = prompts['PROMPT_TEMPLATE'].replace('{{ws_persona}}', ws_per).replace('{{kw_intent}}', kw_int).replace('{{keyword}}', main_kw).replace('[REP_KW_1]', main_kw).replace('REP_KW_1', main_kw).replace('{{word_count}}', str(self.target_length))
-        c1 = f"{p_tpl}\n{prompts['PROMPT_CONTENT_STRATEGY']}\n{prompts['PROMPT_KEYWORD_SEARCH']}\n{prompts['PROMPT_SERP_STYLE']}\n[Dữ liệu SERP]:\n{self.serp_style}"
+        
+        # BƯỚC FIX LỖI CỐT LÕI: Dịch toàn bộ mã REP_KW_... trong Prompt của Sếp thành TỪ KHÓA THẬT
+        master_prompt_raw = f"{prompts['PROMPT_TEMPLATE']}\n{prompts['PROMPT_CONTENT_STRATEGY']}\n{prompts['PROMPT_KEYWORD_SEARCH']}\n{prompts['PROMPT_SERP_STYLE']}\n[Dữ liệu SERP]:\n{self.serp_style}\n{prompts['PROMPT_SEO_GLOBAL_RULE']}\n{prompts['PROMPT_AI_HUMANIZER']}"
+        master_prompt_raw = master_prompt_raw.replace('{{ws_persona}}', ws_per).replace('{{kw_intent}}', kw_int).replace('{{keyword}}', main_kw).replace('{{word_count}}', str(self.target_length))
+        
+        for i, kw in enumerate(self.all_kws):
+            master_prompt_raw = re.sub(rf'\[?REP_KW_{i+1}\]?', kw, master_prompt_raw, flags=re.IGNORECASE)
+        
         mut = f"\n[Tiến Hóa]: Cấm lặp cấu trúc: {st.session_state.evolution_cache}." if st.session_state.evolution_cache else ""
-        c2 = f"{prompts['PROMPT_SEO_GLOBAL_RULE']}{mut}\n{prompts['PROMPT_AI_HUMANIZER']}\n{force_kw}\nCHỈ TRẢ VỀ ĐÚNG HTML, BẮT ĐẦU BẰNG THẺ <h1>."
-        master_prompt = f"{c1}\n\n{c2}"
+        master_prompt = f"{master_prompt_raw}{mut}\n{force_kw}\nCHỈ TRẢ VỀ ĐÚNG HTML, BẮT ĐẦU BẰNG THẺ <h1>."
 
         gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
         or_keys = [k.strip() for k in str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',') if k.strip()]
@@ -410,13 +381,18 @@ class AutoSEOPipeline:
         soup = BeautifulSoup(self.raw_html, 'html.parser')
         st.session_state.evolution_cache = f"{len(soup.find_all('h2'))} H2, {len(soup.find_all('p'))} P"
         
+        # BƯỚC QUÉT RÁC CUỐI CÙNG: Lỡ AI vẫn ngoan cố in chữ REP_KW_... ra bài viết thì dịch ngược lại
+        for i, kw in enumerate(self.all_kws):
+            self.raw_html = re.sub(rf'\[?REP_KW_{i+1}\]?', kw, self.raw_html, flags=re.IGNORECASE)
+            if i == 0: self.raw_html = re.sub(r'\{\{keyword\}\}', kw, self.raw_html, flags=re.IGNORECASE)
+        
         h1_m = re.search(r'<h1>(.*?)</h1>', self.raw_html, re.IGNORECASE)
         self.final_title = html.unescape(re.sub(r'<[^>]+>', '', h1_m.group(1)).strip()) if h1_m else f"Bài: {self.all_kws[0]}"
         self.add_log(ui_log, f"🏷️ [THÔNG TIN BÀI VIẾT] Domain: {self.target_web.get('WS_NAME', '')} | Tiêu đề: {self.final_title}", "success")
         
         return True
 
-    # --- BƯỚC 5 & 6: GẮN LINK CƯỠNG CHẾ TUYỆT ĐỐI ---
+    # --- BƯỚC 5 & 6: GẮN LINK (CHỐNG SPAM) ---
     def step5_6_spin_and_dom(self, ui_log):
         df_spin = self.db.get('SPIN', pd.DataFrame())
         html_txt = self.raw_html
@@ -436,7 +412,7 @@ class AutoSEOPipeline:
         for h in soup.find_all(['h1', 'h2']):
             if h.find('a'): h.a.unwrap()
 
-        # ÉP GẮN BẰNG ĐƯỢC THEO QUOTA
+        # ÉP GẮN BẰNG ĐƯỢC MÀ KHÔNG SPAM
         for kw in self.all_kws:
             url = ""
             is_ext = False
@@ -455,16 +431,16 @@ class AutoSEOPipeline:
                     found_and_injected = True
                     break
             
+            # FIX: GHÉP CÂU TỰ NHIÊN VÀO GIỮA BÀI, KHÔNG LÀM 1 CỤC SPAM Ở ĐÁY
             if not found_and_injected:
                 p_tags = soup.find_all('p')
                 if p_tags:
                     target_p = random.choice(p_tags)
-                    target_p.append(BeautifulSoup(f" Tìm hiểu thêm về <a href='{url}'>{kw}</a>.", 'html.parser'))
-                    self.add_log(ui_log, f"⚠️ AI quên từ '{kw}', đã tự động ép vào đoạn văn.", "warn")
+                    target_p.append(BeautifulSoup(f" Hơn nữa, các Sếp cũng có thể tham khảo thêm về <a href='{url}'>{kw}</a> để tối ưu hóa trải nghiệm.", 'html.parser'))
+                    self.add_log(ui_log, f"⚠️ AI sót từ '{kw}', đã lồng tự nhiên vào 1 đoạn văn.", "warn")
                     found_and_injected = True
                 else:
-                    soup.append(BeautifulSoup(f"<p>Tìm hiểu thêm về <a href='{url}'>{kw}</a>.</p>", 'html.parser'))
-                    self.add_log(ui_log, f"⚠️ AI không sinh thẻ <p>, đã đẻ thẻ mới chứa link '{kw}'.", "warn")
+                    soup.append(BeautifulSoup(f"<p>Đặc biệt, dịch vụ <a href='{url}'>{kw}</a> luôn sẵn sàng đồng hành cùng các Sếp.</p>", 'html.parser'))
                     found_and_injected = True
                     
             if found_and_injected:
@@ -495,8 +471,6 @@ class AutoSEOPipeline:
                             break
         self.add_log(ui_log, f"🖼️ [GẮN ẢNH] Thành công {len(self.used_imgs)}/{max_img} ảnh.")
         self.raw_html = str(soup)
-        h1_m = re.search(r'<h1>(.*?)</h1>', self.raw_html, re.IGNORECASE)
-        self.final_title = html.unescape(re.sub(r'<[^>]+>', '', h1_m.group(1)).strip()) if h1_m else f"Bài: {self.all_kws[0]}"
         return True
 
     # --- BƯỚC 7: KCS ---
@@ -541,7 +515,7 @@ class AutoSEOPipeline:
         self.add_log(ui_log, f"✅ [KCS PASSED] Bài viết đạt chuẩn!", "success")
         return "PENDING"
 
-    # --- BƯỚC 8: LƯU (DYNAMIC MAPPING) ---
+    # --- BƯỚC 8: LƯU ---
     def step8_sync_db(self, ui_log, final_result):
         try:
             creds = Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=['https://www.googleapis.com/auth/spreadsheets'])
@@ -600,7 +574,7 @@ class AutoSEOPipeline:
         except Exception as e: self.add_log(ui_log, f"🛑 Lỗi ghi Database: {str(e)[:100]}", "error")
 
 # ==========================================
-# 🖥 GIAO DIỆN CHÍNH & KHÓA NÚT CHỐNG CHẠY ĐÈ
+# 🖥 GIAO DIỆN CHÍNH
 # ==========================================
 db_mock = load_data_from_gsheets()
 if db_mock is None: st.stop()
@@ -630,17 +604,19 @@ with tab1:
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    btn_col1, btn_col2, btn_col3 = st.columns(3)
-    btn_start = btn_col1.button("🔥 Bắt đầu Soạn bài AI", use_container_width=True, type="primary")
-    btn_force = btn_col2.button("⚡ Ép Lên bài ngay", use_container_width=True)
-    btn_refresh = btn_col3.button("🔄 Làm mới dữ liệu", use_container_width=True)
+    btn_container = st.empty()
+    with btn_container.container():
+        btn_col1, btn_col2, btn_col3 = st.columns(3)
+        btn_start = btn_col1.button("🔥 Bắt đầu Soạn bài AI", use_container_width=True, type="primary")
+        btn_force = btn_col2.button("⚡ Ép Lên bài ngay", use_container_width=True)
+        btn_refresh = btn_col3.button("🔄 Làm mới dữ liệu", use_container_width=True)
     
     if btn_refresh:
         load_data_from_gsheets.clear()
         st.rerun()
         
     if btn_force:
-        st.markdown("---")
+        btn_container.empty()
         st.info("⏳ ĐANG XỬ LÝ ĐĂNG BÀI LÊN WEBSITE... VUI LÒNG KHÔNG ĐÓNG TRÌNH DUYỆT HOẶC F5 MÀN HÌNH NÀY!")
         load_data_from_gsheets.clear()
         ui_log = st.empty()
@@ -697,9 +673,9 @@ with tab1:
         except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi hệ thống Đăng bài: {str(e)[:150]}", "error")
 
     if btn_start:
-        st.markdown("---")
+        btn_container.empty() 
         st.info("⏳ HỆ THỐNG ĐANG SOẠN BÀI TỰ ĐỘNG... BẠN CỨ ĐỂ YÊN MÀN HÌNH NÀY CHO TỚI KHI BÁO XONG NHA!")
-        load_data_from_gsheets.clear()
+        load_data_from_gsheets.clear() 
         
         ui_log = st.empty()
         needed = batch - p_today
