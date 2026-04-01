@@ -111,6 +111,10 @@ class AutoSEOPipeline:
         self.final_title = ""
         self.kcs_metrics = {}
         self.used_imgs = []
+        
+        # Đã thêm 2 biến này để FIX LỖI đỗ xúc xắc 2 lần cho Limit Link
+        self.out_lim = 0
+        self.in_lim = 0
         self.injected_ext, self.injected_int = 0, 0
         
         if 'evolution_cache' not in st.session_state: st.session_state.evolution_cache = ""
@@ -128,7 +132,6 @@ class AutoSEOPipeline:
             log_html = f'<div class="log-box" id="logbox">{"<br>".join(self.history_log)}</div><script>var objDiv = document.getElementById("logbox"); objDiv.scrollTop = objDiv.scrollHeight;</script>'
             ui_placeholder.markdown(log_html, unsafe_allow_html=True)
 
-    # ĐÃ KHÔI PHỤC HÀM NÀY ĐỂ TRỊ LỖI CHÍ MẠNG SẾP GẶP PHẢI
     def safe_int(self, value, default=0):
         try: return int(str(value).strip())
         except: return default
@@ -141,9 +144,10 @@ class AutoSEOPipeline:
                 parts = s.split('-')
                 return random.randint(int(parts[0].strip()), int(parts[1].strip()))
             return int(s)
-        except: return default
+        except:
+            return default
 
-    # --- BƯỚC 1: TÌM SLOT TRỐNG ---
+    # --- BƯỚC 1: TÌM SLOT TRỐNG THÔNG MINH ---
     def step1_allocate_slot(self, ui_log) -> bool:
         df_rep = self.db.get('REPORT', pd.DataFrame())
         df_web = self.db.get('WEBSITE', pd.DataFrame())
@@ -216,14 +220,19 @@ class AutoSEOPipeline:
         main_cat = str(self.main_kw_row.get('KW_CONTENT', '')).strip()
         main_grp = str(self.main_kw_row.get('KW_GROUP', '')).strip()
         
-        out_l = self.parse_random_range(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0)
-        in_l = self.parse_random_range(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
-        kws_needed = max(1, out_l + in_l)
+        # ĐÃ FIX: Chốt cứng Quota ngay từ đây, không roll xúc xắc lại ở Bước 6
+        self.out_lim = self.parse_random_range(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0)
+        self.in_lim = self.parse_random_range(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
         
-        self.add_log(ui_log, f"📐 [QUOTA TỪ KHÓA] Out({out_l}) + In({in_l}) = {kws_needed} KWs phụ.", "quota")
+        # ĐÃ FIX TÍNH TOÁN: Tổng Từ khóa = Tổng Link (1 Chính + Phần còn lại là Phụ)
+        total_links = self.out_lim + self.in_lim
+        kws_needed = max(1, total_links)
+        subs_needed = max(0, kws_needed - 1)
+        
+        self.add_log(ui_log, f"📐 [QUOTA TỪ KHÓA] Link Ngoại ({self.out_lim}) + Nội ({self.in_lim}) = Cần tổng {kws_needed} KWs (1 Chính + {subs_needed} Phụ).", "quota")
         
         sub_df = df_sorted[(df_sorted['KW_TEXT'] != main_kw) & (df_sorted['KW_CONTENT'].astype(str).str.strip() == main_cat) & (df_sorted['KW_GROUP'].astype(str).str.strip() != main_grp)]
-        subs = sub_df.head(min(kws_needed, 5))['KW_TEXT'].tolist() if not sub_df.empty else []
+        subs = sub_df.head(subs_needed)['KW_TEXT'].tolist() if not sub_df.empty else []
         self.all_kws = [main_kw] + subs
         self.add_log(ui_log, f"📦 [GOM NHÓM] Lấy {len(self.all_kws)} KWs: {', '.join(self.all_kws)}")
 
@@ -270,12 +279,14 @@ class AutoSEOPipeline:
         subs = ", ".join(self.all_kws[1:])
         dist = self.target_length // max(len(self.all_kws), 1)
 
-        force_kw = f"\n[LỆNH ÉP KHÔNG THỂ BỎ QUA]:\n1. TỪ KHÓA CHÍNH: '{main_kw}' -> Bắt buộc có trong H1 (vị trí ngẫu nhiên) và trong nội dung.\n2. TỪ KHÓA PHỤ: '{subs}' -> Rải đều cách nhau {dist} chữ."
+        # Cường hóa lệnh ép H1 cho AI đỡ cãi
+        force_kw = f"\n[LỆNH ÉP TỐI THƯỢNG - KHÔNG THỂ BỎ QUA]:\n1. TỪ KHÓA CHÍNH: '{main_kw}' -> Bắt buộc phải sinh ra thẻ <h1> chứa từ khóa này (vị trí ngẫu nhiên trong thẻ) và rải tự nhiên trong nội dung.\n2. TỪ KHÓA PHỤ: '{subs}' -> Rải đều cách nhau {dist} chữ."
+        
         p_tpl = prompts['PROMPT_TEMPLATE'].replace('{{ws_persona}}', ws_per).replace('{{kw_intent}}', kw_int).replace('{{keyword}}', main_kw).replace('[REP_KW_1]', main_kw).replace('REP_KW_1', main_kw).replace('{{word_count}}', str(self.target_length))
         
         c1 = f"{p_tpl}\n{prompts['PROMPT_CONTENT_STRATEGY']}\n{prompts['PROMPT_KEYWORD_SEARCH']}\n{prompts['PROMPT_SERP_STYLE']}\n[Dữ liệu SERP]:\n{self.serp_style}"
         mut = f"\n[Tiến Hóa]: Cấm lặp cấu trúc: {st.session_state.evolution_cache}." if st.session_state.evolution_cache else ""
-        c2 = f"{prompts['PROMPT_SEO_GLOBAL_RULE']}{mut}\n{prompts['PROMPT_AI_HUMANIZER']}\n{force_kw}\nCHỈ TRẢ VỀ HTML."
+        c2 = f"{prompts['PROMPT_SEO_GLOBAL_RULE']}{mut}\n{prompts['PROMPT_AI_HUMANIZER']}\n{force_kw}\nCHỈ TRẢ VỀ HTML BẮT ĐẦU BẰNG THẺ <h1>."
         
         master_prompt = f"{c1}\n\n{c2}"
 
@@ -323,16 +334,16 @@ class AutoSEOPipeline:
         df_spin = self.db.get('SPIN', pd.DataFrame())
         html_txt = self.raw_html
         
-        for i, kw in enumerate(self.all_kws): html_txt = re.sub(r'(?i)\b' + re.escape(kw) + r'\b', f'__IRON_{i}__', html_txt)
+        # Sửa lại Regex Tiếng Việt để Link ăn ngon lành
+        for i, kw in enumerate(self.all_kws): html_txt = re.sub(r'(?i)' + re.escape(kw), f'__IRON_{i}__', html_txt, count=1)
         if not df_spin.empty and 'SPIN_ORIGINAL' in df_spin.columns:
             for _, r in df_spin.iterrows():
                 o, rp = str(r.get('SPIN_ORIGINAL', '')).strip(), str(r.get('SPIN_REPLACE', '')).strip()
-                if o and rp: html_txt = re.sub(r'(?i)\b' + re.escape(o) + r'\b', rp, html_txt)
+                if o and rp: html_txt = re.sub(r'(?i)' + re.escape(o), rp, html_txt)
         for i, kw in enumerate(self.all_kws): html_txt = html_txt.replace(f'__IRON_{i}__', kw)
 
         soup = BeautifulSoup(html_txt, 'html.parser')
-        o_lim = self.parse_random_range(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0)
-        i_lim = self.parse_random_range(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
+        
         o_urls = [u.strip() for u in str(self.target_web.get('WS_LINK_OUT_BACKLINK', '')).split(',') if u.strip()]
         i_urls = [u.strip() for u in str(self.target_web.get('WS_LINK_IN_BACKLINK', '')).split(',') if u.strip()]
         
@@ -341,15 +352,18 @@ class AutoSEOPipeline:
 
         for i, kw in enumerate(self.all_kws):
             if i == 0: continue 
-            url = random.choice(o_urls) if self.injected_ext < o_lim and o_urls else (random.choice(i_urls) if self.injected_int < i_lim and i_urls else "")
+            url = random.choice(o_urls) if self.injected_ext < self.out_lim and o_urls else (random.choice(i_urls) if self.injected_int < self.in_lim and i_urls else "")
             if not url: continue
+            
             for p in soup.find_all('p'):
-                if not p.find('a') and re.search(r'(?i)\b' + re.escape(kw) + r'\b', p.get_text()):
-                    p.replace_with(BeautifulSoup(re.sub(r'(?i)\b' + re.escape(kw) + r'\b', lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(p), count=1), 'html.parser'))
+                if not p.find('a') and re.search(r'(?i)' + re.escape(kw), p.get_text()):
+                    # Bỏ \b trong regex để bypass lỗi unicode Tiếng Việt
+                    p.replace_with(BeautifulSoup(re.sub(r'(?i)' + re.escape(kw), lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(p), count=1), 'html.parser'))
                     if url in o_urls: self.injected_ext += 1
                     else: self.injected_int += 1
                     break
-        self.add_log(ui_log, f"🛠️ [GẮN LINK] {self.injected_ext}/{o_lim} Ngoại | {self.injected_int}/{i_lim} Nội.")
+                    
+        self.add_log(ui_log, f"🛠️ [GẮN LINK] {self.injected_ext}/{self.out_lim} Ngoại | {self.injected_int}/{self.in_lim} Nội.")
 
         df_img = self.db.get('IMAGE', pd.DataFrame())
         max_img = self.parse_random_range(self.target_web.get('WS_IMG_LIMIT', 1), 1)
@@ -368,7 +382,7 @@ class AutoSEOPipeline:
                 for idx, i_url in enumerate(self.used_imgs):
                     kw_tag = self.all_kws[idx] if idx < len(self.all_kws) else self.all_kws[-1]
                     for p in soup.find_all('p'):
-                        if re.search(r'(?i)\b' + re.escape(kw_tag) + r'\b', p.get_text()):
+                        if re.search(r'(?i)' + re.escape(kw_tag), p.get_text()):
                             p.insert_after(BeautifulSoup(f"<br><p align='center'><img src='{i_url}' alt='{kw_tag}'></p><br>", 'html.parser'))
                             break
         self.add_log(ui_log, f"🖼️ [GẮN ẢNH] Thành công {len(self.used_imgs)}/{max_img} ảnh.")
@@ -377,37 +391,50 @@ class AutoSEOPipeline:
         self.final_title = html.unescape(re.sub(r'<[^>]+>', '', h1_m.group(1)).strip()) if h1_m else f"Bài: {self.all_kws[0]}"
         return True
 
-    # --- BƯỚC 7: KCS ---
+    # --- BƯỚC 7: KCS (MINH BẠCH BẢNG ĐIỂM SEO) ---
     def step7_qa_validation(self, ui_log) -> str:
         self.add_log(ui_log, "⚖️ [KCS] Bắt đầu chấm điểm...")
         soup = BeautifulSoup(self.raw_html, 'html.parser')
         txt = soup.get_text(separator=' ', strip=True)
-        kw = self.all_kws[0].lower()
-        seo = 0
-        if soup.find('h1') and kw in str(soup.h1.get_text(strip=True)).lower(): seo += 30
-        if any(kw in str(h2.get_text()).lower() for h2 in soup.find_all('h2')): seo += 20
-        if kw in txt.lower(): seo += 10
-        if soup.find('img', alt=re.compile(r'(?i)' + re.escape(kw))): seo += 10
-        density = (txt.lower().count(kw) * len(kw.split())) / max(len(txt.split()), 1) * 100
-        if 0.5 <= density <= 4.0: seo += 30
+        words = txt.split()
+        kw_main_lower = self.all_kws[0].lower()
+        
+        # Đã thêm các biến rời để in log breakdown
+        h1_pt = h2_pt = body_pt = alt_pt = den_pt = 0
+        
+        h1 = soup.find('h1')
+        if h1 and kw_main_lower in str(h1.get_text(strip=True)).lower(): h1_pt = 30
+        if any(kw_main_lower in str(h2.get_text()).lower() for h2 in soup.find_all('h2')): h2_pt = 20
+        if kw_main_lower in txt.lower(): body_pt = 10
+        if soup.find('img', alt=re.compile(r'(?i)' + re.escape(kw_main_lower))): alt_pt = 10
+        
+        density = (txt.lower().count(kw_main_lower) * len(self.all_kws[0].split())) / max(len(words), 1) * 100
+        if 0.5 <= density <= 4.0: den_pt = 30
+        
+        seo = h1_pt + h2_pt + body_pt + alt_pt + den_pt
         
         lens = [len(s.split()) for s in re.split(r'[.!?\n]+', txt) if len(s.split()) > 3]
         ai = min(max(round(max(5, 50 - ((statistics.stdev(lens) if len(lens)>3 else 0) * 4)), 1), 2.0), 99.0)
         read = round(max(10, min(206.835 - (1.015 * (sum(lens) / max(len(lens), 1))) - 84.6 * 1.2, 100)), 1)
+        
         self.kcs_metrics = {'SEO': min(seo, 100), 'AI': ai, 'READ': read}
-        self.add_log(ui_log, f"> SEO: {seo}/100 | AI: {ai}% | READ: {read}")
+        
+        # MINH BẠCH LOG SEO Ở ĐÂY SẾP ƠI
+        self.add_log(ui_log, f"> Chi tiết SEO: H1({h1_pt}) + H2({h2_pt}) + Body({body_pt}) + Alt({alt_pt}) + Density({den_pt}) = {seo}/100")
+        self.add_log(ui_log, f"> AI Rate: {ai}% | Dễ đọc VN: {read}/100")
         
         req = 35 if self.is_short_form else 70
         fails = []
         if seo < req: fails.append(f"SEO thấp ({seo}/{req})")
         if ai > 20: fails.append(f"Văn AI ({ai}%)")
         if read < 60: fails.append(f"Khó đọc ({read})")
+        
         if fails:
             self.add_log(ui_log, f"❌ [KCS FAILED] {', '.join(fails)}", "error")
             return "FAIL"
         return "PENDING"
 
-    # --- BƯỚC 8: LƯU (DYNAMIC MAPPING CHUẨN) ---
+    # --- BƯỚC 8: LƯU (DYNAMIC MAPPING) ---
     def step8_sync_db(self, ui_log, final_result):
         try:
             creds = Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=['https://www.googleapis.com/auth/spreadsheets'])
