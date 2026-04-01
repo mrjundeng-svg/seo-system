@@ -102,6 +102,7 @@ class AutoSEOPipeline:
         
         self.target_web = None
         self.publish_time = None
+        self.main_kw_row = None  # FIX LỖI: Đã khai báo lại biến để giữ Từ khóa chính
         self.all_kws = []
         self.target_length = 0
         self.is_short_form = False
@@ -167,7 +168,6 @@ class AutoSEOPipeline:
                 ws_limit = self.safe_int(web.get('WS_POST_LIMIT', 1), 1)
                 posts_day_x = df_rep[(df_rep['REP_WS_NAME'].astype(str).str.strip() == ws_name) & (df_rep['REP_PUBLISH_DATE'].astype(str).str.strip().str.startswith(day_x_str))] if not df_rep.empty and 'REP_PUBLISH_DATE' in df_rep.columns else pd.DataFrame()
                 
-                # IN RÕ QUOTA TỪNG WEB ĐỂ SẾP KIỂM TRA
                 self.add_log(ui_log, f"🔍 [CHECK QUOTA] Global: {posts_today}/{batch_size} | Local Web '{ws_name}' Ngày {day_x_str}: {len(posts_day_x)}/{ws_limit}", "quota")
                 
                 if len(posts_day_x) < ws_limit:
@@ -203,24 +203,22 @@ class AutoSEOPipeline:
         df_kw['KW_STATUS'] = pd.to_numeric(df_kw.get('KW_STATUS', 0), errors='coerce').fillna(0)
         df_sorted = df_kw.sample(frac=1).sort_values('KW_STATUS')
         
-        kw_row = df_sorted.iloc[0]
-        main_kw = str(kw_row['KW_TEXT']).strip()
-        main_cat = str(kw_row.get('KW_CONTENT', '')).strip()
-        main_grp = str(kw_row.get('KW_GROUP', '')).strip()
+        # FIX LỖI: Gán vào biến class thay vì biến cục bộ
+        self.main_kw_row = df_sorted.iloc[0]
+        main_kw = str(self.main_kw_row['KW_TEXT']).strip()
+        main_cat = str(self.main_kw_row.get('KW_CONTENT', '')).strip()
+        main_grp = str(self.main_kw_row.get('KW_GROUP', '')).strip()
         
-        # IN LOG TÍNH TOÁN QUOTA TỪ KHÓA THEO SẾP YÊU CẦU
         out_l = self.safe_int(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0)
         in_l = self.safe_int(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
         kws_needed = max(1, out_l + in_l)
         self.add_log(ui_log, f"📐 [QUOTA TỪ KHÓA] Out({out_l}) + In({in_l}) = Cần nhặt tổng {kws_needed} Keywords.", "quota")
         
-        # Nhặt từ khóa phụ cùng CONTENT, khác GROUP
         sub_df = df_sorted[(df_sorted['KW_TEXT'] != main_kw) & (df_sorted['KW_CONTENT'].astype(str).str.strip() == main_cat) & (df_sorted['KW_GROUP'].astype(str).str.strip() != main_grp)]
         subs = sub_df.head(min(kws_needed, 5))['KW_TEXT'].tolist() if not sub_df.empty else []
         self.all_kws = [main_kw] + subs
         self.add_log(ui_log, f"📦 [GOM NHÓM] Đã lấy {len(self.all_kws)} KWs: {', '.join(self.all_kws)}")
 
-        # Tính độ dài bài viết
         wrange = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
         min_w, max_w = self.safe_int(wrange[0], 900), self.safe_int(wrange[-1], 1200)
         
@@ -232,7 +230,6 @@ class AutoSEOPipeline:
             self.target_length = random.randint(min_w, max_w)
             self.add_log(ui_log, f"📏 [RULE BÀI VIẾT] Kích hoạt Standard-form. Cần viết khoảng: {self.target_length} chữ.")
 
-        # Cào SERP Đối thủ (Timeout 15s)
         serp_key = self.dashboard.get('SERPAPI_KEY', '').strip()
         comp_list = [c.strip() for c in str(self.dashboard.get('COMPETITOR_LIST', '')).split(',') if c.strip()]
         serp_success = False
@@ -272,7 +269,6 @@ class AutoSEOPipeline:
         
         self.add_log(ui_log, f"🧠 [PROMPT BUIDER] Đang tiêm biến số vào lệnh...")
 
-        # FIX LỖI 0 ĐIỂM SEO: Cưỡng chế nhúng Keyword vào cuối lệnh để AI không quên
         force_kw_directive = f"""
         \n[CHỈ THỊ CƯỠNG CHẾ TỪ HỆ THỐNG MÁY CHỦ]:
         1. TỪ KHÓA CHÍNH: "{main_kw}" -> BẮT BUỘC phải có trong Tiêu đề H1 (ở vị trí ngẫu nhiên) VÀ rải tự nhiên trong nội dung thân bài.
@@ -280,14 +276,13 @@ class AutoSEOPipeline:
         3. TỔNG SỐ CHỮ: Yêu cầu chính xác khoảng {self.target_length} chữ.
         """
 
-        p_tpl = prompts['PROMPT_TEMPLATE'].replace('{{ws_persona}}', ws_per).replace('{{kw_intent}}', kw_int).replace('{{keyword}}', main_kw).replace('{{word_count}}', str(self.target_length))
+        p_tpl = prompts['PROMPT_TEMPLATE'].replace('{{ws_persona}}', ws_per).replace('{{kw_intent}}', kw_int).replace('{{keyword}}', main_kw).replace('[REP_KW_1]', main_kw).replace('REP_KW_1', main_kw).replace('{{word_count}}', str(self.target_length)).replace('{{secondary_keywords}}', subs)
         c1 = f"{p_tpl}\n{prompts['PROMPT_CONTENT_STRATEGY']}\n{prompts['PROMPT_KEYWORD_SEARCH']}\n{prompts['PROMPT_SERP_STYLE']}\n[Dữ liệu SERP]:\n{self.serp_style}"
         mut = f"\n[Tự Tiến Hóa]: CẤM DÙNG cấu trúc cũ sau: {st.session_state.evolution_cache}. Hãy ngẫu nhiên hóa độ dài đoạn và số Heading." if st.session_state.evolution_cache else ""
         c2 = f"{prompts['PROMPT_SEO_GLOBAL_RULE']}{mut}\n{prompts['PROMPT_AI_HUMANIZER']}\n{force_kw_directive}\nCHỈ TRẢ VỀ HTML (Bắt đầu bằng <h1>)."
         
         master_prompt = f"{c1}\n\n{c2}"
 
-        # Hàm gọi API đa tầng
         gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
         or_keys = [k.strip() for k in str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',') if k.strip()]
         gem_models = [m.strip() for m in str(self.dashboard.get('GEMINI_MODEL', 'gemini-1.5-flash')).split(',') if m.strip()]
@@ -332,7 +327,6 @@ class AutoSEOPipeline:
         df_spin = self.db.get('SPIN', pd.DataFrame())
         html_txt = self.raw_html
         
-        # IRON SHIELD
         for i, kw in enumerate(self.all_kws): html_txt = re.sub(r'(?i)\b' + re.escape(kw) + r'\b', f'__IRON_{i}__', html_txt)
         if not df_spin.empty and 'SPIN_ORIGINAL' in df_spin.columns:
             for _, r in df_spin.iterrows():
@@ -340,19 +334,17 @@ class AutoSEOPipeline:
                 if o and rp: html_txt = re.sub(r'(?i)\b' + re.escape(o) + r'\b', rp, html_txt)
         for i, kw in enumerate(self.all_kws): html_txt = html_txt.replace(f'__IRON_{i}__', kw)
 
-        # GẮN LINK
         soup = BeautifulSoup(html_txt, 'html.parser')
         o_lim = self.safe_int(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0)
         i_lim = self.safe_int(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
         o_url = str(self.target_web.get('WS_LINK_OUT_BACKLINK', '')).strip()
         i_url = str(self.target_web.get('WS_LINK_IN_BACKLINK', '')).strip()
         
-        # Gỡ link khỏi Tiêu đề nếu AI lỡ gắn bậy
         for h in soup.find_all(['h1', 'h2']):
             if h.find('a'): h.a.unwrap()
 
         for i, kw in enumerate(self.all_kws):
-            if i == 0: continue # Bỏ qua kw chính ở title
+            if i == 0: continue 
             url = o_url if self.injected_ext < o_lim else i_url
             if not url: continue
             for p in soup.find_all('p'):
@@ -364,7 +356,6 @@ class AutoSEOPipeline:
                     
         self.add_log(ui_log, f"🛠️ [GẮN LINK] Kết quả: {self.injected_ext} Link Ngoại | {self.injected_int} Link Nội.")
 
-        # GẮN ẢNH (PING CHECK)
         df_img = self.db.get('IMAGE', pd.DataFrame())
         max_img = self.safe_int(self.target_web.get('WS_IMG_LIMIT', 1), 1)
         req_img = min(len(self.all_kws), max_img)
@@ -536,7 +527,6 @@ with tab1:
         if needed <= 0:
             ui_log.markdown('<div class="log-box"><span class="log-error">🛑 Đã đạt BATCH_SIZE hôm nay. Không chạy thêm.</span></div>', unsafe_allow_html=True)
         else:
-            # Dùng list chứa toàn bộ log để nối tiếp nhau khi chạy n bài
             master_logs = []
             for i in range(needed):
                 bot = AutoSEOPipeline(db_mock, master_logs)
@@ -558,7 +548,7 @@ with tab1:
                     bot.add_log(ui_log, "🛑 [WATCHDOG] Quá 5 phút, tự ngắt để cứu hệ thống.", "error")
                     break
                     
-            bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH ĐÃ HOÀN TẤT.", "success")
+            bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH ĐĐÃ HOÀN TẤT.", "success")
             st.success("🎉 QUÁ TRÌNH TẠO BÀI ĐÃ XONG!")
             if st.button("🔄 Bấm vào đây để Tải lại dữ liệu trang Web", type="primary"):
                 load_data_from_gsheets.clear()
