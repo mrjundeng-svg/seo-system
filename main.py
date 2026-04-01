@@ -98,7 +98,7 @@ class AutoSEOPipeline:
         self.db = data_frames
         self.dashboard = {str(k).strip(): str(v).strip() for k, v in zip(self.db.get('DASHBOARD', pd.DataFrame())['DATA_KEY'], self.db.get('DASHBOARD', pd.DataFrame())['DATA_CONTENT'])}
         self.now_vn = get_vn_now()
-        self.history_log = master_log_list 
+        self.history_log = master_log_list
         
         self.target_web = None
         self.publish_time = None
@@ -128,7 +128,11 @@ class AutoSEOPipeline:
             log_html = f'<div class="log-box" id="logbox">{"<br>".join(self.history_log)}</div><script>var objDiv = document.getElementById("logbox"); objDiv.scrollTop = objDiv.scrollHeight;</script>'
             ui_placeholder.markdown(log_html, unsafe_allow_html=True)
 
-    # HÀM MỚI: Xử lý thông minh các dải số (1-2, 2-4) thành Random Int
+    # KHÔI PHỤC LẠI HÀM NÀY ĐỂ XỬ LÝ LỖI SỐ LIỆU ĐẦU VÀO
+    def safe_int(self, value, default=0):
+        try: return int(str(value).strip())
+        except: return default
+
     def parse_random_range(self, val_str, default=0):
         try:
             s = str(val_str).strip()
@@ -214,7 +218,6 @@ class AutoSEOPipeline:
         main_cat = str(self.main_kw_row.get('KW_CONTENT', '')).strip()
         main_grp = str(self.main_kw_row.get('KW_GROUP', '')).strip()
         
-        # ĐÃ FIX: Dùng parse_random_range để dịch được số 1-2 hoặc 2-4
         out_l = self.parse_random_range(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0)
         in_l = self.parse_random_range(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
         kws_needed = max(1, out_l + in_l)
@@ -229,7 +232,6 @@ class AutoSEOPipeline:
         wrange = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
         min_w, max_w = self.safe_int(wrange[0], 900), self.safe_int(wrange[-1], 1200)
         
-        # Nếu tổng KW = 1 (Chỉ có H1, ko có kw phụ) -> Vẫn ép viết bài ngắn
         if len(self.all_kws) < 3:
             self.is_short_form = True
             self.target_length = random.randint(min_w, max_w) // 2
@@ -284,7 +286,7 @@ class AutoSEOPipeline:
         3. TỔNG SỐ CHỮ: Yêu cầu chính xác khoảng {self.target_length} chữ.
         """
 
-        p_tpl = prompts['PROMPT_TEMPLATE'].replace('{{ws_persona}}', ws_per).replace('{{kw_intent}}', kw_int).replace('{{keyword}}', main_kw).replace('[REP_KW_1]', main_kw).replace('REP_KW_1', main_kw).replace('{{word_count}}', str(self.target_length))
+        p_tpl = prompts['PROMPT_TEMPLATE'].replace('{{ws_persona}}', ws_per).replace('{{kw_intent}}', kw_int).replace('{{keyword}}', main_kw).replace('[REP_KW_1]', main_kw).replace('REP_KW_1', main_kw).replace('{{word_count}}', str(self.target_length)).replace('{{secondary_keywords}}', subs)
         c1 = f"{p_tpl}\n{prompts['PROMPT_CONTENT_STRATEGY']}\n{prompts['PROMPT_KEYWORD_SEARCH']}\n{prompts['PROMPT_SERP_STYLE']}\n[Dữ liệu SERP]:\n{self.serp_style}"
         mut = f"\n[Tự Tiến Hóa]: CẤM DÙNG cấu trúc cũ sau: {st.session_state.evolution_cache}. Hãy ngẫu nhiên hóa độ dài đoạn và số Heading." if st.session_state.evolution_cache else ""
         c2 = f"{prompts['PROMPT_SEO_GLOBAL_RULE']}{mut}\n{prompts['PROMPT_AI_HUMANIZER']}\n{force_kw_directive}\nCHỈ TRẢ VỀ HTML (Bắt đầu bằng <h1>)."
@@ -344,11 +346,9 @@ class AutoSEOPipeline:
 
         soup = BeautifulSoup(html_txt, 'html.parser')
         
-        # FIX MẠNH TAY: Random Quota Links và Bốc Random URL
         o_lim = self.parse_random_range(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0)
         i_lim = self.parse_random_range(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
         
-        # Chia cắt URL ra thành danh sách List, đề phòng Sếp điền nhiều URL cách nhau dấu phẩy
         o_urls = [u.strip() for u in str(self.target_web.get('WS_LINK_OUT_BACKLINK', '')).split(',') if u.strip()]
         i_urls = [u.strip() for u in str(self.target_web.get('WS_LINK_IN_BACKLINK', '')).split(',') if u.strip()]
         
@@ -361,14 +361,13 @@ class AutoSEOPipeline:
             url_to_inject = ""
             is_ext = False
             
-            # Ưu tiên Link Ngoại trước theo đúng LUẬT SOP
             if self.injected_ext < o_lim and o_urls:
-                url_to_inject = random.choice(o_urls) # Bốc Random 1 Link trong mảng Link Ngoại
+                url_to_inject = random.choice(o_urls) 
                 is_ext = True
             elif self.injected_int < i_lim and i_urls:
-                url_to_inject = random.choice(i_urls) # Bốc Random 1 Link trong mảng Link Nội
+                url_to_inject = random.choice(i_urls) 
             else:
-                continue # Nếu đầy cả 2 Quota thì bỏ qua không gắn nữa
+                continue 
                 
             if not url_to_inject: continue
             
@@ -381,7 +380,6 @@ class AutoSEOPipeline:
                     
         self.add_log(ui_log, f"🛠️ [GẮN LINK] Kết quả: {self.injected_ext}/{o_lim} Link Ngoại | {self.injected_int}/{i_lim} Link Nội.")
 
-        # GẮN ẢNH (PING CHECK)
         df_img = self.db.get('IMAGE', pd.DataFrame())
         max_img = self.parse_random_range(self.target_web.get('WS_IMG_LIMIT', 1), 1)
         req_img = min(len(self.all_kws), max_img)
@@ -483,7 +481,7 @@ class AutoSEOPipeline:
             
             if final_result == 'PENDING':
                 time_s = self.now_vn.strftime('%Y-%m-%d %H:%M')
-                kw_ws, img_ws = ss.worksheet('KEYWORD')
+                kw_ws, img_ws = ss.worksheet('KEYWORD'), ss.worksheet('IMAGE')
                 
                 def batch_upd(sheet, col_match, val_list, col_st, col_dt):
                     data = sheet.get_all_values()
@@ -498,7 +496,7 @@ class AutoSEOPipeline:
                     if upds: sheet.batch_update(upds)
 
                 batch_upd(kw_ws, 'KW_TEXT', self.all_kws, 'KW_STATUS', 'KW_DATE')
-                if self.used_imgs: batch_upd(ss.worksheet('IMAGE'), 'IMG_URL', self.used_imgs, 'IMG_STATUS', 'IMG_DATE')
+                if self.used_imgs: batch_upd(img_ws, 'IMG_URL', self.used_imgs, 'IMG_STATUS', 'IMG_DATE')
                 self.add_log(ui_log, f"✅ [HOÀN TẤT] Lưu thành công. Status: {final_result}", "success")
             else: self.add_log(ui_log, f"⚠️ [THẤT BẠI] Log lỗi đã ghi vào Sheet. Status: {final_result}", "warn")
                 
@@ -530,7 +528,15 @@ with tab1:
     col1, col2, col3 = st.columns(3)
     today_str = get_vn_now().strftime('%Y-%m-%d')
     p_today = len(df_rep[df_rep['REP_CREATED_AT'].astype(str).str.strip().str.startswith(today_str)]) if not df_rep.empty and 'REP_CREATED_AT' in df_rep.columns else 0
-    col1.metric("Generated (Hôm nay)", f"{p_today} / {dash_dict.get('BATCH_SIZE', 10)}")
+    
+    # FIX LỖI TÍNH TOÁN BATCH_SIZE TRONG MÀN HÌNH CHÍNH
+    b_val = dash_dict.get('BATCH_SIZE', '10')
+    try:
+        if '-' in str(b_val): batch = random.randint(int(str(b_val).split('-')[0]), int(str(b_val).split('-')[1]))
+        else: batch = int(b_val)
+    except: batch = 10
+    
+    col1.metric("Generated (Hôm nay)", f"{p_today} / {batch}")
     col2.metric("✅ Published (DONE)", len(df_rep[df_rep['REP_RESULT'].astype(str).str.strip() == 'DONE']) if not df_rep.empty else 0)
     col3.metric("⏳ Scheduled (PENDING)", len(df_rep[df_rep['REP_RESULT'].astype(str).str.strip() == 'PENDING']) if not df_rep.empty else 0)
     
@@ -547,13 +553,6 @@ with tab1:
     if btn_start:
         st.markdown("---")
         ui_log = st.empty()
-        # Parse Batch Size với hàm mới
-        b_val = dash_dict.get('BATCH_SIZE', '10')
-        try:
-            if '-' in str(b_val): batch = random.randint(int(str(b_val).split('-')[0]), int(str(b_val).split('-')[1]))
-            else: batch = int(b_val)
-        except: batch = 10
-        
         needed = batch - p_today
         
         if needed <= 0:
