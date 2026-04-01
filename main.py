@@ -170,7 +170,6 @@ class AutoSEOPipeline:
         self.is_short_form = len(self.all_kws) < 3
         self.target_length = random.randint(mn, mx) if not self.is_short_form else random.randint(mn, mx)//2
         
-        # ĐÃ CẬP NHẬT: QUÉT SERP ĐA TỪ KHÓA
         s_key = self.dashboard.get('SERPAPI_KEY', '').strip()
         c_list = [c.strip() for c in str(self.dashboard.get('COMPETITOR_LIST', '')).split(',') if c.strip()]
         serp_data_chunks = []
@@ -213,18 +212,14 @@ class AutoSEOPipeline:
             self.add_log(ui_log, f"   ➤ **{k}**: {snippet}", "detail")
 
         dist = self.target_length // max(len(self.all_kws), 1)
-        # CẬP NHẬT LỆNH ĐỊNH DẠNG HTML VÀ GÓC NHÌN
         seed_sang_tao = random.randint(10000, 99999)
         force = f"""\n[ÉP LUẬT TỐI THƯỢNG]: 
         1. CẤM CHÀO HỎI. Vào thẳng Sapo.
         2. H1: Chứa "{self.all_kws[0]}" ở GIỮA/CUỐI.
-        3. TỪ KHÓA: "{self.all_kws[0]}" (x3). Các từ "{', '.join(self.all_kws[1:])}" mỗi từ x1. Phải chèn tự nhiên vào văn cảnh. KHÔNG ĐƯỢC dùng dấu ** cho từ khóa.
-        4. ĐỊNH DẠNG HTML: 
-           - BẮT BUỘC dùng thẻ <ul> và <li> nếu có liệt kê danh sách. 
-           - TUYỆT ĐỐI KHÔNG DÙNG dấu * hay - để gạch đầu dòng.
-           - H3 phải đánh số 1., 2.. 
-        5. ĐOẠN VĂN: Cấm dài bằng nhau, đan xen ngắn dài. Xóa bỏ cấu trúc: {st.session_state.evolution_cache}.
-        6. GÓC NHÌN MỚI LẠ (Seed: {seed_sang_tao}): Bắt buộc lập luận theo một góc độ hoàn toàn khác so với bài trước.
+        3. TỪ KHÓA: "{self.all_kws[0]}" (x3). Các từ "{', '.join(self.all_kws[1:])}" mỗi từ x1. KHÔNG dùng dấu ** cho từ khóa.
+        4. LIỆT KÊ & XUỐNG DÒNG: TUYỆT ĐỐI KHÔNG viết liền tù tì các ý liệt kê trên 1 dòng. Mỗi ý liệt kê phải XUỐNG DÒNG và nằm trong thẻ <li> hoặc <p> riêng biệt. 
+        5. ĐOẠN VĂN: Cấm viết dài thoòng không xuống dòng. Chia nhỏ đoạn văn (3-4 câu/đoạn). Đan xen đoạn ngắn dài. Xóa bỏ cấu trúc: {st.session_state.evolution_cache}.
+        6. GÓC NHÌN (Seed: {seed_sang_tao}): Bắt buộc lập luận theo một góc độ hoàn toàn khác so với bài trước.
         7. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>."""
         
         m_prompt = f"{pmts['PROMPT_TEMPLATE']}\n{pmts['PROMPT_CONTENT_STRATEGY']}\n{pmts['PROMPT_KEYWORD_SEARCH']}\n{pmts['PROMPT_SERP_STYLE']}\n[SERP Data Hỗn Hợp]:\n{self.serp_style}\n{pmts['PROMPT_SEO_GLOBAL_RULE']}\n{pmts['PROMPT_AI_HUMANIZER']}\n{force}"
@@ -245,6 +240,14 @@ class AutoSEOPipeline:
         if not self.raw_html: return False
         self.raw_html = re.sub(r'```html|```', '', self.raw_html).strip()
         self.raw_html = re.sub(r'\*\*(.*?)\*\*', r'\1', self.raw_html) # Tẩy in đậm
+        
+        # BẺ GÃY LIỆT KÊ TRÊN 1 DÒNG (AI BỊ ẢO GIÁC INLINE)
+        self.raw_html = re.sub(r'(?<!^)\s+\*\s+([A-ZĐÁÀẢÃẠĂÂẤẦẨẪẬÊẾỀỂỄỆÔỐỒỔỖỘƠỚỜỞỠỢƯỨỪỬỮỰÍÌỈĨỊÝỲỶỸỴ])', r'</p><p>• \1', self.raw_html)
+        
+        # NẾU AI TRẢ VỀ TEXT THUẦN KHÔNG CÓ THẺ P -> ÉP XUỐNG DÒNG
+        if '<p>' not in self.raw_html.lower():
+            paras = [p.strip() for p in re.split(r'\n+', self.raw_html) if p.strip()]
+            self.raw_html = "".join([f"<p>{p}</p>" for p in paras])
         
         for i, k in enumerate(self.all_kws):
             self.raw_html = re.sub(rf'\[?REP_KW_{i+1}\]?', k, self.raw_html, flags=re.IGNORECASE)
@@ -291,28 +294,29 @@ class AutoSEOPipeline:
                     injected = True; break
             if not injected: missed.append((k, url))
 
-        # ĐÃ CẬP NHẬT: RẢI LINK VÀO GIỮA BÀI (CHỐNG DỒN ĐÁY)
+        # DIỆT SPAM ĐÁY: RẢI LINK VÀO GIỮA CÁC ĐOẠN VĂN
         if missed:
-            pfxs = ["Đừng bỏ lỡ thông tin về", "Sếp có thể quan tâm đến dịch vụ", "Tham khảo thêm về"]
-            p_tags = soup.find_all('p')
-            avail_p = [p for p in p_tags if len(p.get_text(strip=True)) > 20 and not p.find('a') and not p.find('img')]
+            pfxs = ["Đừng bỏ lỡ thông tin về", "Sếp có thể quan tâm đến dịch vụ", "Tham khảo thêm về", "Một gợi ý hữu ích:"]
+            all_p = soup.find_all('p')
+            avail_p = [p for p in all_p if len(p.get_text(strip=True)) > 20 and not p.find('a') and not p.find('img')]
             
             for k, u in missed:
-                new_sentence = f" {random.choice(pfxs)} <a href='{u}'>{k}</a>."
+                new_sentence = f"{random.choice(pfxs)} <a href='{u}'>{k}</a>."
                 if avail_p:
                     target = random.choice(avail_p)
                     avail_p.remove(target)
-                    target.append(BeautifulSoup(new_sentence, 'html.parser'))
-                    self.add_log(ui_log, f"⚠️ AI sót '{k}', đã rải kín đáo vào 1 đoạn văn.", "warn")
+                    target.append(BeautifulSoup(f" {new_sentence}", 'html.parser'))
+                    self.add_log(ui_log, f"⚠️ AI sót '{k}', đã rải kín đáo vào cuối 1 đoạn văn.", "warn")
                 else:
-                    all_p = soup.find_all('p')
-                    if len(all_p) > 2:
+                    # Hết đoạn văn trống -> Chèn 1 thẻ P MỚI vào GIỮA bài, TUYỆT ĐỐI KHÔNG ném xuống cuối cùng
+                    if len(all_p) > 1:
                         idx = random.randint(1, len(all_p) - 1)
-                        new_p = BeautifulSoup(f"<p>{new_sentence.strip()}</p>", 'html.parser')
-                        all_p[idx].insert_after(new_p)
+                        all_p[idx].insert_before(BeautifulSoup(f"<p>{new_sentence}</p>", 'html.parser'))
+                        self.add_log(ui_log, f"⚠️ AI thiếu chỗ, đã chèn 1 đoạn mới vào GIỮA bài cho '{k}'.", "warn")
+                    elif all_p:
+                        all_p[0].insert_before(BeautifulSoup(f"<p>{new_sentence}</p>", 'html.parser'))
                     else:
-                        soup.append(BeautifulSoup(f"<p>{new_sentence.strip()}</p>", 'html.parser'))
-                    self.add_log(ui_log, f"⚠️ AI thiếu chỗ, đã rải 1 đoạn mới vào giữa bài cho '{k}'.", "warn")
+                        soup.append(BeautifulSoup(f"<p>{new_sentence}</p>", 'html.parser'))
 
         self.add_log(ui_log, f"🛠️ [GẮN LINK] {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int.", "success")
 
@@ -377,6 +381,7 @@ class AutoSEOPipeline:
             if final_result == 'PENDING':
                 ts = self.now_vn.strftime('%Y-%m-%d %H:%M')
                 def batch(w, k_col, vals, col_s, col_d):
+                    if not vals: return
                     s, d = ss.worksheet(w), ss.worksheet(w).get_all_values()
                     if len(d) > 1:
                         h = [str(x).strip() for x in d[0]]
@@ -406,11 +411,9 @@ with t1:
     tdy = get_vn_now().strftime('%Y-%m-%d')
     p_tdy = len(d_rep[d_rep['REP_CREATED_AT'].astype(str).str.startswith(tdy)]) if not d_rep.empty else 0
     b_val = AutoSEOPipeline(db, []).parse_rng(dash.get('BATCH_SIZE', 10), 10)
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Generated Today", f"{p_tdy}/{b_val}"); c2.metric("DONE", len(d_rep[d_rep['REP_RESULT'] == 'DONE']) if not d_rep.empty else 0); c3.metric("PENDING", len(d_rep[d_rep['REP_RESULT'] == 'PENDING']) if not d_rep.empty else 0)
+    c1, c2, c3 = st.columns(3); c1.metric("Generated Today", f"{p_tdy}/{b_val}"); c2.metric("DONE", len(d_rep[d_rep['REP_RESULT'] == 'DONE']) if not d_rep.empty else 0); c3.metric("PENDING", len(d_rep[d_rep['REP_RESULT'] == 'PENDING']) if not d_rep.empty else 0)
     st.markdown("<br>", unsafe_allow_html=True)
-    bc1, bc2, bc3 = st.columns(3)
-    b_run, b_frc, b_ref = bc1.button("🔥 Soạn bài AI", use_container_width=True, type="primary"), bc2.button("⚡ Ép Lên bài ngay", use_container_width=True), bc3.button("🔄 Làm mới", use_container_width=True)
+    bc1, bc2, bc3 = st.columns(3); b_run, b_frc, b_ref = bc1.button("🔥 Soạn bài AI", use_container_width=True, type="primary"), bc2.button("⚡ Ép Lên bài ngay", use_container_width=True), bc3.button("🔄 Làm mới", use_container_width=True)
     if b_ref: load_data_from_gsheets.clear(); st.rerun()
     if b_frc:
         st.info("⏳ ĐANG POST BÀI..."); ui = st.empty(); bot = AutoSEOPipeline(db, [])
@@ -456,7 +459,5 @@ with t2:
         sel = st.selectbox("🔍 Soi Log:", d_rep['REP_TITLE'].tolist()[::-1])
         if sel:
             r = d_rep[d_rep['REP_TITLE'] == sel].iloc[0]
-            c1, c2 = st.columns(2)
-            c1.markdown(f'<div class="log-box">{str(r["REP_LOG"]).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
-            c2.text_area("HTML:", str(r["REP_HTML"]), height=800)
+            c1, c2 = st.columns(2); c1.markdown(f'<div class="log-box">{str(r["REP_LOG"]).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True); c2.text_area("HTML:", str(r["REP_HTML"]), height=800)
 with t3: st.dataframe(d_rep, use_container_width=True)
