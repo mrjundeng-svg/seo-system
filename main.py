@@ -84,7 +84,7 @@ class AutoSEOPipeline:
         self.dashboard = {str(k).strip(): str(v).strip() for k, v in zip(self.db['DASHBOARD']['DATA_KEY'], self.db['DASHBOARD']['DATA_CONTENT'])}
         self.now_vn, self.history_log = get_vn_now(), master_log_list
         self.target_web, self.publish_time, self.main_kw_row = None, None, None
-        self.all_kws, self.raw_html, self.final_title = [], "", ""
+        self.all_kws, self.target_length, self.raw_html, self.final_title = [], 0, "", ""
         self.kcs_metrics, self.used_imgs, self.used_spins, self.failed_imgs = {}, [], [], []
         self.out_lim, self.in_lim, self.injected_ext, self.injected_int = 0, 0, 0, 0
         self.is_short_form, self.serp_style, self.prompt_content = False, "", ""
@@ -166,15 +166,19 @@ class AutoSEOPipeline:
         self.all_kws = [m_kw] + subs
         self.add_log(ui_log, f"📦 [KWs ĐÃ GOM] Cần {len(self.all_kws)} KWs: {', '.join(self.all_kws)}", "detail")
         
-        # ĐÃ CẬP NHẬT: THIẾT LẬP MIN_W VÀ MAX_W (MIN + 30%)
+        # THUẬT TOÁN ĐỘ DÀI: Lấy Random Range -> Set làm MIN -> Tính MAX = MIN + 30%
         try:
             wrng = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
-            self.min_w = int(wrng[0])
-        except: self.min_w = 900
+            mn, mx = int(wrng[0]), int(wrng[1])
+        except: mn, mx = 900, 1200
         
         self.is_short_form = len(self.all_kws) < 3
-        if self.is_short_form: self.min_w = self.min_w // 2
-        
+        if self.is_short_form:
+            self.target_length = random.randint(mn // 2, mx // 2)
+        else:
+            self.target_length = random.randint(mn, mx)
+            
+        self.min_w = self.target_length
         self.max_w = int(self.min_w * 1.3)
         self.add_log(ui_log, f"📏 [RULE BÀI] Khóa cứng Word Count: Tối thiểu {self.min_w} chữ, Tối đa {self.max_w} chữ (+30%).", "detail")
         
@@ -232,7 +236,6 @@ class AutoSEOPipeline:
         dist = self.min_w // max(len(self.all_kws), 1)
         seed_sang_tao = random.randint(10000, 99999)
         
-        # ĐÃ CẬP NHẬT LUẬT ÉP WORD COUNT: NẰM CHÍNH XÁC TRONG KHOẢNG MIN - MAX
         force = f"""\n[YÊU CẦU SINH TỬ - BẮT BUỘC TUÂN THỦ]:
         1. CẤM CHÀO HỎI (Cấm 'Kính thưa', 'Chào các Sếp'). Vào thẳng Sapo.
         2. H1: Chứa "{self.all_kws[0]}" ở GIỮA/CUỐI. Cấm đặt đầu câu.
@@ -330,6 +333,7 @@ class AutoSEOPipeline:
         for h in soup.find_all(['h1', 'h2']):
             if h.find('a'): h.a.unwrap()
 
+        # LINK INJECTION VỚI STRICT QUOTA LOCK
         missed = []
         for k in self.all_kws:
             injected = False
@@ -348,14 +352,7 @@ class AutoSEOPipeline:
             
             if not injected: missed.append(k)
 
-        # ĐÃ CẬP NHẬT: RẢI LINK BÙ VÀO ĐOẠN VĂN SẴN CÓ (CHỐNG CÂU CỤT LỦN)
-        pfx_list = [
-            "Bên cạnh đó, kinh nghiệm cho thấy việc hiểu rõ về {kw} mang lại góc nhìn toàn diện hơn.",
-            "Nhiều người đi trước chia sẻ rằng, tối ưu hóa yếu tố {kw} thường giải quyết được vấn đề lõi.",
-            "Trong quá trình triển khai, nếu áp dụng chuẩn xác {kw} sẽ thấy sự khác biệt rõ rệt.",
-            "Thực tế, một chiến lược khôn ngoan không thể bỏ qua việc ứng dụng {kw} đúng lúc."
-        ]
-        
+        # RẢI BÙ BẰNG AI
         gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
         gem_mods = [m.strip() for m in str(self.dashboard.get('GEMINI_MODEL', 'gemini-1.5-flash')).split(',') if m.strip()]
         
@@ -378,12 +375,11 @@ class AutoSEOPipeline:
                     except: pass
                 
                 if not gen_txt or k.lower() not in gen_txt.lower():
-                    gen_txt = random.choice(pfx_list).replace('{kw}', k)
+                    gen_txt = f"Bên cạnh đó, việc tìm hiểu thêm về {k} cũng là một lựa chọn đáng cân nhắc."
                 
                 pattern = re.compile(re.escape(k), re.IGNORECASE)
                 gen_txt = pattern.sub(f"<a href='{url}'>{k}</a>", gen_txt, count=1)
                 
-                # NỐI TRỰC TIẾP VÀO ĐOẠN VĂN CÓ SẴN
                 avail_p = [p for p in soup.find_all('p') if len(p.get_text(strip=True)) > 20 and not p.find('a') and not p.find('img')]
                 if avail_p:
                     target_p = random.choice(avail_p)
@@ -399,7 +395,7 @@ class AutoSEOPipeline:
                 if is_e: self.injected_ext += 1
                 else: self.injected_int += 1
 
-        self.add_log(ui_log, f"🛠️ [GẮN LINK] {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int.", "success")
+        self.add_log(ui_log, f"🛠️ [GẮN LINK] Đã chốt Quota: {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int.", "success")
 
         mx_img = self.parse_rng(self.target_web.get('WS_IMG_LIMIT', 1), 1)
         req_img = min(len(self.all_kws), mx_img)
@@ -450,7 +446,7 @@ class AutoSEOPipeline:
         txt, k0 = soup.get_text(' ', strip=True), self.all_kws[0].lower()
         
         wc = len(txt.split())
-        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết đạt {wc} chữ (Yêu cầu: {self.min_w} - {self.max_w} chữ).", "detail")
+        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết đạt {wc} chữ (Yêu cầu khắt khe: {self.min_w} - {self.max_w} chữ).", "detail")
         
         h1 = soup.find('h1')
         s_h1 = 30 if h1 and k0 in h1.get_text().lower() else 0
@@ -474,7 +470,6 @@ class AutoSEOPipeline:
         if ai > 20: fails.append(f"AI ({ai}%)")
         if read < 60: fails.append(f"Read ({read})")
         
-        # ĐÃ CẬP NHẬT: KCS ÉP ĐÁNH RỚT NẾU SAI ĐỘ DÀI
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
         if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
