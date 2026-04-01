@@ -27,7 +27,7 @@ st.markdown("""
     .main { background-color: #f8fafc; }
     .log-box {
         background-color: #0f172a; color: #10b981; font-family: 'Courier New', monospace; font-size: 14px;
-        padding: 15px; border-radius: 8px; height: 500px; overflow-y: auto; border: 1px solid #334155; line-height: 1.6;
+        padding: 15px; border-radius: 8px; height: 800px; overflow-y: auto; border: 1px solid #334155; line-height: 1.6;
         word-wrap: break-word;
     }
     .log-error { color: #ef4444; font-weight: bold; }
@@ -38,6 +38,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# SẾP ĐIỀN ID FILE GOOGLE SHEETS VÀO ĐÂY
 SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw' 
 
 # ==========================================
@@ -293,7 +294,13 @@ class AutoSEOPipeline:
         subs = ", ".join(self.all_kws[1:])
         dist = self.target_length // max(len(self.all_kws), 1)
 
-        self.add_log(ui_log, f"🧠 [PROMPT BUIDER] Ghép lệnh...", "detail")
+        self.add_log(ui_log, f"🧠 [PROMPT BUILDER] Đang rắp ráp lệnh từ 6 Keys trong DASHBOARD:", "detail")
+        self.add_log(ui_log, f"   + PROMPT_TEMPLATE: Chứa sườn bài viết cơ bản.", "detail")
+        self.add_log(ui_log, f"   + PROMPT_CONTENT_STRATEGY: Định hướng nội dung.", "detail")
+        self.add_log(ui_log, f"   + PROMPT_KEYWORD_SEARCH: Quy tắc rải từ khóa.", "detail")
+        self.add_log(ui_log, f"   + PROMPT_SERP_STYLE: Giả lập văn phong đối thủ.", "detail")
+        self.add_log(ui_log, f"   + PROMPT_SEO_GLOBAL_RULE: Luật SEO (H1, H2, độ dài).", "detail")
+        self.add_log(ui_log, f"   + PROMPT_AI_HUMANIZER: Khử văn phong máy móc.", "detail")
 
         force_kw = f"""
         \n[LỆNH ÉP TỐI THƯỢNG - VI PHẠM SẼ BỊ PHẠT]:
@@ -394,7 +401,6 @@ class AutoSEOPipeline:
                     found_and_injected = True
                     break
             
-            # ÉP GẮN BẰNG ĐƯỢC
             if not found_and_injected:
                 p_tags = soup.find_all('p')
                 if p_tags:
@@ -404,7 +410,7 @@ class AutoSEOPipeline:
                     found_and_injected = True
                 else:
                     soup.append(BeautifulSoup(f"<p>Tìm hiểu thêm về <a href='{url}'>{kw}</a>.</p>", 'html.parser'))
-                    self.add_log(ui_log, f"⚠️ AI không sinh thẻ <p>, đã tự động đẻ thẻ mới chứa link '{kw}'.", "warn")
+                    self.add_log(ui_log, f"⚠️ AI không sinh thẻ &lt;p&gt;, đã tự động đẻ thẻ mới chứa link '{kw}'.", "warn")
                     found_and_injected = True
                     
             if found_and_injected:
@@ -439,7 +445,7 @@ class AutoSEOPipeline:
         self.final_title = html.unescape(re.sub(r'<[^>]+>', '', h1_m.group(1)).strip()) if h1_m else f"Bài: {self.all_kws[0]}"
         return True
 
-    # --- BƯỚC 7: KCS ---
+    # --- BƯỚC 7: KCS (IN MINH BẠCH LÝ DO TRỪ ĐIỂM SEO) ---
     def step7_qa_validation(self, ui_log) -> str:
         self.add_log(ui_log, "⚖️ [KCS] Máy quét AI bắt đầu chấm điểm...")
         soup = BeautifulSoup(self.raw_html, 'html.parser')
@@ -535,7 +541,7 @@ class AutoSEOPipeline:
         except Exception as e: self.add_log(ui_log, f"🛑 [DB ERROR] Lỗi ghi Database: {str(e)[:100]}", "error")
 
 # ==========================================
-# 🖥 GIAO DIỆN CHÍNH & KHÓA NÚT CHỐNG CHẠY ĐÈ
+# 🖥 GIAO DIỆN CHÍNH & GIỮ NGUYÊN NÚT BẤM CỦA SẾP
 # ==========================================
 db_mock = load_data_from_gsheets()
 if db_mock is None: st.stop()
@@ -565,19 +571,18 @@ with tab1:
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    btn_container = st.empty()
-    with btn_container.container():
-        btn_col1, btn_col2, btn_col3 = st.columns(3)
-        btn_start = btn_col1.button("🔥 Bắt đầu Soạn bài AI", use_container_width=True, type="primary")
-        btn_force = btn_col2.button("⚡ Ép Lên bài ngay", use_container_width=True)
-        btn_refresh = btn_col3.button("🔄 Làm mới dữ liệu", use_container_width=True)
+    # KHÔNG ẨN NÚT NỮA - GIỮ NGUYÊN UI/UX CHO SẾP
+    btn_col1, btn_col2, btn_col3 = st.columns(3)
+    btn_start = btn_col1.button("🔥 Bắt đầu Soạn bài AI", use_container_width=True, type="primary")
+    btn_force = btn_col2.button("⚡ Ép Lên bài ngay", use_container_width=True)
+    btn_refresh = btn_col3.button("🔄 Làm mới dữ liệu", use_container_width=True)
     
     if btn_refresh:
         load_data_from_gsheets.clear()
         st.rerun()
         
     if btn_force:
-        btn_container.empty()
+        st.markdown("---")
         st.info("⏳ ĐANG ÉP LÊN BÀI... VUI LÒNG KHÔNG ĐÓNG TRÌNH DUYỆT HOẶC F5 MÀN HÌNH NÀY!")
         load_data_from_gsheets.clear()
         ui_log = st.empty()
@@ -607,16 +612,14 @@ with tab1:
                     if upd:
                         ws.batch_update(upd)
                         st.success(f"✅ Đã ép trạng thái DONE và dọn rác thành công {count} bài của ngày hôm nay!")
-                        time.sleep(1)
-                        st.rerun()
                     else: bot.add_log(ui_log, "ℹ️ Không tìm thấy bài PENDING nào thuộc ngày hôm nay.", "warn")
                 else: bot.add_log(ui_log, "🛑 Không tìm thấy cột REP_RESULT hoặc REP_PUBLISH_DATE.", "error")
         except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi khi ép lên bài: {str(e)[:150]}", "error")
 
     if btn_start:
-        btn_container.empty() 
+        st.markdown("---")
         st.info("⏳ HỆ THỐNG ĐANG SOẠN BÀI TỰ ĐỘNG... BẠN CỨ ĐỂ YÊN MÀN HÌNH NÀY CHO TỚI KHI BÁO XONG NHA!")
-        load_data_from_gsheets.clear() 
+        load_data_from_gsheets.clear()
         
         ui_log = st.empty()
         needed = batch - p_today
@@ -640,7 +643,7 @@ with tab1:
                     bot.add_log(ui_log, "🛑 Quá 5 phút, tự ngắt để cứu hệ thống.", "error")
                     break
             bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
-            st.success("🎉 TẠO BÀI XONG! BẤM LÀM MỚI DỮ LIỆU ĐỂ XEM KẾT QUẢ!")
+            st.success("🎉 TẠO BÀI XONG! BẤM NÚT LÀM MỚI Ở TRÊN ĐỂ XEM KẾT QUẢ NHA SẾP!")
 
 with tab2:
     if not df_rep.empty:
@@ -657,7 +660,7 @@ with tab2:
                 st.markdown(f'<div class="log-box">{str(row.get("REP_LOG", "")).replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
             with lc2:
                 st.markdown("**🌐 Mã nguồn (Raw HTML):**")
-                st.text_area("", str(row.get('REP_HTML', '')), height=500, label_visibility="collapsed")
+                st.text_area("", str(row.get('REP_HTML', '')), height=800, label_visibility="collapsed")
 
 with tab3:
     st.dataframe(df_rep, use_container_width=True)
