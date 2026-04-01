@@ -89,7 +89,23 @@ class AutoSEOPipeline:
         self.out_lim, self.in_lim, self.injected_ext, self.injected_int = 0, 0, 0, 0
         self.is_short_form, self.serp_style, self.prompt_content = False, "", ""
         self.min_w, self.max_w = 0, 0
+        
+        # Biến phục vụ tính năng AUTO-RETRY
+        self.retry_count = 0
+        self.last_word_count = 0
+        
         if 'evolution_cache' not in st.session_state: st.session_state.evolution_cache = ""
+
+    def reset_state_for_retry(self):
+        """Reset các biến DOM để sẵn sàng viết lại bài mới mà không đếm đúp"""
+        self.raw_html = ""
+        self.final_title = ""
+        self.used_imgs = []
+        self.used_spins = []
+        self.failed_imgs = []
+        self.injected_ext = 0
+        self.injected_int = 0
+        self.kcs_metrics = {}
 
     def safe_int(self, value, default=0):
         try: return int(str(value).strip())
@@ -230,13 +246,20 @@ class AutoSEOPipeline:
         pmts = {k: self.pick_random_prompt_variant(self.dashboard.get(k, '')) for k in keys_to_pull}
         
         self.prompt_content = f"{pmts['PROMPT_TEMPLATE']}\n{pmts['PROMPT_CONTENT_STRATEGY']}\n{pmts['PROMPT_KEYWORD_SEARCH']}\n[SERP_STYLE_AI_EXTRACT]: {self.serp_style}"
-        self.add_log(ui_log, f"🧠 [PROMPT_CONTENT TỔNG HỢP (Chuẩn bị gửi AI)]:\n{self.prompt_content[:300]}...", "detail")
+        
+        # Chỉ in Log nội dung Prompt ở lần thử đầu tiên
+        if self.retry_count == 0:
+            self.add_log(ui_log, f"🧠 [PROMPT_CONTENT TỔNG HỢP (Chuẩn bị gửi AI)]:\n{self.prompt_content[:300]}...", "detail")
 
         dist = self.min_w // max(len(self.all_kws), 1)
         seed_sang_tao = random.randint(10000, 99999)
         
-        # SỬA LẠI PROMPT: CẤP SỐ MIN & MAX THỰC TẾ ĐỂ BẢO TOÀN KEYWORD DENSITY
-        force = f"""\n[YÊU CẦU SINH TỬ - BẮT BUỘC TUÂN THỦ]:
+        # CƠ CHẾ AUTO-RETRY ĐE DỌA AI NẾU NÓ VIẾT NGẮN
+        retry_cmd = ""
+        if self.retry_count > 0:
+            retry_cmd = f"\n[CẢNH BÁO TỪ HỆ THỐNG]: Bản nháp trước của bạn chỉ đạt {self.last_word_count} chữ (BỊ TỪ CHỐI VÌ QUÁ NGẮN). Lần này BẮT BUỘC bạn phải mở rộng luận điểm, lấy thêm ví dụ thực tế để TỔNG SỐ CHỮ VƯỢT MỨC {self.min_w} CHỮ. Không được viết lại y chang bản cũ."
+            
+        force = f"""\n[YÊU CẦU SINH TỬ - BẮT BUỘC TUÂN THỦ]:{retry_cmd}
         1. CẤM CHÀO HỎI (Cấm 'Kính thưa', 'Chào các Sếp'). Vào thẳng Sapo.
         2. H1: Chứa "{self.all_kws[0]}" ở GIỮA/CUỐI. Cấm đặt đầu câu.
         3. RẢI TỪ KHÓA: Từ khóa chính "{self.all_kws[0]}" (x3). Các từ "{', '.join(self.all_kws[1:])}" mỗi từ x1.
@@ -246,7 +269,7 @@ class AutoSEOPipeline:
         - TUYỆT ĐỐI KHÔNG DÙNG ký tự Markdown như `*` hay `-` để gạch đầu dòng. KHÔNG in đậm `**` từ khóa.
         - H3 phải đánh số 1., 2..
         5. SỐ LƯỢNG CHỮ (QUAN TRỌNG NHẤT):
-        - BẮT BUỘC BÀI VIẾT PHẢI CÓ TỔNG SỐ CHỮ NẰM TRONG KHOẢNG TỪ {self.min_w} ĐẾN TỐI ĐA {self.max_w} CHỮ. Bạn hãy phân tích thật sâu, chia làm nhiều luận điểm nhỏ để đạt TỐI THIỂU {self.min_w} chữ. BỊ PHẠT NẾU VIẾT NGẮN HƠN HOẶC DÀI HƠN MỨC NÀY.
+        - BẮT BUỘC BÀI VIẾT PHẢI CÓ TỔNG SỐ CHỮ NẰM TRONG KHOẢNG TỪ {self.min_w} ĐẾN TỐI ĐA {self.max_w} CHỮ. BỊ PHẠT NẾU VIẾT NGẮN HƠN HOẶC DÀI HƠN MỨC NÀY.
         - Ngắn dài đan xen (3-4 câu/đoạn). Mỗi đoạn bọc trong 1 thẻ <p> riêng biệt. Xóa cấu trúc cũ: {st.session_state.evolution_cache}.
         6. GÓC NHÌN (Seed: {seed_sang_tao}): Lập luận theo một góc độ hoàn toàn khác so với bài trước.
         7. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>."""
@@ -312,7 +335,8 @@ class AutoSEOPipeline:
         
         h1 = soup.find('h1')
         self.final_title = h1.get_text(strip=True) if h1 else f"Bài: {self.all_kws[0]}"
-        self.add_log(ui_log, f"🏷️ [THÔNG TIN BÀI VIẾT] Tiêu đề: {self.final_title}", "success")
+        if self.retry_count == 0:
+            self.add_log(ui_log, f"🏷️ [THÔNG TIN BÀI VIẾT] Tiêu đề: {self.final_title}", "success")
         return True
 
     def step5_6_spin_and_dom(self, ui_log):
@@ -351,19 +375,6 @@ class AutoSEOPipeline:
             
             if not injected: missed.append(k)
 
-        pfx_list = [
-            "Bên cạnh đó, kinh nghiệm cho thấy việc hiểu rõ về {kw} mang lại góc nhìn toàn diện hơn.",
-            "Nhiều người đi trước chia sẻ rằng, tối ưu hóa yếu tố {kw} thường giải quyết được vấn đề lõi.",
-            "Trong quá trình triển khai, nếu áp dụng chuẩn xác {kw} sẽ thấy sự khác biệt rõ rệt.",
-            "Thực tế, một chiến lược khôn ngoan không thể bỏ qua việc ứng dụng {kw} đúng lúc.",
-            "Ngoài ra, Sếp hoàn toàn có thể cân nhắc giải pháp {kw} để tối ưu chi phí.",
-            "Nếu Sếp đang cần thêm thông tin, chủ đề về {kw} này rất đáng để xem qua.",
-            "Nhiều chuyên gia trong ngành cũng thường xuyên nhắc đến vai trò của {kw} trong hệ thống.",
-            "Một yếu tố bổ trợ không kém phần quan trọng chính là {kw}.",
-            "Đôi khi, nút thắt của vấn đề lại nằm ở việc chúng ta áp dụng {kw} như thế nào.",
-            "Để có quyết định chính xác nhất, việc tham khảo thêm góc nhìn về {kw} là cần thiết."
-        ]
-        
         gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
         gem_mods = [m.strip() for m in str(self.dashboard.get('GEMINI_MODEL', 'gemini-1.5-flash')).split(',') if m.strip()]
         
@@ -386,7 +397,7 @@ class AutoSEOPipeline:
                     except: pass
                 
                 if not gen_txt or len(gen_txt.split()) > 40 or k.lower() not in gen_txt.lower():
-                    gen_txt = random.choice(pfx_list).replace('{kw}', k)
+                    gen_txt = f" Bên cạnh đó, kinh nghiệm cho thấy việc hiểu rõ về {k} mang lại góc nhìn toàn diện hơn."
                 
                 pattern = re.compile(re.escape(k), re.IGNORECASE)
                 gen_txt = pattern.sub(f"<a href='{url}'>{k}</a>", gen_txt, count=1)
@@ -406,7 +417,7 @@ class AutoSEOPipeline:
                 if is_e: self.injected_ext += 1
                 else: self.injected_int += 1
 
-        self.add_log(ui_log, f"🛠️ [GẮN LINK] {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int.", "success")
+        self.add_log(ui_log, f"🛠️ [GẮN LINK] Đã chốt Quota: {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int.", "success")
 
         mx_img = self.parse_rng(self.target_web.get('WS_IMG_LIMIT', 1), 1)
         req_img = min(len(self.all_kws), mx_img)
@@ -457,7 +468,9 @@ class AutoSEOPipeline:
         txt, k0 = soup.get_text(' ', strip=True), self.all_kws[0].lower()
         
         wc = len(txt.split())
-        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết đạt {wc} chữ (Target gốc: {self.min_w} - {self.max_w} chữ).", "detail")
+        self.last_word_count = wc # Lưu lại số chữ để Retry nếu fail
+        
+        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết đạt {wc} chữ (Yêu cầu khắt khe: {self.min_w} - {self.max_w} chữ).", "detail")
         
         h1 = soup.find('h1')
         s_h1 = 30 if h1 and k0 in h1.get_text().lower() else 0
@@ -481,7 +494,6 @@ class AutoSEOPipeline:
         if ai > 20: fails.append(f"AI ({ai}%)")
         if read < 60: fails.append(f"Read ({read})")
         
-        # CHẤM ĐIỂM NGHIÊM KHẮC: KHÔNG NỚI LỎNG
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
         if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
@@ -669,12 +681,29 @@ with tab1:
                 try:
                     if bot.step1_allocate_slot(ui_log):
                         if bot.step2_3_keyword_and_serp(ui_log):
-                            if bot.step4_llm_generation(ui_log):
-                                bot.step5_6_spin_and_dom(ui_log)
-                                res = bot.step7_qa_validation(ui_log)
-                                bot.step8_sync_db(ui_log, res)
-                                db_mock = load_data_from_gsheets()
+                            
+                            # ==========================================
+                            # ĐỘNG CƠ AUTO-RETRY NẾU KCS FAIL
+                            # ==========================================
+                            final_res = "FAIL"
+                            for attempt in range(2):  # Cho AI cơ hội làm lại 1 lần nếu fail KCS
+                                bot.retry_count = attempt
+                                if attempt > 0:
+                                    bot.reset_state_for_retry()
+                                    bot.add_log(ui_log, f"🔄 [AUTO-RETRY] Bài trước fail KCS (Đạt {bot.last_word_count} chữ). Đang ép AI viết lại bản mới dài hơn...", "warn")
+                                
+                                if bot.step4_llm_generation(ui_log):
+                                    bot.step5_6_spin_and_dom(ui_log)
+                                    final_res = bot.step7_qa_validation(ui_log)
+                                    if final_res == "PENDING":
+                                        break # Đạt chuẩn -> thoát vòng lặp Retry
+                                else:
+                                    break # Lỗi API nặng -> khỏi Retry
+                                    
+                            bot.step8_sync_db(ui_log, final_res)
+                            db_mock = load_data_from_gsheets()
                 except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi chí mạng: {str(e)[:150]}", "error")
+                
                 if time.time() - st_t > 300:
                     bot.add_log(ui_log, "🛑 Quá 5 phút, tự ngắt để cứu hệ thống.", "error")
                     break
