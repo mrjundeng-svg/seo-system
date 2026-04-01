@@ -240,7 +240,6 @@ class AutoSEOPipeline:
         content_kws = sub_df.head(kws_to_take)['KW_TEXT'].tolist() if not sub_df.empty else []
         self.all_kws = [main_kw] + content_kws
         
-        # In chi tiết danh sách từ khóa được chọn
         self.add_log(ui_log, f"📦 [DATA INGESTION] Assigned {len(self.all_kws)} Keywords Cluster: {', '.join(self.all_kws)}")
 
         wrange = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
@@ -278,48 +277,62 @@ class AutoSEOPipeline:
             
         return True
 
-    # --- BƯỚC 4: LLM ENGINE (VỚI RAW EXCEPTION LOGGING) ---
+    # --- BƯỚC 4: LLM ENGINE (FALLBACK LIÊN HOÀN - CẮT ĐỨT CLAUDE SONNET) ---
     def call_llm_with_timeout(self, prompt, timeout=90, ui_log=None):
-        gem_key_raw = str(self.dashboard.get('GEMINI_API_KEY', '')).split(',')[0].strip()
-        or_key_raw = str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',')[0].strip()
+        # Bốc mảng API Keys và Cắt dấu phẩy
+        gem_keys_raw = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
+        or_keys_raw = [k.strip() for k in str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',') if k.strip()]
+        
+        # Bốc mảng Tên Models và Cắt dấu phẩy
+        gem_models_raw = [m.strip() for m in str(self.dashboard.get('GEMINI_MODEL', 'gemini-1.5-flash')).split(',') if m.strip()]
+        or_models_raw = [m.strip() for m in str(self.dashboard.get('OPENROUTER_MODEL', 'openai/gpt-4o-mini')).split(',') if m.strip()]
 
-        if not gem_key_raw and not or_key_raw:
+        if not gem_keys_raw and not or_keys_raw:
             self.add_log(ui_log, "🛑 [API ERROR] Không tìm thấy API Key nào ở Tab DASHBOARD.", "error")
             return None
 
-        def run_gemini():
-            genai.configure(api_key=gem_key_raw)
-            # Dùng model ổn định thay vì latest để tránh lỗi 404
-            model = genai.GenerativeModel('gemini-1.5-pro') 
-            return model.generate_content(prompt).text
-
-        def run_openrouter():
-            res = requests.post("https://openrouter.ai/api/v1/chat/completions",
-                                headers={"Authorization": f"Bearer {or_key_raw}", "Content-Type": "application/json"},
-                                json={"model": "google/gemini-pro", "messages": [{"role": "user", "content": prompt}]}, 
-                                timeout=timeout)
-            res.raise_for_status() # Bắt buộc quăng lỗi nếu HTTP != 200
-            return res.json()["choices"][0]["message"]["content"]
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            if gem_key_raw:
-                self.add_log(ui_log, f"🌐 [API CALL] Requesting Generation via Gemini API...")
-                future = executor.submit(run_gemini)
-                try: return future.result(timeout=timeout)
-                except Exception as e:
-                    err_msg = str(e).replace('\n', ' ')
-                    self.add_log(ui_log, f"⚠️ [API WARN] Gemini (Key: {gem_key_raw[:5]}***) Lỗi: {err_msg[:150]}", "warn")
-            
-            if or_key_raw:
-                self.add_log(ui_log, f"🌐 [API CALL] Requesting Generation via OpenRouter (LLM)...")
-                future = executor.submit(run_openrouter)
-                try: return future.result(timeout=timeout)
-                except requests.exceptions.RequestException as e:
-                    err_details = e.response.text if e.response else str(e)
-                    self.add_log(ui_log, f"🛑 [API FAIL] OpenRouter (Key: {or_key_raw[:5]}***) Lỗi: {err_details[:150]}", "error")
-                except Exception as e:
-                    self.add_log(ui_log, f"🛑 [API FAIL] OpenRouter Lỗi cục bộ: {str(e)[:100]}", "error")
+        # 1. Thử Vòng Lặp Gemini (Quét từng Model, từng Key)
+        if gem_keys_raw:
+            for gem_key in gem_keys_raw:
+                genai.configure(api_key=gem_key)
+                for gem_model in gem_models_raw:
+                    self.add_log(ui_log, f"🌐 [API CALL] Thử Gemini API (Key: {gem_key[:5]}*** | Model: {gem_model})...")
+                    def run_gemini():
+                        model = genai.GenerativeModel(gem_model) 
+                        return model.generate_content(prompt).text
                     
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(run_gemini)
+                        try: 
+                            return future.result(timeout=timeout) # Thành công -> Thoát
+                        except Exception as e:
+                            err_msg = str(e).replace('\n', ' ')
+                            self.add_log(ui_log, f"⚠️ [API WARN] Gemini sập ({gem_model}): {err_msg[:120]}. Thử Model tiếp theo...", "warn")
+
+        # 2. Thử Vòng Lặp OpenRouter (TUYỆT ĐỐI TUÂN THỦ TÊN MODEL TRONG SHEET)
+        if or_keys_raw:
+            for or_key in or_keys_raw:
+                for or_model in or_models_raw:
+                    self.add_log(ui_log, f"🌐 [API CALL] Thử OpenRouter (Key: {or_key[:5]}*** | Model: {or_model})...")
+                    def run_openrouter():
+                        res = requests.post("https://openrouter.ai/api/v1/chat/completions",
+                                            headers={"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"},
+                                            json={"model": or_model, "messages": [{"role": "user", "content": prompt}]}, 
+                                            timeout=timeout)
+                        res.raise_for_status() 
+                        return res.json()["choices"][0]["message"]["content"]
+                    
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(run_openrouter)
+                        try: 
+                            return future.result(timeout=timeout) # Thành công -> Thoát
+                        except requests.exceptions.RequestException as e:
+                            err_details = e.response.text if e.response else str(e)
+                            self.add_log(ui_log, f"🛑 [API FAIL] OpenRouter sập ({or_model}): {err_details[:120]}", "error")
+                        except Exception as e:
+                            self.add_log(ui_log, f"🛑 [API FAIL] OpenRouter Lỗi cục bộ: {str(e)[:100]}", "error")
+                            
+        self.add_log(ui_log, "🛑 [LLM FATAL] Tất cả các Keys và Models đều đã thử và sập toàn tập!", "error")
         return None
 
     def step4_llm_generation(self, ui_log) -> bool:
@@ -350,7 +363,7 @@ class AutoSEOPipeline:
 
         response = self.call_llm_with_timeout(master_prompt, timeout=90, ui_log=ui_log)
         if not response:
-            self.add_log(ui_log, "🛑 [LLM TIMEOUT] Gateways hoàn toàn không phản hồi. Terminate Task.", "error")
+            self.add_log(ui_log, "🛑 [LLM TIMEOUT] Bó tay, mọi Gateway đều không phản hồi. Terminate Task.", "error")
             return False
             
         self.raw_html = response.replace('```html', '').replace('```', '').strip()
