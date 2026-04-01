@@ -11,11 +11,11 @@ import re
 import requests
 import html
 import pytz
+import concurrent.futures
 from bs4 import BeautifulSoup
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import concurrent.futures
 
 # ==========================================
 # ⚙️ CẤU HÌNH HỆ THỐNG & MÚI GIỜ CHUẨN VN
@@ -247,7 +247,7 @@ class AutoSEOPipeline:
         self.add_log(ui_log, "🛑 Đã full lịch.", "error")
         return False
 
-    # --- BƯỚC 2 & 3: TỪ KHÓA & SERP ---
+    # --- BƯỚC 2 & 3: TỪ KHÓA & SERP THÔNG MINH ---
     def step2_3_keyword_and_serp(self, ui_log) -> bool:
         df_kw = self.db.get('KEYWORD', pd.DataFrame()).dropna(subset=['KW_TEXT'])
         if df_kw.empty: return False
@@ -321,7 +321,6 @@ class AutoSEOPipeline:
         subs = ", ".join(self.all_kws[1:])
         dist = self.target_length // max(len(self.all_kws), 1)
         
-        # BỘ LỆNH ÉP AI SÁNG TẠO (CHỐNG TRÙNG LẶP)
         seed_sang_tao = random.randint(1000, 9999)
 
         self.add_log(ui_log, f"🧠 [PROMPT BUILDER] Nội dung bốc ngẫu nhiên từ Dashboard:", "detail")
@@ -403,7 +402,7 @@ class AutoSEOPipeline:
         
         return True
 
-    # --- BƯỚC 5 & 6: GẮN LINK ---
+    # --- BƯỚC 5 & 6: GẮN LINK ĐÃ FIX TRIỆT ĐỂ LỖI SPAM CUỐI BÀI ---
     def step5_6_spin_and_dom(self, ui_log):
         df_spin = self.db.get('SPIN', pd.DataFrame())
         html_txt = self.raw_html
@@ -455,19 +454,24 @@ class AutoSEOPipeline:
             
             if not found_and_injected: missed_kws.append((kw, url))
 
+        # ==========================================
+        # 🟢 CHIẾN THUẬT BÁM KÝ SINH (CHỐNG SPAM)
+        # ==========================================
         if missed_kws:
-            prefixes = ["Hơn nữa, Sếp có thể tham khảo thêm về", "Một lựa chọn đáng cân nhắc là", "Tìm hiểu thêm thông tin về", "Để tối ưu lịch trình, đừng bỏ qua"]
-            avail_p = [p for p in soup.find_all('p') if len(p.get_text(strip=True)) > 20 and not p.find('a')]
+            prefixes = ["Ngoài ra, Sếp có thể xem thêm", "Gợi ý thêm cho Sếp về", "Sếp cũng có thể tham khảo", "Thông tin hữu ích liên quan đến"]
+            
+            # Lấy tất cả các đoạn văn có chữ dài hơn 20 ký tự
+            valid_ps = [p for p in soup.find_all('p') if len(p.get_text(strip=True)) > 20]
             
             for k, u in missed_kws:
-                if avail_p:
-                    target_p = random.choice(avail_p)
-                    avail_p.remove(target_p)
+                if valid_ps:
+                    target_p = random.choice(valid_ps)
+                    # Chèn nối thẳng vào đuôi đoạn văn đó, không tạo đoạn mới
                     target_p.append(BeautifulSoup(f" {random.choice(prefixes)} <a href='{u}'>{k}</a>.", 'html.parser'))
-                    self.add_log(ui_log, f"⚠️ AI sót từ '{k}', đã lồng tự nhiên vào một đoạn văn có sẵn.", "warn")
+                    self.add_log(ui_log, f"⚠️ AI sót từ '{k}', đã bám ký sinh mượt mà vào một đoạn văn giữa bài.", "warn")
                 else:
+                    # Bất đắc dĩ AI viết không có thẻ P nào
                     soup.append(BeautifulSoup(f"<p>{random.choice(prefixes)} <a href='{u}'>{k}</a>.</p>", 'html.parser'))
-                    self.add_log(ui_log, f"⚠️ AI không sinh đủ đoạn văn, đành phải tạo đoạn mới chứa link '{k}'.", "warn")
                     
         self.add_log(ui_log, f"🛠️ [GẮN LINK] Thành công: {self.injected_ext}/{self.out_lim} Link Ngoại | {self.injected_int}/{self.in_lim} Link Nội.", "success")
 
@@ -670,6 +674,7 @@ with tab1:
                 idx_res = headers.index('REP_RESULT') if 'REP_RESULT' in headers else -1
                 idx_pub = headers.index('REP_PUBLISH_DATE') if 'REP_PUBLISH_DATE' in headers else -1
                 idx_html = headers.index('REP_HTML') if 'REP_HTML' in headers else -1
+                idx_log = headers.index('REP_LOG') if 'REP_LOG' in headers else -1
                 idx_ws = headers.index('REP_WS_NAME') if 'REP_WS_NAME' in headers else -1
                 idx_title = headers.index('REP_TITLE') if 'REP_TITLE' in headers else -1
 
@@ -736,7 +741,6 @@ with tab1:
 
 with tab2:
     if not df_rep.empty:
-        # VIỆT HÓA BẢNG THEO YÊU CẦU SẾP
         df_vn = df_rep[['REP_CREATED_AT', 'REP_PUBLISH_DATE', 'REP_TITLE', 'REP_WS_NAME', 'REP_RESULT']].copy()
         df_vn.columns = ['Ngày tạo bài', 'Ngày đăng bài', 'Tiêu đề', 'Trang web', 'Trạng thái']
         st.dataframe(df_vn.tail(15), use_container_width=True, hide_index=True)
