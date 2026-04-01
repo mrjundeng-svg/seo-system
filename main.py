@@ -128,6 +128,11 @@ class AutoSEOPipeline:
             log_html = f'<div class="log-box" id="logbox">{"<br>".join(self.history_log)}</div><script>var objDiv = document.getElementById("logbox"); objDiv.scrollTop = objDiv.scrollHeight;</script>'
             ui_placeholder.markdown(log_html, unsafe_allow_html=True)
 
+    # ĐÃ KHÔI PHỤC HÀM NÀY ĐỂ TRỊ LỖI CHÍ MẠNG SẾP GẶP PHẢI
+    def safe_int(self, value, default=0):
+        try: return int(str(value).strip())
+        except: return default
+
     def parse_random_range(self, val_str, default=0):
         try:
             s = str(val_str).strip()
@@ -367,10 +372,9 @@ class AutoSEOPipeline:
                             p.insert_after(BeautifulSoup(f"<br><p align='center'><img src='{i_url}' alt='{kw_tag}'></p><br>", 'html.parser'))
                             break
         self.add_log(ui_log, f"🖼️ [GẮN ẢNH] Thành công {len(self.used_imgs)}/{max_img} ảnh.")
-        
         self.raw_html = str(soup)
         h1_m = re.search(r'<h1>(.*?)</h1>', self.raw_html, re.IGNORECASE)
-        self.final_title = html.unescape(re.sub(r'<[^>]+>', '', h1_m.group(1)).strip()) if h1_m else f"Bài viết: {self.all_kws[0]}"
+        self.final_title = html.unescape(re.sub(r'<[^>]+>', '', h1_m.group(1)).strip()) if h1_m else f"Bài: {self.all_kws[0]}"
         return True
 
     # --- BƯỚC 7: KCS ---
@@ -403,7 +407,7 @@ class AutoSEOPipeline:
             return "FAIL"
         return "PENDING"
 
-    # --- BƯỚC 8: LƯU DỮ LIỆU CHUẨN MAPPING THEO TÊN CỘT (KEY) ---
+    # --- BƯỚC 8: LƯU (DYNAMIC MAPPING CHUẨN) ---
     def step8_sync_db(self, ui_log, final_result):
         try:
             creds = Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=['https://www.googleapis.com/auth/spreadsheets'])
@@ -413,7 +417,6 @@ class AutoSEOPipeline:
             f_html = self.raw_html if final_result == 'PENDING' else ""
             f_log = "\n".join(self.history_log) if final_result == 'PENDING' else ""
             
-            # 1. TẠO TỪ ĐIỂN MAP DỮ LIỆU ĐÚNG THEO TÊN CỘT (KEY)
             row_data = {
                 'REP_WS_NAME': str(self.target_web.get('WS_NAME', '')),
                 'REP_CREATED_AT': self.now_vn.strftime('%Y-%m-%d %H:%M'),
@@ -434,7 +437,6 @@ class AutoSEOPipeline:
                 'REP_HTML': f_html
             }
             
-            # 2. ĐỌC HEADER TỪ SHEET VÀ TỰ ĐỘNG GẮN DỮ LIỆU
             headers = rep_ws.row_values(1)
             new_row = [row_data.get(str(h).strip(), "") for h in headers]
             rep_ws.append_row(new_row)
@@ -539,21 +541,27 @@ with tab1:
                         time.sleep(1)
                         load_data_from_gsheets.clear()
                         st.rerun()
-                    else: bot.add_log(ui_log, "ℹ️ Không tìm thấy bài PENDING nào thuộc ngày hôm nay.", "warn")
-                else: bot.add_log(ui_log, "🛑 Không tìm thấy cột REP_RESULT hoặc REP_PUBLISH_DATE.", "error")
-        except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi khi ép lên bài: {str(e)[:150]}", "error")
+                    else: 
+                        bot.add_log(ui_log, "ℹ️ Không tìm thấy bài PENDING nào thuộc ngày hôm nay (Hoặc dữ liệu cũ đang bị lệch cột, hãy xóa các bài lỗi).", "warn")
+                else: 
+                    bot.add_log(ui_log, "🛑 Không tìm thấy cột REP_RESULT hoặc REP_PUBLISH_DATE trong Sheet REPORT.", "error")
+        except Exception as e:
+            bot.add_log(ui_log, f"🛑 Lỗi khi ép lên bài: {str(e)[:150]}", "error")
 
     if btn_start:
         st.markdown("---")
         ui_log = st.empty()
         needed = batch - p_today
-        if needed <= 0: ui_log.markdown('<div class="log-box"><span class="log-error">🛑 Đã đạt BATCH_SIZE hôm nay.</span></div>', unsafe_allow_html=True)
+        
+        if needed <= 0:
+            ui_log.markdown('<div class="log-box"><span class="log-error">🛑 Đã đạt BATCH_SIZE hôm nay. Không chạy thêm.</span></div>', unsafe_allow_html=True)
         else:
             master_logs = []
             for i in range(needed):
                 bot = AutoSEOPipeline(db_mock, master_logs)
                 bot.add_log(ui_log, f"<br>🚀 --- BẮT ĐẦU CHẠY BÀI {i+1}/{needed} ---", "success")
-                start_t = time.time()
+                
+                start_time = time.time()
                 try:
                     if bot.step1_allocate_slot(ui_log):
                         if bot.step2_3_keyword_and_serp(ui_log):
@@ -562,19 +570,23 @@ with tab1:
                                 res = bot.step7_qa_validation(ui_log)
                                 bot.step8_sync_db(ui_log, res)
                                 db_mock = load_data_from_gsheets()
-                except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi chí mạng: {str(e)[:150]}", "error")
-                if time.time() - start_t > 300:
-                    bot.add_log(ui_log, "🛑 Quá 5 phút, tự ngắt để cứu hệ thống.", "error")
+                except Exception as e:
+                    bot.add_log(ui_log, f"🛑 Lỗi chí mạng: {str(e)[:150]}", "error")
+                
+                if time.time() - start_time > 300:
+                    bot.add_log(ui_log, "🛑 [WATCHDOG] Quá 5 phút, tự ngắt để cứu hệ thống.", "error")
                     break
-            bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
-            st.success("🎉 TẠO BÀI XONG!")
-            if st.button("🔄 Tải lại dữ liệu", type="primary"):
+                    
+            bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH ĐÃ HOÀN TẤT.", "success")
+            st.success("🎉 QUÁ TRÌNH TẠO BÀI ĐÃ XONG!")
+            if st.button("🔄 Bấm vào đây để Tải lại dữ liệu trang Web", type="primary"):
                 load_data_from_gsheets.clear()
                 st.rerun()
 
 with tab2:
     if not df_rep.empty:
-        st.dataframe(df_rep[['REP_CREATED_AT', 'REP_PUBLISH_DATE', 'REP_TITLE', 'REP_WS_NAME', 'REP_RESULT']].tail(15), use_container_width=True, hide_index=True)
+        df_show = df_rep[['REP_CREATED_AT', 'REP_PUBLISH_DATE', 'REP_TITLE', 'REP_WS_NAME', 'REP_RESULT']].tail(15)
+        st.dataframe(df_show, use_container_width=True, hide_index=True)
         st.markdown("---")
         titles = df_rep['REP_TITLE'].tolist()[::-1]
         sel = st.selectbox("🔍 Nội soi chi tiết bài viết (Log & HTML):", titles)
@@ -587,5 +599,7 @@ with tab2:
             with lc2:
                 st.markdown("**🌐 Mã nguồn (Raw HTML):**")
                 st.text_area("", str(row.get('REP_HTML', '')), height=500, label_visibility="collapsed")
+    else: st.info("Chưa có dữ liệu bài viết.")
 
-with tab3: st.dataframe(df_rep, use_container_width=True)
+with tab3:
+    st.dataframe(df_rep, use_container_width=True)
