@@ -49,7 +49,7 @@ def load_data_from_gsheets():
             if data: db[tab] = pd.DataFrame(data[1:], columns=[str(h).strip() for h in data[0]])
             else: db[tab] = pd.DataFrame()
         return db
-    except: return None
+    except Exception as e: return None
 
 def post_to_cms(website_row, title, html_content, dash_config):
     blog_receiver = str(website_row.get('WS_BLOG_CONTENT', '')).strip()
@@ -129,6 +129,7 @@ class AutoSEOPipeline:
                 ws_name, ws_limit = str(web.get('WS_NAME', '')).strip(), self.parse_rng(web.get('WS_POST_LIMIT', 1), 1)
                 day_posts = df_rep[(df_rep['REP_WS_NAME'] == ws_name) & (df_rep['REP_PUBLISH_DATE'].astype(str).str.startswith(day_x_str))] if not df_rep.empty else pd.DataFrame()
                 
+                self.add_log(ui_log, f"🔍 [CHECK QUOTA] Local '{ws_name}' ({day_x_str}): {len(day_posts)}/{ws_limit}", "quota")
                 if len(day_posts) < ws_limit:
                     try:
                         trange = str(self.dashboard.get('AUTO_RUN_TIME', '09:30-19:30')).split('-')
@@ -174,7 +175,6 @@ class AutoSEOPipeline:
         
         s_key = self.dashboard.get('SERPAPI_KEY', '').strip()
         c_list = [c.strip() for c in str(self.dashboard.get('COMPETITOR_LIST', '')).split(',') if c.strip()]
-        gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
         serp_chunks, scraped_urls = [], []
 
         if s_key:
@@ -197,15 +197,15 @@ class AutoSEOPipeline:
                 except: pass
             
             if serp_chunks:
-                raw_serp_text = "\n\n".join(serp_chunks)[:4000]
+                self.serp_style = "\n\n".join(serp_chunks)[:5000]
                 url_list_str = "\n".join([f"   + {u}" for u in scraped_urls])
-                self.add_log(ui_log, f"✅ [SERP] Đã cào data từ {len(serp_chunks)} đối thủ:\n{url_list_str}", "success")
+                self.add_log(ui_log, f"✅ [SERP] Đã trộn data từ {len(serp_chunks)} đối thủ:\n{url_list_str}", "success")
                 
-                # GỌI LLM ĐỂ TÓM TẮT SERP_STYLE
+                gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
                 if gem_keys:
                     try:
                         genai.configure(api_key=gem_keys[0])
-                        prompt_style = f"Đọc nội dung cào từ đối thủ sau và tóm tắt thành 3 gạch đầu dòng: Văn phong cách viết bài, Nhịp điệu của bài viết, Thể loại bài viết hướng tới.\n\nData:\n{raw_serp_text}"
+                        prompt_style = f"Đọc nội dung cào từ đối thủ sau và tóm tắt thành 3 gạch đầu dòng: Văn phong cách viết bài, Nhịp điệu của bài viết, Thể loại bài viết hướng tới.\n\nData:\n{self.serp_style[:4000]}"
                         with concurrent.futures.ThreadPoolExecutor() as ex:
                             self.serp_style = ex.submit(lambda: genai.GenerativeModel('gemini-1.5-flash').generate_content(prompt_style).text).result(timeout=15)
                     except: self.serp_style = "Văn phong chuyên gia, nhịp điệu logic, thể loại chia sẻ kiến thức."
@@ -221,21 +221,26 @@ class AutoSEOPipeline:
         keys_to_pull = ['PROMPT_TEMPLATE', 'PROMPT_CONTENT_STRATEGY', 'PROMPT_KEYWORD_SEARCH', 'PROMPT_SEO_GLOBAL_RULE', 'PROMPT_AI_HUMANIZER']
         pmts = {k: self.pick_random_prompt_variant(self.dashboard.get(k, '')) for k in keys_to_pull}
         
-        # GỘP THÀNH PROMPT_CONTENT VÀ IN RA LOG THEO YÊU CẦU SẾP
         self.prompt_content = f"{pmts['PROMPT_TEMPLATE']}\n{pmts['PROMPT_CONTENT_STRATEGY']}\n{pmts['PROMPT_KEYWORD_SEARCH']}\n[SERP_STYLE]: {self.serp_style}"
         self.add_log(ui_log, f"🧠 [PROMPT_CONTENT TỔNG HỢP (Chuẩn bị gửi AI)]:\n{self.prompt_content[:300]}...", "detail")
 
         dist = self.target_length // max(len(self.all_kws), 1)
+        seed_sang_tao = random.randint(10000, 99999)
+        
         force = f"""\n[ÉP LUẬT TỐI THƯỢNG - SOP MẶC ĐỊNH]:
-        1. CẤM CHÀO HỎI. Vào thẳng Sapo. H1: Chứa "{self.all_kws[0]}" ở GIỮA/CUỐI. Cấm đặt đầu câu.
-        2. THUẬT TOÁN RẢI TỪ KHÓA (CỰC KỲ QUAN TRỌNG):
+        1. CẤM CHÀO HỎI (Cấm 'Kính thưa', 'Chào các Sếp'). Vào thẳng Sapo.
+        2. H1: Chứa "{self.all_kws[0]}" ở GIỮA/CUỐI. Cấm đặt đầu câu.
+        3. THUẬT TOÁN RẢI TỪ KHÓA:
         - Từ khóa chính "{self.all_kws[0]}" (x3). Các từ "{', '.join(self.all_kws[1:])}" mỗi từ x1.
-        - Bài viết dài {self.target_length} chữ, chia thành {len(self.all_kws)} phần. Trong mỗi phần {dist} chữ, BẮT BUỘC chèn NGẪU NHIÊN 1 từ khóa. Từ khóa phải nằm lọt thỏm ở giữa câu, KHÔNG ĐẶT ở đầu hoặc cuối câu.
-        3. ĐỊNH DẠNG HTML:
-        - BẮT BUỘC dùng thẻ <ul> và <li> nếu liệt kê.
-        - TUYỆT ĐỐI KHÔNG DÙNG ký tự Markdown như `*` hay `-`. KHÔNG in đậm `**` từ khóa. H3 đánh số 1., 2..
-        4. CẤU TRÚC ĐOẠN: Ngắn dài đan xen (3-4 câu/đoạn). Mỗi đoạn bọc trong thẻ <p>. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>."""
-
+        - Bắt buộc rải đều từ khóa tuần tự từ trên xuống. Khoảng cách xấp xỉ {dist} chữ. Đặt tự nhiên lọt thỏm giữa câu. Cấm nhồi nhét 1 chỗ.
+        4. ĐỊNH DẠNG HTML (QUAN TRỌNG):
+        - BẮT BUỘC dùng thẻ <ul> và <li> nếu có liệt kê danh sách.
+        - TUYỆT ĐỐI KHÔNG DÙNG ký tự Markdown như `*` hay `-` để gạch đầu dòng.
+        - H3 phải đánh số 1., 2.. KHÔNG in đậm `**` từ khóa.
+        5. CẤU TRÚC ĐOẠN VĂN: Cấm viết dài thoòng. Ngắn dài đan xen (3-4 câu/đoạn). Mỗi đoạn bọc trong 1 thẻ <p> riêng biệt. Xóa cấu trúc cũ: {st.session_state.evolution_cache}.
+        6. GÓC NHÌN SÁNG TẠO (Seed: {seed_sang_tao}): Bắt buộc lập luận theo một góc độ hoàn toàn khác so với bài trước.
+        7. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>."""
+        
         m_prompt = f"{self.prompt_content}\n{pmts['PROMPT_SEO_GLOBAL_RULE']}\n{pmts['PROMPT_AI_HUMANIZER']}\n{force}"
         m_prompt = m_prompt.replace('{{ws_persona}}', str(self.target_web.get('WS_PERSONA', ''))).replace('{{kw_intent}}', str(self.main_kw_row.get('KW_INTENT', ''))).replace('{{keyword}}', self.all_kws[0]).replace('{{word_count}}', str(self.target_length))
         for i, k in enumerate(self.all_kws): m_prompt = re.sub(rf'\[?REP_KW_{i+1}\]?', k, m_prompt, flags=re.IGNORECASE)
@@ -275,7 +280,7 @@ class AutoSEOPipeline:
                 if response_text: break
 
         if not response_text:
-            self.add_log(ui_log, "🛑 [FATAL] LLM Gateway Timeout: API không phản hồi.", "error")
+            self.add_log(ui_log, "🛑 [FATAL] LLM Gateway Timeout: Toàn bộ API đều sập hoặc không phản hồi.", "error")
             return False
 
         self.raw_html = response_text
@@ -336,7 +341,7 @@ class AutoSEOPipeline:
             
             if not injected: missed.append((k, url, is_e))
 
-        # ĐỘNG CƠ RẢI LINK SÓT BẰNG AI (DYNAMIC PARAGRAPH) THEO YÊU CẦU SẾP
+        # ĐỘNG CƠ RẢI LINK SÓT BẰNG AI
         gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
         gem_mods = [m.strip() for m in str(self.dashboard.get('GEMINI_MODEL', 'gemini-1.5-flash')).split(',') if m.strip()]
         
@@ -347,24 +352,19 @@ class AutoSEOPipeline:
                 if gem_keys:
                     try:
                         genai.configure(api_key=gem_keys[0])
-                        # Prompt tạo đoạn văn mượt mà
-                        fb_pmt = f"Chủ đề bài viết: '{self.final_title}'. Viết 1 đoạn văn mở rộng (khoảng 2-4 câu, ngẫu nhiên số chữ) phân tích sâu hơn về chủ đề. BẮT BUỘC chứa chính xác cụm từ '{k}' tự nhiên trong câu. TRẢ VỀ VĂN BẢN TRƠN, KHÔNG DÙNG MARKDOWN."
+                        fb_pmt = f"Chủ đề bài viết: '{self.final_title}'. Viết 1 đoạn văn mở rộng (khoảng 2-4 câu) phân tích sâu hơn về chủ đề. BẮT BUỘC chứa chính xác cụm từ '{k}' tự nhiên trong câu. TRẢ VỀ VĂN BẢN TRƠN, KHÔNG DÙNG MARKDOWN."
                         with concurrent.futures.ThreadPoolExecutor() as ex:
                             gen_txt = ex.submit(lambda: genai.GenerativeModel(gem_mods[0]).generate_content(fb_pmt).text).result(timeout=15).strip()
                             gen_txt = gen_txt.replace('**', '')
                     except: pass
                 
-                # Nếu AI xịt thì dùng câu Backup tử tế
                 if not gen_txt or k.lower() not in gen_txt.lower():
                     gen_txt = f"Bên cạnh những yếu tố trên, để tối ưu trải nghiệm và đảm bảo an toàn, việc tìm hiểu thêm về {k} là một sự chuẩn bị vô cùng cần thiết cho mọi Sếp."
                 
-                # Chèn thẻ a vào đoạn văn vừa tạo
                 pattern = re.compile(re.escape(k), re.IGNORECASE)
                 gen_txt = pattern.sub(f"<a href='{u}'>{k}</a>", gen_txt, count=1)
-                
                 new_p = BeautifulSoup(f"<p>{gen_txt}</p>", 'html.parser')
                 
-                # Rải ngẫu nhiên vào giữa bài
                 if len(all_p) > 2:
                     idx = random.randint(1, len(all_p) - 2)
                     all_p[idx].insert_after(new_p)
@@ -394,7 +394,6 @@ class AutoSEOPipeline:
                     else: self.failed_imgs.append(u_img)
                 except: self.failed_imgs.append(u_img)
 
-        # ĐÃ FIX LỖI VỊ TRÍ ẢNH ĐẦU TIÊN (Quét tất cả p, li, h3)
         if self.used_imgs:
             if self.is_short_form or len(self.used_imgs) == 1:
                 img_html = f"<br><p align='center'><img src='{self.used_imgs[0]}' alt='{self.all_kws[0]}'></p><br>"
@@ -428,9 +427,8 @@ class AutoSEOPipeline:
         soup = BeautifulSoup(self.raw_html, 'html.parser')
         txt, k0 = soup.get_text(' ', strip=True), self.all_kws[0].lower()
         
-        # BÁO CÁO WORD COUNT THỰC TẾ
         wc = len(txt.split())
-        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết thực tế sinh ra: {wc} chữ (Target: {self.target_length} chữ trong khoảng {self.dashboard.get('WORD_COUNT_RANGE', '')}).", "detail")
+        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết đạt {wc} chữ (Target: {self.target_length} chữ trong khoảng {self.dashboard.get('WORD_COUNT_RANGE', '')}).", "detail")
         
         h1 = soup.find('h1')
         s_h1 = 30 if h1 and k0 in h1.get_text().lower() else 0
@@ -530,9 +528,9 @@ dash_dict = {str(k).strip(): str(v).strip() for k, v in zip(df_dash['DATA_KEY'],
 
 st.title(f"🛡️ {dash_dict.get('PROJECT_NAME', 'Hệ Thống Lái Hộ Auto SEO')}")
 st.markdown("---")
-tab1, tab2, tab3 = st.tabs(["📊 DASHBOARD", "📋 CONTENT", "🗄️ DATABASE"])
+tab_dash, tab_content, tab_db = st.tabs(["📊 DASHBOARD", "📋 CONTENT", "🗄️ DATABASE"])
 
-with tab1:
+with tab_dash:
     c1, c2, c3 = st.columns(3)
     today_str = get_vn_now().strftime('%Y-%m-%d')
     p_today = len(df_rep[df_rep['REP_CREATED_AT'].astype(str).str.strip().str.startswith(today_str)]) if not df_rep.empty and 'REP_CREATED_AT' in df_rep.columns else 0
@@ -650,7 +648,7 @@ with tab1:
             bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
             st.success("🎉 TẠO BÀI XONG! BẤM LÀM MỚI Ở TRÊN ĐỂ CẬP NHẬT KẾT QUẢ NHA SẾP!")
 
-with t2:
+with tab_content:
     if not df_rep.empty:
         df_vn = df_rep[['REP_CREATED_AT', 'REP_PUBLISH_DATE', 'REP_TITLE', 'REP_WS_NAME', 'REP_RESULT']].copy()
         df_vn.columns = ['Ngày tạo bài', 'Ngày đăng bài', 'Tiêu đề', 'Trang web', 'Trạng thái']
@@ -668,5 +666,5 @@ with t2:
                 st.markdown("**🌐 Mã nguồn (Raw HTML):**")
                 st.text_area("", str(row.get('REP_HTML', '')), height=800, label_visibility="collapsed")
 
-with t3:
+with tab_db:
     st.dataframe(df_rep, use_container_width=True)
