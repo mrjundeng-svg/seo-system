@@ -552,7 +552,6 @@ class AutoSEOPipeline:
         read = round(max(10, min(206.835 - (1.015 * (sum(lens) / max(len(lens), 1))) - 84.6 * 1.2, 100)), 1)
         
         self.kcs_metrics = {'SEO': min(seo, 100), 'AI': ai, 'READ': read}
-        self.add_log(ui_log, f"   > KCS Tổng kết: Điểm SEO {seo}/100 | AI {ai}% | READ {read}/100", "detail")
         
         req = 35 if self.is_short_form else 70
         fails = []
@@ -575,14 +574,22 @@ class AutoSEOPipeline:
                     cs_json = res.json()
                     if 'error' in cs_json:
                         self.add_log(ui_log, f"⚠️ Copyscape báo lỗi: {cs_json['error']}. Bỏ qua check đạo văn.", "warn")
+                        self.kcs_metrics['PLAGIARISM'] = "Error"
                     else:
                         all_matched = int(cs_json.get('allwordsmatched', 0))
                         plag_score = round((all_matched / max(wc, 1)) * 100, 2)
+                        self.kcs_metrics['PLAGIARISM'] = plag_score
                         self.add_log(ui_log, f"📊 [PLAGIARISM] Tỷ lệ trùng lặp: {plag_score}%", "detail")
                         if plag_score > 10: 
                             fails.append(f"Đạo văn cao ({plag_score}% > 10%)")
             except Exception as e:
                 self.add_log(ui_log, f"⚠️ Không kết nối được Copyscape: {e}. Bỏ qua check đạo văn.", "warn")
+                self.kcs_metrics['PLAGIARISM'] = "Error"
+                
+        # CẬP NHẬT GIAO DIỆN HIỂN THỊ LOG COPYSCAPE TRÊN MÀN HÌNH KCS TỔNG KẾT
+        plag_disp = self.kcs_metrics.get('PLAGIARISM', 'N/A')
+        if isinstance(plag_disp, (int, float)): plag_disp = f"{plag_disp}%"
+        self.add_log(ui_log, f"   > KCS Tổng kết: Điểm SEO {seo}/100 | AI {ai}% | READ {read}/100 | COPYSCAPE: {plag_disp}", "detail")
 
         if h1: h1.decompose()
         self.raw_html = str(soup)
@@ -606,13 +613,20 @@ class AutoSEOPipeline:
                 
                 log_kws = self.injected_kws_list + [""] * 5
                 
+                plag_val = self.kcs_metrics.get('PLAGIARISM', '')
+                if isinstance(plag_val, (int, float)): plag_val = f"{plag_val}%"
+                elif not plag_val: plag_val = "N/A"
+                
                 row_d = {
                     'REP_WS_NAME': str(self.target_web.get('WS_NAME', '')), 'REP_CREATED_AT': self.now_vn.strftime('%Y-%m-%d %H:%M'),
                     'REP_TITLE': self.final_title, 'REP_IMG_COUNT': str(len(self.used_imgs)),
                     'REP_KW_1': log_kws[0], 'REP_KW_2': log_kws[1],
                     'REP_KW_3': log_kws[2], 'REP_KW_4': log_kws[3],
                     'REP_KW_5': log_kws[4], 
-                    gc('REP_SEO_'): str(self.kcs_metrics.get('SEO', 0)), gc('REP_AI_'): f"{self.kcs_metrics.get('AI', 100)}%", gc('REP_READ'): str(self.kcs_metrics.get('READ', 0)),
+                    gc('REP_SEO_'): str(self.kcs_metrics.get('SEO', 0)), 
+                    gc('REP_AI_'): f"{self.kcs_metrics.get('AI', 100)}%", 
+                    gc('REP_READ'): str(self.kcs_metrics.get('READ', 0)),
+                    gc('REP_PLAG'): str(plag_val),
                     'REP_PUBLISH_DATE': self.publish_time.strftime('%Y-%m-%d %H:%M'), 'REP_POST_URL': "", 
                     'REP_RESULT': final_result, 'REP_LOG': "\n".join(self.history_log), 'REP_HTML': self.raw_html if final_result == 'PENDING' else ""
                 }
@@ -650,12 +664,13 @@ class AutoSEOPipeline:
                                     u_img.append({'range': f'{gspread.utils.rowcol_to_a1(i, is_img+1)}', 'values': [[999]]})
                             if u_img: s_img.batch_update(u_img)
                 
+                # CẬP NHẬT TELEGRAM MSG BỔ SUNG ĐIỂM COPYSCAPE
                 telegram_msg = f"""🚀 {self.dashboard.get('PROJECT_NAME', 'Auto SEO Pipeline')}
 
 🌐 Target Domain: {self.target_web.get('WS_NAME', '')}
 📑 Title: {self.final_title}
 🔑 Keywords: {" | ".join(self.injected_kws_list)}
-📊 SEO: {self.kcs_metrics.get('SEO', 0)} | AI Rate: {self.kcs_metrics.get('AI', 100)}% | READ: {self.kcs_metrics.get('READ', 0)}
+📊 SEO: {self.kcs_metrics.get('SEO', 0)} | AI Rate: {self.kcs_metrics.get('AI', 100)}% | READ: {self.kcs_metrics.get('READ', 0)} | COPYSCAPE: {plag_val}
 🚥 Status: {final_result}
 🧱 Schedule Time: {self.publish_time.strftime('%Y-%m-%d %H:%M')}"""
                 send_telegram_noti(self.dashboard, telegram_msg)
@@ -700,11 +715,9 @@ with tab1:
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # STATE QUẢN LÝ TIẾN TRÌNH
     if "run_mode" not in st.session_state: st.session_state.run_mode = None
     if "cancel_run" not in st.session_state: st.session_state.cancel_run = False
 
-    # CÁC HÀM CALLBACK (CẬP NHẬT TRẠNG THÁI TRƯỚC KHI TẢI LẠI TRANG)
     def cb_start_auto():
         st.session_state.run_mode = "auto"
         st.session_state.cancel_run = False
@@ -720,7 +733,6 @@ with tab1:
         st.session_state.run_mode = None
         st.session_state.cancel_run = False
 
-    # THANH NÚT BẤM CHÍNH (Sẽ mờ khi đang chạy)
     action_col = st.empty()
     is_proc = st.session_state.run_mode is not None
     with action_col.container():
@@ -737,10 +749,9 @@ with tab1:
     # TIẾN TRÌNH 1: ÉP LÊN BÀI
     # ===============================================
     if st.session_state.run_mode == "force":
-        action_col.empty() # Khóa nút chính
+        action_col.empty()
         st.markdown("---")
         
-        # TẠO KHUNG ĐỘNG CHỨA BẢNG ĐỎ / XANH
         top_control_area = st.empty()
         with top_control_area.container():
             status_col, btn_c_col = st.columns([4, 1])
@@ -791,7 +802,6 @@ with tab1:
                     else: bot.add_log(ui_log, "🛑 Không tìm thấy cột trạng thái trong Sheet REPORT.", "error")
             except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi hệ thống Đăng bài: {str(e)[:150]}", "error")
 
-        # KẾT THÚC CHẠY: XÓA BẢNG ĐỎ, THAY BẰNG BẢNG XANH VÀ NÚT XÁC NHẬN
         top_control_area.empty()
         with top_control_area.container():
             c1, c2 = st.columns([4, 1])
@@ -812,7 +822,6 @@ with tab1:
         action_col.empty()
         st.markdown("---")
         
-        # TẠO KHUNG ĐỘNG CHỨA BẢNG ĐỎ / XANH
         top_control_area = st.empty()
         with top_control_area.container():
             status_col, btn_c_col = st.columns([4, 1])
@@ -883,7 +892,6 @@ with tab1:
             if not st.session_state.cancel_run:
                 bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
                 
-            # KẾT THÚC CHẠY: XÓA BẢNG ĐỎ Ở TRÊN VÀ THAY BẰNG BẢNG XANH + NÚT XÁC NHẬN
             top_control_area.empty()
             with top_control_area.container():
                 c1, c2 = st.columns([4, 1])
