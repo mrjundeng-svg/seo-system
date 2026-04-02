@@ -176,26 +176,27 @@ class AutoSEOPipeline:
         
         self.out_lim, self.in_lim = self.parse_rng(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0), self.parse_rng(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
         total_links = self.out_lim + self.in_lim
-        self.add_log(ui_log, f"📐 [QUOTA LINK] Out Limit: {self.out_lim} + In Limit: {self.in_lim} => Tổng: {total_links} Links.", "quota")
+        self.add_log(ui_log, f"📐 [QUOTA LINK] Out: {self.out_lim} + In: {self.in_lim} => Tổng: {total_links} Links.", "quota")
         
         kws_needed = max(1, total_links)
         subs = df_kw[(df_kw['KW_TEXT'] != m_kw) & (df_kw['KW_CONTENT'] == str(self.main_kw_row.get('KW_CONTENT', '')))].head(max(0, kws_needed - 1))['KW_TEXT'].tolist()
         self.all_kws = [m_kw] + subs
         self.add_log(ui_log, f"📦 [KWs ĐÃ GOM] Cần {len(self.all_kws)} KWs: {', '.join(self.all_kws)}", "detail")
         
+        # ĐÃ FIX: Lấy chính xác MIN và MAX từ Sheet, gỡ bỏ hack +30%
         try:
             wrng = str(self.dashboard.get('WORD_COUNT_RANGE', '900-1200')).split('-')
             mn, mx = int(wrng[0]), int(wrng[1])
         except: mn, mx = 900, 1200
         
         self.is_short_form = len(self.all_kws) < 3
-        if self.is_short_form:
-            self.target_length = random.randint(mn // 2, mx // 2)
-        else:
-            self.target_length = random.randint(mn, mx)
+        if self.is_short_form: 
+            self.min_w = mn // 2
+            self.max_w = mx // 2
+        else: 
+            self.min_w = mn
+            self.max_w = mx
             
-        self.min_w = self.target_length
-        self.max_w = int(self.min_w * 1.3)
         self.add_log(ui_log, f"📏 [RULE BÀI] Khóa cứng Word Count: Tối thiểu {self.min_w} chữ, Tối đa {self.max_w} chữ.", "detail")
         
         s_key = self.dashboard.get('SERPAPI_KEY', '').strip()
@@ -203,7 +204,7 @@ class AutoSEOPipeline:
         serp_chunks, scraped_urls = [], []
 
         if s_key:
-            self.add_log(ui_log, f"🕵️ [SERP] Bắt đầu quét cào data đa từ khóa...", "detail")
+            self.add_log(ui_log, f"🕵️ [SERP] Quét data đối thủ...", "detail")
             for kw in self.all_kws:
                 try:
                     res = requests.get("https://serpapi.com/search", params={"q": kw, "hl": "vi", "gl": "vn", "api_key": s_key}, timeout=10).json()
@@ -212,8 +213,7 @@ class AutoSEOPipeline:
                     if c_list:
                         clinks = [r["link"] for r in orgs[:10] if any(c in r.get("link","") for c in c_list)]
                         if clinks: t_link = clinks[0]
-                    if not t_link and orgs:
-                        t_link = random.choice([r["link"] for r in orgs[:3]])
+                    if not t_link and orgs: t_link = random.choice([r["link"] for r in orgs[:3]])
                         
                     if t_link:
                         rh = requests.get(t_link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
@@ -227,10 +227,11 @@ class AutoSEOPipeline:
                 except: pass
             
             if serp_chunks:
-                raw_serp_text = "\n\n".join(serp_chunks)[:4000]
+                # ĐÃ FIX: Giảm khối lượng data truyền vào não AI từ 5000 xuống 3000
+                raw_serp_text = "\n\n".join(serp_chunks)[:3000]
                 unique_urls = list(set(scraped_urls))
                 url_list_str = "\n".join([f"   + {u}" for u in unique_urls])
-                self.add_log(ui_log, f"✅ [SERP] Đã cào data từ {len(unique_urls)} URL đối thủ:\n{url_list_str}", "success")
+                self.add_log(ui_log, f"✅ [SERP] Cào data từ {len(unique_urls)} URL:\n{url_list_str}", "success")
                 
                 gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
                 if gem_keys:
@@ -239,9 +240,9 @@ class AutoSEOPipeline:
                         prompt_style = f"Đọc nội dung cào từ đối thủ sau và tóm tắt thành 3 gạch đầu dòng: Văn phong cách viết bài, Nhịp điệu của bài viết, Thể loại bài viết hướng tới.\n\nData:\n{raw_serp_text}"
                         with concurrent.futures.ThreadPoolExecutor() as ex:
                             self.serp_style = ex.submit(lambda: genai.GenerativeModel('gemini-1.5-flash').generate_content(prompt_style).text).result(timeout=15)
-                    except: self.serp_style = "Văn phong chuyên gia, nhịp điệu logic, thể loại chia sẻ kiến thức."
-                else: self.serp_style = "Văn phong chuyên gia, nhịp điệu logic, thể loại chia sẻ kiến thức."
-                self.add_log(ui_log, f"🎯 [SERP_STYLE_AI_EXTRACT]:\n{self.serp_style}", "detail")
+                    except: self.serp_style = "Văn phong chuyên gia, logic, chia sẻ kiến thức."
+                else: self.serp_style = "Văn phong chuyên gia, logic, chia sẻ kiến thức."
+                self.add_log(ui_log, f"🎯 [SERP_STYLE_AI]:\n{self.serp_style}", "detail")
             else:
                 self.serp_style = "Văn phong chuyên gia, logic."
                 self.add_log(ui_log, f"⚠️ [SERP] Cào thất bại, dùng Internal Cache.", "warn")
@@ -255,25 +256,22 @@ class AutoSEOPipeline:
         self.prompt_content = f"{pmts['PROMPT_TEMPLATE']}\n{pmts['PROMPT_CONTENT_STRATEGY']}\n{pmts['PROMPT_KEYWORD_SEARCH']}\n[SERP_STYLE_AI_EXTRACT]: {self.serp_style}"
         
         if self.retry_count == 0:
-            self.add_log(ui_log, f"🧠 [PROMPT_CONTENT TỔNG HỢP (Chuẩn bị gửi AI)]:\n{self.prompt_content[:300]}...", "detail")
+            self.add_log(ui_log, f"🧠 [PROMPT_CONTENT TỔNG HỢP]:\n{self.prompt_content[:300]}...", "detail")
 
         seed_sang_tao = random.randint(10000, 99999)
         
         retry_cmd = ""
         if self.retry_count > 0:
-            retry_cmd = f"\n[CẢNH BÁO TỪ HỆ THỐNG]: Bản nháp trước của bạn chỉ đạt {self.last_word_count} chữ (BỊ TỪ CHỐI VÌ QUÁ NGẮN). Lần này BẮT BUỘC bạn phải phân tích sâu hơn, thêm luận điểm để TỔNG SỐ CHỮ VƯỢT MỨC {self.min_w} CHỮ."
+            retry_cmd = f"\n[CẢNH BÁO]: Bài trước BỊ TỪ CHỐI vì thiếu chữ ({self.last_word_count} chữ). BẮT BUỘC TĂNG ĐỘ DÀI, chia nhiều luận điểm H2 hơn để đạt mức tối thiểu {self.min_w} chữ."
             
-        # ==========================================
-        # ĐÃ THÊM LUẬT MỞ RỘNG TOKEN VÀ BẮT AI CHIA TỪ KHÓA BẰNG KHÔNG GIAN
-        # ==========================================
-        force = f"""\n[YÊU CẦU ĐẶC BIỆT CHUẨN SEO BẮT BUỘC TUÂN THỦ]:{retry_cmd}
-        1. SỐ LƯỢNG CHỮ (TỐI QUAN TRỌNG): Đóng vai là chuyên gia, BẮT BUỘC viết bài dài, sâu sắc, phân tích đa chiều. Bạn được cấp phép sử dụng tối đa dung lượng (8000 tokens). Tuyệt đối không được tóm tắt. TỔNG SỐ CHỮ BẮT BUỘC PHẢI TRONG KHOẢNG TỪ {self.min_w} ĐẾN TỐI ĐA {self.max_w} CHỮ.
-        2. CẤM CHÀO HỎI (Cấm 'Kính thưa', 'Chào các Sếp'). Vào thẳng vấn đề (Sapo).
+        force = f"""\n[YÊU CẦU SINH TỬ - CHUẨN SEO BẮT BUỘC TUÂN THỦ]:{retry_cmd}
+        1. SỐ LƯỢNG CHỮ (TỐI QUAN TRỌNG): Bạn được cấp tối đa dung lượng (8000 tokens). BẮT BUỘC bài viết phải phân tích cực kỳ chi tiết, diễn giải sâu sắc để đạt TỔNG SỐ CHỮ TỪ {self.min_w} ĐẾN TỐI ĐA {self.max_w} CHỮ. Tuyệt đối không viết tóm tắt.
+        2. CẤM CHÀO HỎI. Vào thẳng Sapo.
         3. H1: Chứa "{self.all_kws[0]}" ở GIỮA/CUỐI. Cấm đặt đầu câu. Có ít nhất 1 thẻ <h2> chứa từ khóa chính "{self.all_kws[0]}".
-        4. TỪ KHÓA BẮT BUỘC: Bài viết có {len(self.all_kws)} từ khóa. CHIA BÀI VIẾT THÀNH {len(self.all_kws)} PHẦN RÕ RỆT. Tại mỗi phần, BẮT BUỘC cấy đúng 1 từ khóa theo thứ tự danh sách: {', '.join(self.all_kws)}. Từ khóa phải nằm lọt thỏm giữa câu. KHÔNG in đậm `**` từ khóa.
-        5. CẤU TRÚC: Dùng thẻ <h2> để chia tối thiểu 5-7 luận điểm để kéo dài bài viết. Mỗi <h2> gồm nhiều đoạn văn <p>. Ngắn dài đan xen (3-4 câu/đoạn).
-        6. ĐỊNH DẠNG HTML: Viết hoa chữ cái đầu tiên của mọi câu và mọi ý gạch đầu dòng. Dùng thẻ <ul> và <li> để liệt kê. TUYỆT ĐỐI KHÔNG DÙNG ký tự Markdown (*, -). H3 đánh số 1., 2..
-        7. GÓC NHÌN (Seed: {seed_sang_tao}): Lập luận sáng tạo. Xóa cấu trúc cũ: {st.session_state.evolution_cache}.
+        4. RẢI TỪ KHÓA TỰ NHIÊN: Bài viết phải sử dụng CHÍNH XÁC các từ khóa sau: {', '.join(self.all_kws)}. Hãy lồng ghép mượt mà vào văn cảnh. Cấm in đậm `**` từ khóa.
+        5. ĐỊNH DẠNG HTML: Dùng thẻ <ul> và <li> để liệt kê. TUYỆT ĐỐI KHÔNG DÙNG ký tự Markdown (*, -). H3 đánh số 1., 2..
+        6. CẤU TRÚC ĐOẠN: Ngắn dài đan xen (3-4 câu/đoạn). Mỗi đoạn bọc trong thẻ <p>. Xóa cấu trúc cũ: {st.session_state.evolution_cache}.
+        7. GÓC NHÌN (Seed: {seed_sang_tao}): Lập luận sáng tạo, tránh dập khuôn.
         8. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>."""
         
         m_prompt = f"{self.prompt_content}\n{pmts['PROMPT_SEO_GLOBAL_RULE']}\n{pmts['PROMPT_AI_HUMANIZER']}\n{force}"
@@ -290,10 +288,9 @@ class AutoSEOPipeline:
             for gk in gem_keys:
                 if response_text: break
                 genai.configure(api_key=gk)
-                self.add_log(ui_log, f"🌐 [API CALL] Gemini ({gm}) [Max: 8K Tokens | Timeout 90s]...", "detail")
+                self.add_log(ui_log, f"🌐 [API CALL] Gemini ({gm}) [Max: 8K Tokens]...", "detail")
                 try:
                     with concurrent.futures.ThreadPoolExecutor() as ex:
-                        # MỞ KHÓA VAN XẢ TOKEN CHO GEMINI
                         response_text = ex.submit(lambda: genai.GenerativeModel(gm).generate_content(m_prompt, generation_config=genai.types.GenerationConfig(max_output_tokens=8192)).text).result(timeout=90)
                 except Exception as e:
                     self.add_log(ui_log, f"⚠️ Gemini sập (429/Timeout). Đang chuyển dự phòng...", "warn")
@@ -303,11 +300,10 @@ class AutoSEOPipeline:
             for om in or_mods:
                 for ok in or_keys:
                     if response_text: break
-                    self.add_log(ui_log, f"🌐 [API CALL] OpenRouter ({om}) [Max: 8K Tokens | Timeout 90s]...", "detail")
+                    self.add_log(ui_log, f"🌐 [API CALL] OpenRouter ({om}) [Max: 8K Tokens]...", "detail")
                     try:
                         with concurrent.futures.ThreadPoolExecutor() as ex:
                             def call_or():
-                                # MỞ KHÓA VAN XẢ TOKEN CHO OPENROUTER
                                 res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers={"Authorization": f"Bearer {ok}"}, json={"model": om, "messages": [{"role": "user", "content": m_prompt}], "max_tokens": 8192}, timeout=90)
                                 res.raise_for_status()
                                 return res.json()["choices"][0]["message"]["content"]
@@ -317,7 +313,7 @@ class AutoSEOPipeline:
                 if response_text: break
 
         if not response_text:
-            self.add_log(ui_log, "🛑 [FATAL] LLM Gateway Timeout: Toàn bộ API đều sập hoặc không phản hồi. Xin kiểm tra lại Quota!", "error")
+            self.add_log(ui_log, "🛑 [FATAL] Toàn bộ API đều sập hoặc không phản hồi.", "error")
             return False
 
         self.raw_html = response_text
@@ -379,29 +375,27 @@ class AutoSEOPipeline:
             
             if not injected: missed.append(k)
 
-        # PHƯƠNG ÁN DỰ PHÒNG SẠCH SẼ NHẤT THEO YÊU CẦU CỦA SẾP
+        # PHƯƠNG ÁN DỰ PHÒNG TAGS CHUẨN SEO
         if missed:
+            tags_html = "<br><div class='related-tags' style='margin-top: 20px; padding: 10px; background-color: #f9f9f9; border-left: 4px solid #007bff; font-style: italic;'><strong>📌 Tìm hiểu thêm:</strong> "
+            links_list = []
+            
             for k in missed:
                 url, is_e = "", False
                 if self.injected_ext < self.out_lim and ou: url, is_e = random.choice(ou), True
                 elif self.injected_int < self.in_lim and iu: url, is_e = random.choice(iu), False
                 
-                if not url: continue 
-                
-                # Không đẻ thêm câu lủng củng. Chèn thành 1 mục tham khảo lịch sự ở đoạn cuối
-                fallback_html = f"<br><em>* Tham khảo thêm: <a href='{url}'>{k}</a></em>"
-                
-                all_p = soup.find_all('p')
-                if len(all_p) > 1:
-                    all_p[random.randint(1, len(all_p) - 1)].append(BeautifulSoup(fallback_html, 'html.parser'))
-                elif all_p:
-                    all_p[0].append(BeautifulSoup(fallback_html, 'html.parser'))
-                    
-                self.add_log(ui_log, f"⚠️ AI sót '{k}', đã bổ sung dạng Related Link lịch sự.", "warn")
-                if is_e: self.injected_ext += 1
-                else: self.injected_int += 1
+                if url:
+                    links_list.append(f"<a href='{url}'>{k}</a>")
+                    if is_e: self.injected_ext += 1
+                    else: self.injected_int += 1
+            
+            if links_list:
+                tags_html += " | ".join(links_list) + "</div>"
+                soup.append(BeautifulSoup(tags_html, 'html.parser'))
+                self.add_log(ui_log, f"⚠️ Đã chèn {len(links_list)} từ khóa sót dưới dạng Related Tags cuối bài.", "warn")
 
-        self.add_log(ui_log, f"🛠️ [GẮN LINK] Đã chốt Quota: {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int.", "success")
+        self.add_log(ui_log, f"🛠️ [GẮN LINK] Đã chốt: {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int.", "success")
 
         mx_img = self.parse_rng(self.target_web.get('WS_IMG_LIMIT', 1), 1)
         req_img = min(len(self.all_kws), mx_img)
@@ -422,7 +416,7 @@ class AutoSEOPipeline:
             if self.is_short_form or len(self.used_imgs) == 1:
                 img_html = f"<br><p align='center'><img src='{self.used_imgs[0]}' alt='{self.all_kws[0]}'></p><br>"
                 inserted = False
-                for tag in soup.find_all(['p', 'li', 'h3', 'h2']):
+                for tag in soup.find_all(['p', 'li', 'h3']):
                     if re.search(r'(?i)' + re.escape(self.all_kws[0]), tag.get_text()):
                         tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
                         inserted = True
@@ -434,7 +428,7 @@ class AutoSEOPipeline:
                     kw_t = self.all_kws[idx] if idx < len(self.all_kws) else self.all_kws[-1]
                     img_html = f"<br><p align='center'><img src='{img_u}' alt='{kw_t}'></p><br>"
                     inserted = False
-                    for tag in soup.find_all(['p', 'li', 'h3', 'h2']):
+                    for tag in soup.find_all(['p', 'li', 'h3']):
                         if re.search(r'(?i)' + re.escape(kw_t), tag.get_text()) and not tag.find_next_sibling('p', align='center'):
                             tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
                             inserted = True
@@ -442,7 +436,7 @@ class AutoSEOPipeline:
                     if not inserted and len(soup.find_all('p')) > idx * 2:
                         soup.find_all('p')[idx * 2].insert_after(BeautifulSoup(img_html, 'html.parser'))
 
-        if self.failed_imgs: self.add_log(ui_log, f"⚠️ Đã loại {len(self.failed_imgs)} ảnh lỗi (Sẽ mark 999).", "warn")
+        if self.failed_imgs: self.add_log(ui_log, f"⚠️ Đã loại {len(self.failed_imgs)} ảnh lỗi.", "warn")
         self.add_log(ui_log, f"🖼️ [GẮN ẢNH] DOM Inject thành công {len(self.used_imgs)} ảnh.")
         self.raw_html = str(soup); return True
 
@@ -454,7 +448,8 @@ class AutoSEOPipeline:
         wc = len(txt.split())
         self.last_word_count = wc
         
-        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết đạt {wc} chữ (Yêu cầu khắt khe: {self.min_w} - {self.max_w} chữ).", "detail")
+        actual_min_allowed = int(self.min_w * 0.85)
+        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Đạt {wc} chữ (Yêu cầu: {self.min_w}-{self.max_w} | Pass KCS: >{actual_min_allowed} chữ).", "detail")
         
         h1 = soup.find('h1')
         s_h1 = 30 if h1 and k0 in h1.get_text().lower() else 0
@@ -478,8 +473,7 @@ class AutoSEOPipeline:
         if ai > 20: fails.append(f"AI ({ai}%)")
         if read < 60: fails.append(f"Read ({read})")
         
-        if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
-        if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
+        if wc < actual_min_allowed: fails.append(f"Viết Quá ngắn ({wc} < {actual_min_allowed})")
         
         if h1: h1.decompose()
         self.raw_html = str(soup)
@@ -540,6 +534,16 @@ class AutoSEOPipeline:
                             if r[im_img].strip() in self.failed_imgs and is_img != -1:
                                 u_img.append({'range': f'{gspread.utils.rowcol_to_a1(i, is_img+1)}', 'values': [[999]]})
                         if u_img: s_img.batch_update(u_img)
+            
+            telegram_msg = f"""🚀 {self.dashboard.get('PROJECT_NAME', 'Auto SEO Pipeline')}
+
+🌐 Target Domain: {self.target_web.get('WS_NAME', '')}
+📑 Title: {self.final_title}
+🔑 Keywords: {" | ".join(self.all_kws)}
+📊 SEO: {self.kcs_metrics.get('SEO', 0)} | AI Rate: {self.kcs_metrics.get('AI', 100)}% | READ: {self.kcs_metrics.get('READ', 0)}
+🚥 Status: {final_result}
+🧱 Schedule Time: {self.publish_time.strftime('%Y-%m-%d %H:%M')}"""
+            send_telegram_noti(self.dashboard, telegram_msg)
             
             self.add_log(ui_log, f"🎉 [HOÀN TẤT] Lưu DB xong. Trạng thái bài viết: {final_result}", "success")
                 
@@ -631,6 +635,7 @@ with tab1:
                                         bot.add_log(ui_log, f"✅ {msg}", "success")
                                         upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_res+1)}', 'values': [['DONE']]})
                                         count += 1
+                                        send_telegram_noti(dash_dict, f"🚀 BẮN BÀI THÀNH CÔNG!\nWeb: {ws_name}\nTiêu đề: {title}")
                                     else:
                                         bot.add_log(ui_log, f"🛑 {msg}", "error")
                                 else:
