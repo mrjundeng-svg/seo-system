@@ -562,6 +562,7 @@ class AutoSEOPipeline:
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
         if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
+        # 1. MÁY QUÉT COPYSCAPE
         if self.copyscape_user and self.copyscape_key:
             self.add_log(ui_log, "🕵️ [PLAGIARISM] Đang check đạo văn qua Copyscape API...", "detail")
             try:
@@ -586,10 +587,53 @@ class AutoSEOPipeline:
                 self.add_log(ui_log, f"⚠️ Không kết nối được Copyscape: {e}. Bỏ qua check đạo văn.", "warn")
                 self.kcs_metrics['PLAGIARISM'] = "Error"
                 
-        # CẬP NHẬT GIAO DIỆN HIỂN THỊ LOG COPYSCAPE TRÊN MÀN HÌNH KCS TỔNG KẾT
+        # 2. GIÁM KHẢO AI TÙY CHỈNH THEO TỪNG WEB (SỬ DỤNG OPENROUTER_API_KEY)
+        ws_judge_flag = str(self.target_web.get('WS_LLM_JUDGE', '')).strip()
+        or_keys = [k.strip() for k in str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',') if k.strip()]
+        or_mods = [m.strip() for m in str(self.dashboard.get('OPENROUTER_MODEL', 'openai/gpt-4o-mini')).split(',') if m.strip()]
+        
+        if ws_judge_flag == '1':
+            if or_keys and or_mods:
+                judge_key = or_keys[0]
+                judge_model = or_mods[0]
+                self.add_log(ui_log, f"⚖️ [AI JUDGE] Web này kích hoạt cờ (1). Nhờ {judge_model} chấm điểm...", "detail")
+                judge_prompt = f"Đóng vai chuyên gia SEO khó tính. Hãy chấm điểm bài viết HTML sau dựa trên từ khóa chính: '{k0}'.\nTiêu chí: Chuẩn SEO On-page, không nhồi nhét từ khóa, văn phong tự nhiên, có giá trị cho người đọc.\nTrả về DUY NHẤT một con số từ 0 đến 100 thể hiện điểm số, không kèm bất kỳ chữ nào khác.\n\nBài viết:\n{self.raw_html[:4000]}"
+                try:
+                    res = requests.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {judge_key}"},
+                        json={"model": judge_model, "messages": [{"role": "user", "content": judge_prompt}], "max_tokens": 10},
+                        timeout=30
+                    )
+                    if res.status_code == 200:
+                        judge_resp = res.json()["choices"][0]["message"]["content"].strip()
+                        match = re.search(r'\d+', judge_resp)
+                        if match:
+                            judge_score = int(match.group())
+                            self.kcs_metrics['JUDGE'] = judge_score
+                            self.add_log(ui_log, f"🎯 [AI JUDGE] Điểm đánh giá: {judge_score}/100", "detail")
+                            if judge_score < 70: 
+                                fails.append(f"AI Judge chấm trượt ({judge_score} < 70)")
+                        else:
+                            self.add_log(ui_log, f"⚠️ AI Judge trả về không hợp lệ: {judge_resp}", "warn")
+                            self.kcs_metrics['JUDGE'] = "Error"
+                    else:
+                        self.add_log(ui_log, f"⚠️ Lỗi API AI Judge: {res.text[:100]}", "warn")
+                        self.kcs_metrics['JUDGE'] = "Error"
+                except Exception as e:
+                    self.add_log(ui_log, f"⚠️ Lỗi kết nối AI Judge: {e}", "warn")
+                    self.kcs_metrics['JUDGE'] = "Error"
+            else:
+                self.add_log(ui_log, f"⚠️ [AI JUDGE] Web yêu cầu chấm nhưng thiếu OPENROUTER_API_KEY trong Dashboard. Bỏ qua.", "warn")
+                self.kcs_metrics['JUDGE'] = "N/A"
+        else:
+            self.kcs_metrics['JUDGE'] = "N/A"
+
         plag_disp = self.kcs_metrics.get('PLAGIARISM', 'N/A')
         if isinstance(plag_disp, (int, float)): plag_disp = f"{plag_disp}%"
-        self.add_log(ui_log, f"   > KCS Tổng kết: Điểm SEO {seo}/100 | AI {ai}% | READ {read}/100 | COPYSCAPE: {plag_disp}", "detail")
+        judge_disp = self.kcs_metrics.get('JUDGE', 'N/A')
+        
+        self.add_log(ui_log, f"   > KCS Tổng kết: Điểm SEO {seo}/100 | AI {ai}% | READ {read}/100 | COPYSCAPE: {plag_disp} | JUDGE: {judge_disp}", "detail")
 
         if h1: h1.decompose()
         self.raw_html = str(soup)
@@ -617,6 +661,8 @@ class AutoSEOPipeline:
                 if isinstance(plag_val, (int, float)): plag_val = f"{plag_val}%"
                 elif not plag_val: plag_val = "N/A"
                 
+                judge_val = str(self.kcs_metrics.get('JUDGE', 'N/A'))
+                
                 row_d = {
                     'REP_WS_NAME': str(self.target_web.get('WS_NAME', '')), 'REP_CREATED_AT': self.now_vn.strftime('%Y-%m-%d %H:%M'),
                     'REP_TITLE': self.final_title, 'REP_IMG_COUNT': str(len(self.used_imgs)),
@@ -627,6 +673,7 @@ class AutoSEOPipeline:
                     gc('REP_AI_'): f"{self.kcs_metrics.get('AI', 100)}%", 
                     gc('REP_READ'): str(self.kcs_metrics.get('READ', 0)),
                     gc('REP_PLAG'): str(plag_val),
+                    gc('REP_JUDGE_'): judge_val,
                     'REP_PUBLISH_DATE': self.publish_time.strftime('%Y-%m-%d %H:%M'), 'REP_POST_URL': "", 
                     'REP_RESULT': final_result, 'REP_LOG': "\n".join(self.history_log), 'REP_HTML': self.raw_html if final_result == 'PENDING' else ""
                 }
@@ -664,13 +711,12 @@ class AutoSEOPipeline:
                                     u_img.append({'range': f'{gspread.utils.rowcol_to_a1(i, is_img+1)}', 'values': [[999]]})
                             if u_img: s_img.batch_update(u_img)
                 
-                # CẬP NHẬT TELEGRAM MSG BỔ SUNG ĐIỂM COPYSCAPE
                 telegram_msg = f"""🚀 {self.dashboard.get('PROJECT_NAME', 'Auto SEO Pipeline')}
 
 🌐 Target Domain: {self.target_web.get('WS_NAME', '')}
 📑 Title: {self.final_title}
 🔑 Keywords: {" | ".join(self.injected_kws_list)}
-📊 SEO: {self.kcs_metrics.get('SEO', 0)} | AI Rate: {self.kcs_metrics.get('AI', 100)}% | READ: {self.kcs_metrics.get('READ', 0)} | COPYSCAPE: {plag_val}
+📊 SEO: {self.kcs_metrics.get('SEO', 0)} | AI Rate: {self.kcs_metrics.get('AI', 100)}% | READ: {self.kcs_metrics.get('READ', 0)} | COPYSCAPE: {plag_val} | LLM_JUDGE: {judge_val}
 🚥 Status: {final_result}
 🧱 Schedule Time: {self.publish_time.strftime('%Y-%m-%d %H:%M')}"""
                 send_telegram_noti(self.dashboard, telegram_msg)
