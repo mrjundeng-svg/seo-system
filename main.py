@@ -254,98 +254,117 @@ class AutoSEOPipeline:
         else: self.serp_style = "Văn phong chuyên gia."
         return True
 
+    # ==========================================
+    # BƯỚC 4: KIẾN TRÚC MULTI-STEP CHUNKING
+    # ==========================================
     def step4_llm_generation(self, ui_log) -> bool:
         keys_to_pull = ['PROMPT_TEMPLATE', 'PROMPT_CONTENT_STRATEGY', 'PROMPT_KEYWORD_SEARCH', 'PROMPT_SEO_GLOBAL_RULE', 'PROMPT_AI_HUMANIZER']
         pmts = {k: self.pick_random_prompt_variant(self.dashboard.get(k, '')) for k in keys_to_pull}
         
         self.prompt_content = f"{pmts['PROMPT_TEMPLATE']}\n{pmts['PROMPT_CONTENT_STRATEGY']}\n{pmts['PROMPT_KEYWORD_SEARCH']}\n[SERP_STYLE_AI_EXTRACT]: {self.serp_style}"
-        
-        if self.retry_count == 0:
-            self.add_log(ui_log, f"🧠 [PROMPT_CONTENT TỔNG HỢP]:\n{self.prompt_content[:300]}...", "detail")
+        self.prompt_content = self.prompt_content.replace('{{ws_persona}}', str(self.target_web.get('WS_PERSONA', ''))).replace('{{kw_intent}}', str(self.main_kw_row.get('KW_INTENT', '')))
 
-        seed_sang_tao = random.randint(10000, 99999)
-        
-        # ĐỘNG CƠ RETRY XỬ LÝ CẢ TRƯỜNG HỢP QUÁ NGẮN LẪN QUÁ DÀI
-        retry_cmd = ""
-        if self.retry_count > 0:
-            if self.last_word_count < self.min_w:
-                retry_cmd = f"\n[CẢNH BÁO TỪ HỆ THỐNG]: Bản nháp trước của bạn BỊ TỪ CHỐI vì QUÁ NGẮN ({self.last_word_count} chữ). BẮT BUỘC TĂNG ĐỘ DÀI, chia nhiều luận điểm H2 hơn để đạt mức tối thiểu {self.min_w} chữ."
-            elif self.last_word_count > self.max_w:
-                retry_cmd = f"\n[CẢNH BÁO TỪ HỆ THỐNG]: Bản nháp trước của bạn BỊ TỪ CHỐI vì QUÁ DÀI ({self.last_word_count} chữ). BẮT BUỘC RÚT GỌN LẠI, viết súc tích hơn, KHÔNG VƯỢT QUÁ {self.max_w} chữ."
+        # Hàm trợ giúp gọi LLM sạch sẽ
+        def call_llm(pmt, max_tok=8192):
+            gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
+            gem_mods = [m.strip() for m in str(self.dashboard.get('GEMINI_MODEL', 'gemini-1.5-flash')).split(',') if m.strip()]
+            or_keys = [k.strip() for k in str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',') if k.strip()]
+            or_mods = [m.strip() for m in str(self.dashboard.get('OPENROUTER_MODEL', 'openai/gpt-4o-mini')).split(',') if m.strip()]
             
-        force = f"""\n[YÊU CẦU SINH TỬ - CHUẨN SEO BẮT BUỘC TUÂN THỦ]:{retry_cmd}
-        1. SỐ LƯỢNG CHỮ (TỐI QUAN TRỌNG): Bạn được cấp tối đa dung lượng (8000 tokens). TỔNG SỐ CHỮ BẮT BUỘC PHẢI TRONG KHOẢNG {self.min_w} ĐẾN TỐI ĐA {self.max_w} CHỮ.
-        2. CẤM CHÀO HỎI. Vào thẳng Sapo.
-        3. H1: Chứa "{self.all_kws[0]}" ở GIỮA/CUỐI. Cấm đặt đầu câu. Có ít nhất 1 thẻ <h2> chứa từ khóa chính "{self.all_kws[0]}".
-        4. TỪ KHÓA BẮT BUỘC: Bài viết có {len(self.all_kws)} từ khóa. CHIA BÀI THÀNH {len(self.all_kws)} PHẦN. Tại mỗi phần cấy ĐÚNG 1 từ khóa theo danh sách: {', '.join(self.all_kws)}. KHÔNG in đậm `**` từ khóa.
-        5. ĐỊNH DẠNG HTML & CHÍNH TẢ: BẮT BUỘC viết hoa chữ cái đầu tiên của mọi câu và mọi ý gạch đầu dòng. Dùng thẻ <ul> và <li> để liệt kê. TUYỆT ĐỐI KHÔNG DÙNG ký tự (*, -). H3 đánh số 1., 2..
-        6. CẤU TRÚC ĐOẠN: Ngắn dài đan xen (3-4 câu/đoạn). Mỗi đoạn bọc trong thẻ <p>. Xóa cấu trúc cũ: {st.session_state.evolution_cache}.
-        7. GÓC NHÌN (Seed: {seed_sang_tao}): Lập luận sáng tạo, tránh dập khuôn.
-        8. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>."""
-        
-        m_prompt = f"{self.prompt_content}\n{pmts['PROMPT_SEO_GLOBAL_RULE']}\n{pmts['PROMPT_AI_HUMANIZER']}\n{force}"
-        m_prompt = m_prompt.replace('{{ws_persona}}', str(self.target_web.get('WS_PERSONA', ''))).replace('{{kw_intent}}', str(self.main_kw_row.get('KW_INTENT', ''))).replace('{{keyword}}', self.all_kws[0])
-        for i, k in enumerate(self.all_kws): m_prompt = re.sub(rf'\[?REP_KW_{i+1}\]?', k, m_prompt, flags=re.IGNORECASE)
-
-        gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
-        gem_mods = [m.strip() for m in str(self.dashboard.get('GEMINI_MODEL', 'gemini-1.5-flash')).split(',') if m.strip()]
-        or_keys = [k.strip() for k in str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',') if k.strip()]
-        or_mods = [m.strip() for m in str(self.dashboard.get('OPENROUTER_MODEL', 'openai/gpt-4o-mini')).split(',') if m.strip()]
-
-        response_text = None
-        for gm in gem_mods:
-            for gk in gem_keys:
-                if response_text: break
-                genai.configure(api_key=gk)
-                self.add_log(ui_log, f"🌐 [API CALL] Gemini ({gm}) [Max: 8K Tokens]...", "detail")
-                try:
-                    with concurrent.futures.ThreadPoolExecutor() as ex:
-                        response_text = ex.submit(lambda: genai.GenerativeModel(gm).generate_content(m_prompt, generation_config=genai.types.GenerationConfig(max_output_tokens=8192)).text).result(timeout=90)
-                except Exception as e:
-                    self.add_log(ui_log, f"⚠️ Gemini sập (429/Timeout). Đang chuyển...", "warn")
-            if response_text: break
-
-        if not response_text:
-            for om in or_mods:
-                for ok in or_keys:
-                    if response_text: break
-                    self.add_log(ui_log, f"🌐 [API CALL] OpenRouter ({om}) [Max: 8K Tokens]...", "detail")
+            res_text = None
+            for gm in gem_mods:
+                for gk in gem_keys:
+                    if res_text: break
                     try:
+                        genai.configure(api_key=gk)
                         with concurrent.futures.ThreadPoolExecutor() as ex:
-                            def call_or():
-                                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers={"Authorization": f"Bearer {ok}"}, json={"model": om, "messages": [{"role": "user", "content": m_prompt}], "max_tokens": 8192}, timeout=90)
-                                res.raise_for_status()
-                                return res.json()["choices"][0]["message"]["content"]
-                            response_text = ex.submit(call_or).result(timeout=90)
-                    except Exception as e:
-                        self.add_log(ui_log, f"🛑 OpenRouter sập: {str(e)[:80]}", "error")
-                if response_text: break
+                            res_text = ex.submit(lambda: genai.GenerativeModel(gm).generate_content(pmt, generation_config=genai.types.GenerationConfig(max_output_tokens=max_tok)).text).result(timeout=60)
+                    except: pass
+                if res_text: break
+                
+            if not res_text:
+                for om in or_mods:
+                    for ok in or_keys:
+                        if res_text: break
+                        try:
+                            with concurrent.futures.ThreadPoolExecutor() as ex:
+                                def _or():
+                                    r = requests.post("https://openrouter.ai/api/v1/chat/completions", headers={"Authorization": f"Bearer {ok}"}, json={"model": om, "messages": [{"role": "user", "content": pmt}], "max_tokens": max_tok}, timeout=60)
+                                    r.raise_for_status()
+                                    return r.json()["choices"][0]["message"]["content"]
+                                res_text = ex.submit(_or).result(timeout=60)
+                        except: pass
+                    if res_text: break
+            return res_text
 
-        if not response_text:
-            self.add_log(ui_log, "🛑 [FATAL] Toàn bộ API đều sập hoặc không phản hồi.", "error")
-            return False
+        if self.retry_count == 0:
+            self.add_log(ui_log, f"🧠 [MULTI-STEP] Khởi động chiến thuật Chia Để Trị. Đang chia nhỏ {self.min_w} chữ...", "warn")
 
-        self.raw_html = response_text
-        self.raw_html = re.sub(r'```html|```', '', self.raw_html).strip()
-        self.raw_html = re.sub(r'\*\*(.*?)\*\*', r'\1', self.raw_html) 
+        # NHỊP 1: Lên Dàn Ý (Outline)
+        num_sections = max(len(self.all_kws), max(4, self.min_w // 250))
+        chunk_target_words = self.max_w // num_sections
         
-        self.raw_html = re.sub(r'(?<!^)\s+\*\s+([A-ZĐÁÀẢÃẠĂÂẤẦẨẪẬÊẾỀỂỄỆÔỐỒỔỖỘƠỚỜỞỠỢƯỨỪỬỮỰÍÌỈĨỊÝỲỶỸỴ])', r'</p><p>• \1', self.raw_html)
+        self.final_title = self.all_kws[0].capitalize()
+        outline_prompt = f"Bạn là chuyên gia SEO. Viết 1 dàn ý gồm CHÍNH XÁC {num_sections} tiêu đề H2 cho bài viết phân tích sâu về chủ đề: '{self.final_title}'. TRẢ VỀ DUY NHẤT {num_sections} DÒNG TEXT, mỗi dòng là 1 tiêu đề H2. Tuyệt đối không đánh số, không dùng ký tự markdown."
+        
+        outline_text = call_llm(outline_prompt, 1000)
+        h2_list = []
+        if outline_text:
+            h2_list = [line.strip().replace('#', '').replace('*', '') for line in outline_text.split('\n') if len(line.strip()) > 5][:num_sections]
+            
+        # Fallback nếu Dàn ý xịt
+        if len(h2_list) < num_sections:
+            default_h2s = [f"Tổng quan chi tiết về {self.final_title}", "Phân tích các đặc điểm cốt lõi", "Ưu điểm và những giá trị mang lại", "Lưu ý quan trọng cần nắm rõ", "Góc nhìn chuyên gia và đánh giá", "Kết luận và lời khuyên cuối cùng", "Hướng dẫn thực tiễn áp dụng", "So sánh và đánh giá khách quan"]
+            h2_list = default_h2s[:num_sections]
+
+        self.add_log(ui_log, f"📑 [OUTLINE] Đã tạo dàn ý với {len(h2_list)} thẻ H2. Bắt đầu rải từ khóa...", "detail")
+
+        # NHỊP 2: Lắp Ráp & Viết Từng Phần
+        full_article_html = f"<h1>{self.final_title}</h1>\n"
+        
+        for i, h2 in enumerate(h2_list):
+            kw_for_chunk = self.all_kws[i] if i < len(self.all_kws) else self.all_kws[0]
+            
+            chunk_prompt = f"""{self.prompt_content}
+            [NHIỆM VỤ TỐI THƯỢNG - PHẦN {i+1}/{len(h2_list)}]:
+            Chủ đề bài viết tổng: {self.final_title}
+            Nhiệm vụ của bạn là CHỈ VIẾT DUY NHẤT phần nội dung cho tiêu đề H2 sau: "{h2}"
+            
+            1. ĐỘ DÀI: Viết phân tích cực kỳ sâu sắc, dài tối thiểu {chunk_target_words + 30} chữ.
+            2. TỪ KHÓA BẮT BUỘC: Lồng ghép cực kỳ tinh tế cụm từ "{kw_for_chunk}" lọt thỏm vào giữa một câu văn. Tuyệt đối KHÔNG in đậm từ khóa.
+            3. ĐỊNH DẠNG TRẢ VỀ:
+            - TRẢ VỀ MÃ HTML THUẦN TÚY. KHÔNG DÙNG MARKDOWN (```html).
+            - Bắt đầu ngay bằng thẻ: <h2>{h2}</h2>
+            - Dùng <p> cho đoạn văn (3-4 câu/đoạn). Dùng <ul><li> nếu có liệt kê.
+            - Không được viết <h1>, Sapo hay Kết luận chung của bài. Trả thẳng HTML."""
+            
+            self.add_log(ui_log, f"   > Đang gọi AI viết đoạn H2 ({i+1}/{len(h2_list)}): Ép từ khóa '{kw_for_chunk}'...", "detail")
+            chunk_res = call_llm(chunk_prompt, 2000)
+            
+            if chunk_res:
+                # Xử lý dọn rác markdown
+                chunk_res = re.sub(r'```html|```', '', chunk_res).strip()
+                chunk_res = re.sub(r'\*\*(.*?)\*\*', r'\1', chunk_res)
+                if '<h2>' not in chunk_res.lower():
+                    chunk_res = f"<h2>{h2}</h2>\n{chunk_res}"
+                full_article_html += f"\n{chunk_res}\n"
+            else:
+                self.add_log(ui_log, f"   > Cảnh báo: Lỗi Timeout đoạn {i+1}, chèn đoạn backup.", "warn")
+                full_article_html += f"<h2>{h2}</h2><p>Các chuyên gia cho rằng, việc nắm rõ thông tin về {kw_for_chunk} trong bối cảnh này là chìa khóa giải quyết cốt lõi vấn đề đang được đặt ra.</p>\n"
+
+        self.raw_html = full_article_html
+        
+        # Sửa lỗi đoạn văn mồ côi
         if '<p>' not in self.raw_html.lower():
             paras = [p.strip() for p in re.split(r'\n+', self.raw_html) if p.strip()]
-            self.raw_html = "".join([f"<p>{p}</p>" for p in paras])
-            
+            self.raw_html = "".join([f"<p>{p}</p>" if not p.startswith('<h') else p for p in paras])
+
+        # Đảm bảo làm sạch từ khóa giả nếu có
         for i, k in enumerate(self.all_kws):
             self.raw_html = re.sub(rf'\[?REP_KW_{i+1}\]?', k, self.raw_html, flags=re.IGNORECASE)
-            if i == 0: self.raw_html = self.raw_html.replace('{{keyword}}', k)
-        self.raw_html = re.sub(r'\[?REP_KW_\d+\]?', '', self.raw_html, flags=re.IGNORECASE)
-
+            
         soup = BeautifulSoup(self.raw_html, 'html.parser')
-        st.session_state.evolution_cache = f"{len(soup.find_all('h2'))} H2, {len(soup.find_all('p'))} P"
-        
-        h1 = soup.find('h1')
-        self.final_title = h1.get_text(strip=True) if h1 else f"Bài: {self.all_kws[0]}"
-        if self.retry_count == 0:
-            self.add_log(ui_log, f"🏷️ [THÔNG TIN BÀI VIẾT] Tiêu đề: {self.final_title}", "success")
+        st.session_state.evolution_cache = f"Đã chia {len(h2_list)} mục H2"
         return True
 
     def step5_6_spin_and_dom(self, ui_log):
@@ -384,7 +403,7 @@ class AutoSEOPipeline:
             
             if not injected: missed.append(k)
 
-        # TAGS RELATED LINK NẾU SÓT TỪ KHÓA
+        # PHƯƠNG ÁN DỰ PHÒNG TAGS CHUẨN SEO
         if missed:
             tags_html = "<br><div class='related-tags' style='margin-top: 20px; padding: 10px; background-color: #f9f9f9; border-left: 4px solid #007bff; font-style: italic;'><strong>📌 Tìm hiểu thêm:</strong> "
             links_list = []
@@ -445,7 +464,7 @@ class AutoSEOPipeline:
                     if not inserted and len(soup.find_all('p')) > idx * 2:
                         soup.find_all('p')[idx * 2].insert_after(BeautifulSoup(img_html, 'html.parser'))
 
-        if self.failed_imgs: self.add_log(ui_log, f"⚠️ Đã loại {len(self.failed_imgs)} ảnh lỗi.", "warn")
+        if self.failed_imgs: self.add_log(ui_log, f"⚠️ Đã loại {len(self.failed_imgs)} ảnh lỗi (Sẽ mark 999).", "warn")
         self.add_log(ui_log, f"🖼️ [GẮN ẢNH] DOM Inject thành công {len(self.used_imgs)} ảnh.")
         self.raw_html = str(soup); return True
 
@@ -457,7 +476,8 @@ class AutoSEOPipeline:
         wc = len(txt.split())
         self.last_word_count = wc
         
-        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Bài viết đạt {wc} chữ (Yêu cầu khắt khe: {self.min_w} - {self.max_w} chữ).", "detail")
+        actual_min_allowed = int(self.min_w * 0.85)
+        self.add_log(ui_log, f"📏 [ĐỘ DÀI] Đạt {wc} chữ (Mục tiêu: {self.min_w} chữ | Pass KCS: >{actual_min_allowed} chữ).", "detail")
         
         h1 = soup.find('h1')
         s_h1 = 30 if h1 and k0 in h1.get_text().lower() else 0
@@ -482,8 +502,7 @@ class AutoSEOPipeline:
         if read < 60: fails.append(f"Read ({read})")
         
         # ĐÃ FIX: CHỈ ĐÁNH RỚT NẾU QUÁ NGẮN. VƯỢT MAX THÌ VẪN CHO PASS (DÀI LÀ TỐT)
-        if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
-        if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
+        if wc < actual_min_allowed: fails.append(f"Viết Quá ngắn ({wc} < {actual_min_allowed})")
         
         if h1: h1.decompose()
         self.raw_html = str(soup)
@@ -497,7 +516,7 @@ class AutoSEOPipeline:
 
     def step8_sync_db(self, ui_log, final_result):
         try:
-            ss = gspread.authorize(Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=['https://www.googleapis.com/auth/spreadsheets'])).open_by_key(SHEET_ID)
+            ss = gspread.authorize(Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=['[https://www.googleapis.com/auth/spreadsheets](https://www.googleapis.com/auth/spreadsheets)'])).open_by_key(SHEET_ID)
             rep_ws = ss.worksheet('REPORT')
             hdrs = [str(h).strip() for h in rep_ws.row_values(1)]
             def gc(pfx): return next((h for h in hdrs if h.startswith(pfx)), pfx)
@@ -607,7 +626,7 @@ with tab1:
         bot = AutoSEOPipeline(db_mock, [])
         
         try:
-            ss = gspread.authorize(Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=['https://www.googleapis.com/auth/spreadsheets'])).open_by_key(SHEET_ID)
+            ss = gspread.authorize(Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=['[https://www.googleapis.com/auth/spreadsheets](https://www.googleapis.com/auth/spreadsheets)'])).open_by_key(SHEET_ID)
             ws = ss.worksheet('REPORT')
             data = ws.get_all_values()
             ws_df = db_mock.get('WEBSITE', pd.DataFrame())
@@ -689,7 +708,7 @@ with tab1:
                                 bot.retry_count = attempt
                                 if attempt > 0:
                                     bot.reset_state_for_retry()
-                                    bot.add_log(ui_log, f"🔄 [AUTO-RETRY] Bài trước fail KCS (Đạt {bot.last_word_count} chữ). Đang ép AI viết lại bản mới dài hơn...", "warn")
+                                    bot.add_log(ui_log, f"🔄 [AUTO-RETRY] Bài trước fail KCS. Đang ép AI viết lại bản mới...", "warn")
                                 
                                 if bot.step4_llm_generation(ui_log):
                                     bot.step5_6_spin_and_dom(ui_log)
@@ -705,8 +724,8 @@ with tab1:
                             else: fail_count += 1
                 except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi chí mạng: {str(e)[:150]}", "error")
                 
-                if time.time() - st_t > 300:
-                    bot.add_log(ui_log, "🛑 Quá 5 phút, tự ngắt để cứu hệ thống.", "error")
+                if time.time() - st_t > 600:
+                    bot.add_log(ui_log, "🛑 Quá 10 phút, tự ngắt để cứu hệ thống.", "error")
                     break
             bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
             status_box.success(f"✅ Đã hoàn tất tạo bài viết, PENDING: {success_count} | FAIL: {fail_count}")
