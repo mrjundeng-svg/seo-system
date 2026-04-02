@@ -329,22 +329,22 @@ class AutoSEOPipeline:
                 retry_cmd = f"\n[LỆNH TỐI QUAN TRỌNG]: Bản nháp trước của bạn QUÁ DÀI ({self.last_word_count} chữ). Bạn BẮT BUỘC RÚT GỌN LẠI, cô đọng nội dung, KHÔNG VƯỢT QUÁ {self.max_w} chữ."
             
         m_kw_str = self.all_topic_kws[0]
-        num_h2 = random.randint(3, 5) # Ép số lượng H2 chuẩn từ 3 đến 5
+        num_h2 = random.randint(3, 5) 
         
         force = f"""\n[YÊU CẦU SINH TỬ - BẮT BUỘC TUÂN THỦ MỌI ĐIỀU KIỆN SAU]:{retry_cmd}
         1. SỐ LƯỢNG CHỮ (TIÊN QUYẾT): Bạn được cấp tối đa dung lượng (8192 tokens). CỐ GẮNG VIẾT DÀI NHẤT CÓ THỂ, TỔNG SỐ CHỮ BẮT BUỘC PHẢI VƯỢT MỨC {self.min_w} CHỮ VÀ NÊN ĐẠT MỨC {self.mid_w} ĐỂ ĐƯỢC ĐÁNH GIÁ CAO.
         2. CHỦ ĐỀ CHÍNH: Bài viết xoay quanh chủ đề: "{m_kw_str}".
-        3. THẺ H1 TỰ NHIÊN (RẤT QUAN TRỌNG): Bài viết bắt đầu bằng 1 thẻ <h1> duy nhất chứa từ khóa "{m_kw_str}". BẮT BUỘC vị trí từ khóa trong tiêu đề H1 phải được đặt ngẫu nhiên (có thể nằm ở giữa hoặc ở cuối câu). TUYỆT ĐỐI CẤM thói quen luôn đặt từ khóa ở đầu câu một cách gượng ép.
+        3. THẺ H1 TỰ NHIÊN (RẤT QUAN TRỌNG): Bài viết bắt đầu bằng 1 thẻ <h1> duy nhất chứa từ khóa "{m_kw_str}". BẮT BUỘC xáo trộn vị trí từ khóa: hãy đặt nó ở GIỮA câu hoặc CUỐI câu. TUYỆT ĐỐI CẤM thói quen luôn đặt từ khóa ở đầu thẻ H1.
         4. TỪ KHÓA TỰ NHIÊN: TUYỆT ĐỐI KHÔNG bọc từ khóa trong dấu ngoặc kép (' ', " ") hay dấu backtick (`). Cứ để trần tự nhiên.
         5. CHỐNG RẬP KHUÔN MỞ BÀI: Mở bài theo phong cách: {chosen_sapo.upper()}. Tuyệt đối CẤM dùng các câu văn mẫu lặp đi lặp lại như "Trong cuộc sống bận rộn...", "Trong thế giới ngày nay...".
         6. CHỐNG RẬP KHUÔN TIÊU ĐỀ: CẤM đặt tiêu đề H2 theo định dạng "A - B" (Ví dụ cấm: "Chi phí - Bài toán nan giải"). Tiêu đề phải là một câu trực diện, liền mạch.
         7. CẤU TRÚC BÀI VIẾT (CỰC KỲ QUAN TRỌNG): 
            - Dùng đúng {num_h2} thẻ <h2> làm luận điểm chính.
-           - BÊN DƯỚI MỖI THẺ H2, hãy chọn ngẫu nhiên 1 trong 2 cách sau (phải áp dụng linh hoạt xen kẽ cả 2 cách trong cùng bài viết):
+           - BÊN DƯỚI MỖI THẺ H2, hãy chọn ngẫu nhiên 1 trong 2 cách sau (áp dụng linh hoạt xen kẽ):
              + Cách 1: Chia thành 2-4 đoạn văn nhỏ (mỗi đoạn bọc trong 1 thẻ <p> riêng biệt).
-             + Cách 2: Sinh ra 2-3 thẻ <h3> làm mục lục con. Dưới mỗi thẻ <h3> là 1-2 đoạn văn <p> ngắn.
-           - TUYỆT ĐỐI CẤM gộp chung thành 1 cục đoạn văn <p> dài thòng dưới bất kỳ tiêu đề nào. Đọc rất mỏi mắt.
-        8. ĐỊNH DẠNG HTML: Viết hoa chữ cái đầu tiên của câu và ý liệt kê. Dùng thẻ <ul> và <li> để liệt kê (CẤM dùng *, -). Xóa bỏ cấu trúc cũ đã lưu: {st.session_state.evolution_cache}.
+             + Cách 2: Sinh ra 2-3 thẻ <h3> làm mục lục con. Dưới MỖI thẻ <h3> BẮT BUỘC có 1-2 đoạn văn <p> ngắn.
+           - TUYỆT ĐỐI CẤM gộp chung thành 1 cục đoạn văn <p> dài thòng dưới bất kỳ tiêu đề nào.
+        8. ĐỊNH DẠNG HTML: Viết hoa chữ cái đầu tiên của câu và ý liệt kê. Dùng thẻ <ul> và <li> để liệt kê (CẤM dùng *, -).
         9. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>.{draft_injection}"""
         
         m_prompt = f"{self.prompt_content}\n{pmts['PROMPT_SEO_GLOBAL_RULE']}\n{pmts['PROMPT_AI_HUMANIZER']}\n{force}"
@@ -401,6 +401,19 @@ class AutoSEOPipeline:
             self.raw_html = "".join([f"<p>{p}</p>" for p in paras])
             
         soup = BeautifulSoup(self.raw_html, 'html.parser')
+        
+        # PYTHON AUTO-NUMBERING H3 (ĐÁNH SỐ TỰ ĐỘNG CHO H3 DƯỚI MỖI H2)
+        for h2 in soup.find_all('h2'):
+            next_node = h2.find_next_sibling()
+            h3_count = 1
+            while next_node and next_node.name != 'h2':
+                if next_node.name == 'h3':
+                    text = next_node.get_text(strip=True)
+                    if not re.match(r'^\d+[\.\-\)]', text):
+                        next_node.string = f"{h3_count}. {text}"
+                    h3_count += 1
+                next_node = next_node.find_next_sibling()
+
         for tag in soup.find_all(['p', 'li', 'h1', 'h2', 'h3', 'h4']):
             for text_node in tag.find_all(string=True):
                 if text_node.strip(): 
@@ -420,7 +433,6 @@ class AutoSEOPipeline:
         return True
 
     def step5_6_spin_and_dom(self, ui_log):
-        # ĐO ĐỘ DÀI ĐỂ TÍNH THƯỞNG KPI
         temp_soup = BeautifulSoup(self.raw_html, 'html.parser')
         current_wc = len(temp_soup.get_text(' ', strip=True).split())
         bonus_inject = 0
@@ -532,14 +544,14 @@ class AutoSEOPipeline:
                 except: self.failed_imgs.append(u_img)
 
         # ==========================================
-        # LOGIC MỚI: CHIA KHOẢNG CÁCH ẢNH CHUẨN MỰC
+        # PYTHON LOGIC: RẢI ẢNH CHỐNG DÍNH CHÙM
         # ==========================================
         if self.used_imgs:
             n_imgs = len(self.used_imgs)
             n_kws = len(self.injected_kws_list)
             target_kw_idx = []
             
-            # Tính toán vị trí từ khóa mục tiêu để chèn ảnh
+            # Phân bổ vị trí mục tiêu theo luật của Sếp
             if n_imgs == 1:
                 target_kw_idx = [0] if n_kws > 0 else []
             elif n_imgs == 2:
@@ -548,35 +560,41 @@ class AutoSEOPipeline:
             else: # >= 3 ảnh
                 target_kw_idx = list(range(min(n_imgs, n_kws))) # Chèn tuần tự 1, 2, 3...
 
-            inserted_nodes = []
+            all_tags = soup.find_all(['p', 'h2', 'h3'])
+            inserted_tag_indices = []
             
             for i, img_u in enumerate(self.used_imgs):
-                # Xác định keyword làm thẻ Alt
                 kw_img_alt = self.injected_kws_list[target_kw_idx[i]] if i < len(target_kw_idx) else self.all_topic_kws[0]
                 img_html = f"<br><p align='center'><img src='{img_u}' alt='{kw_img_alt}'></p><br>"
                 inserted = False
 
-                # 1. Cố gắng chèn dưới keyword mục tiêu
+                # Lượt 1: Cố chèn dưới từ khóa mục tiêu (có cắm link)
                 if i < len(target_kw_idx):
                     target_kw_text = self.injected_kws_list[target_kw_idx[i]]
-                    for tag in soup.find_all(['p', 'h2', 'h3']):
-                        if tag not in inserted_nodes and re.search(re.escape(target_kw_text), tag.get_text(), flags=re.IGNORECASE):
+                    for t_idx, tag in enumerate(all_tags):
+                        # LUẬT CHỐNG DÍNH CHÙM: Khoảng cách tối thiểu 3 đoạn so với ảnh đã chèn
+                        if not any(abs(t_idx - ins_idx) < 3 for ins_idx in inserted_tag_indices):
+                            if tag.name in ['p', 'h2', 'h3'] and re.search(re.escape(target_kw_text), tag.get_text(), flags=re.IGNORECASE):
+                                tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
+                                inserted_tag_indices.append(t_idx)
+                                inserted = True
+                                break
+                                
+                # Lượt 2: Fallback (Nếu không tìm thấy hoặc bị dính chùm, tự động rải đều theo index)
+                if not inserted:
+                    for t_idx, tag in enumerate(all_tags):
+                        if tag.name == 'p' and not any(abs(t_idx - ins_idx) < 4 for ins_idx in inserted_tag_indices):
                             tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
-                            inserted_nodes.append(tag)
+                            inserted_tag_indices.append(t_idx)
                             inserted = True
                             break
                             
-                # 2. Kế hoạch B (Fallback): Chèn rải đều nếu không tìm thấy keyword
-                if not inserted:
-                    fallback_p_idx = (i + 1) * 2
-                    paras = soup.find_all('p')
-                    if len(paras) > fallback_p_idx:
-                        paras[fallback_p_idx].insert_after(BeautifulSoup(img_html, 'html.parser'))
-                    elif paras:
-                        paras[-1].insert_after(BeautifulSoup(img_html, 'html.parser'))
+                    # Lượt 3: Nhét đại xuống cuối bài nếu cùng đường
+                    if not inserted and all_tags:
+                        all_tags[-1].insert_after(BeautifulSoup(img_html, 'html.parser'))
 
         if self.failed_imgs: self.add_log(ui_log, f"⚠️ Đã loại {len(self.failed_imgs)} ảnh lỗi.", "warn")
-        self.add_log(ui_log, f"🖼️ [GẮN ẢNH] DOM Inject thành công {len(self.used_imgs)} ảnh.")
+        self.add_log(ui_log, f"🖼️ [GẮN ẢNH] DOM Inject thành công {len(self.used_imgs)} ảnh (Anti-Clump Bật).")
         self.raw_html = str(soup); return True
 
     def step7_qa_validation(self, ui_log) -> str:
@@ -857,7 +875,7 @@ with tab1:
         st.rerun()
 
     # ===============================================
-    # TIẾN TRÌNH 1: ÉP LÊN BÀI
+    # TIẾN TRÌNH 1: ÉP LÊN BÀI (CÓ AUTO-CLEAN DỮ LIỆU)
     # ===============================================
     if st.session_state.run_mode == "force":
         action_col.empty()
@@ -886,7 +904,7 @@ with tab1:
                     headers = [str(h).strip() for h in data[0]]
                     idx_res, idx_pub = headers.index('REP_RESULT') if 'REP_RESULT' in headers else -1, headers.index('REP_PUBLISH_DATE') if 'REP_PUBLISH_DATE' in headers else -1
                     idx_html, idx_ws, idx_title = headers.index('REP_HTML') if 'REP_HTML' in headers else -1, headers.index('REP_WS_NAME') if 'REP_WS_NAME' in headers else -1, headers.index('REP_TITLE') if 'REP_TITLE' in headers else -1
-                    idx_log = headers.index('REP_LOG') if 'REP_LOG' in headers else -1 # ĐỂ TỰ ĐỘNG XÓA RÁC
+                    idx_log = headers.index('REP_LOG') if 'REP_LOG' in headers else -1 
 
                     if idx_res != -1 and idx_pub != -1:
                         now = get_vn_now()
@@ -904,8 +922,8 @@ with tab1:
                                     if not web_info.empty:
                                         success, msg = post_to_cms(web_info.iloc[0], title, html_content, dash_dict)
                                         if success:
-                                            bot.add_log(ui_log, f"✅ {msg}", "success")
-                                            # CẬP NHẬT TRẠNG THÁI VÀ XÓA RÁC HTML/LOG ĐỂ NHẸ SHEET
+                                            bot.add_log(ui_log, f"✅ {msg} (Sẽ xóa rác HTML & LOG)", "success")
+                                            # AUTO-CLEAN DỮ LIỆU ĐỂ NHẸ GOOGLE SHEET
                                             upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_res+1)}', 'values': [['DONE']]})
                                             if idx_html != -1: upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_html+1)}', 'values': [['']]})
                                             if idx_log != -1: upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_log+1)}', 'values': [['']]})
