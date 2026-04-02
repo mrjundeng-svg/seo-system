@@ -528,14 +528,13 @@ class AutoSEOPipeline:
         self.raw_html = str(soup); return True
 
     def step7_qa_validation(self, ui_log) -> str:
-        self.add_log(ui_log, "⚖️ [KCS] Máy quét AI bắt đầu chấm điểm...")
+        self.add_log(ui_log, "⚖️ [KCS Bước 1] Chấm điểm cơ bản (Miễn phí)...")
         soup = BeautifulSoup(self.raw_html, 'html.parser')
         txt, k0 = soup.get_text(' ', strip=True), self.all_topic_kws[0].lower()
         
         wc = len(txt.split())
         self.last_word_count = wc
         
-        actual_min_allowed = int(self.min_w * 0.85)
         self.add_log(ui_log, f"📏 [ĐỘ DÀI THỰC TẾ] Đạt {wc} chữ (Luật: MIN {self.min_w} | MAX {self.max_w} chữ).", "detail")
         
         h1 = soup.find('h1')
@@ -558,13 +557,26 @@ class AutoSEOPipeline:
         if seo < req: fails.append(f"SEO ({seo}/{req})")
         if ai > 20: fails.append(f"AI ({ai}%)")
         if read < 60: fails.append(f"Read ({read})")
-        
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
         if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
-        # 1. MÁY QUÉT COPYSCAPE
+        # ==========================================
+        # FAIL FAST - TỐI ƯU CHI PHÍ NGAY TỪ VÒNG 1
+        # ==========================================
+        if fails:
+            self.kcs_metrics['PLAGIARISM'] = "Skipped"
+            self.kcs_metrics['JUDGE'] = "Skipped"
+            self.add_log(ui_log, f"❌ [KCS FAIL] Trượt tiêu chuẩn cơ bản do: {', '.join(fails)}", "error")
+            self.add_log(ui_log, "⏩ Bỏ qua gọi API (Copyscape/AI Judge) để tiết kiệm tiền!", "warn")
+            if h1: h1.decompose()
+            self.raw_html = str(soup)
+            return "FAIL"
+
+        # ==========================================
+        # MÁY QUÉT COPYSCAPE (VÒNG 2)
+        # ==========================================
         if self.copyscape_user and self.copyscape_key:
-            self.add_log(ui_log, "🕵️ [PLAGIARISM] Đang check đạo văn qua Copyscape API...", "detail")
+            self.add_log(ui_log, "🕵️ [KCS Bước 2] Pass vòng 1. Gọi Copyscape check đạo văn...", "detail")
             try:
                 cs_data = {
                     'u': self.copyscape_user, 'k': self.copyscape_key,
@@ -587,7 +599,18 @@ class AutoSEOPipeline:
                 self.add_log(ui_log, f"⚠️ Không kết nối được Copyscape: {e}. Bỏ qua check đạo văn.", "warn")
                 self.kcs_metrics['PLAGIARISM'] = "Error"
                 
-        # 2. GIÁM KHẢO AI TÙY CHỈNH THEO TỪNG WEB (SỬ DỤNG OPENROUTER_API_KEY)
+        # FAIL FAST - TỐI ƯU SAU VÒNG 2
+        if fails:
+            self.kcs_metrics['JUDGE'] = "Skipped"
+            self.add_log(ui_log, f"❌ [KCS FAIL] Bị loại ở vòng Copyscape: {', '.join(fails)}", "error")
+            self.add_log(ui_log, "⏩ Bỏ qua gọi API (AI Judge) để tiết kiệm tiền!", "warn")
+            if h1: h1.decompose()
+            self.raw_html = str(soup)
+            return "FAIL"
+                
+        # ==========================================
+        # GIÁM KHẢO AI TÙY CHỈNH THEO TỪNG WEB (VÒNG 3)
+        # ==========================================
         ws_judge_flag = str(self.target_web.get('WS_LLM_JUDGE', '')).strip()
         or_keys = [k.strip() for k in str(self.dashboard.get('OPENROUTER_API_KEY', '')).split(',') if k.strip()]
         or_mods = [m.strip() for m in str(self.dashboard.get('OPENROUTER_MODEL', 'openai/gpt-4o-mini')).split(',') if m.strip()]
@@ -596,7 +619,7 @@ class AutoSEOPipeline:
             if or_keys and or_mods:
                 judge_key = or_keys[0]
                 judge_model = or_mods[0]
-                self.add_log(ui_log, f"⚖️ [AI JUDGE] Web này kích hoạt cờ (1). Nhờ {judge_model} chấm điểm...", "detail")
+                self.add_log(ui_log, f"⚖️ [KCS Bước 3] Web này kích hoạt cờ (1). Nhờ {judge_model} chấm điểm...", "detail")
                 judge_prompt = f"Đóng vai chuyên gia SEO khó tính. Hãy chấm điểm bài viết HTML sau dựa trên từ khóa chính: '{k0}'.\nTiêu chí: Chuẩn SEO On-page, không nhồi nhét từ khóa, văn phong tự nhiên, có giá trị cho người đọc.\nTrả về DUY NHẤT một con số từ 0 đến 100 thể hiện điểm số, không kèm bất kỳ chữ nào khác.\n\nBài viết:\n{self.raw_html[:4000]}"
                 try:
                     res = requests.post(
@@ -639,10 +662,10 @@ class AutoSEOPipeline:
         self.raw_html = str(soup)
         
         if fails:
-            self.add_log(ui_log, f"❌ [KCS FAIL] Bị loại do: {', '.join(fails)}", "error")
+            self.add_log(ui_log, f"❌ [KCS FAIL] Bị loại ở vòng AI Judge do: {', '.join(fails)}", "error")
             return "FAIL"
             
-        self.add_log(ui_log, f"✅ [KCS PASSED] Đạt chuẩn.", "success")
+        self.add_log(ui_log, f"✅ [KCS PASSED] Vượt qua mọi bài test!", "success")
         return "PENDING"
 
     def step8_sync_db(self, ui_log, final_result):
