@@ -37,7 +37,8 @@ def check_password():
 
 if not check_password(): st.stop()
 
-@st.cache_data(ttl=60)
+# ĐÃ SỬA THÀNH 'Load DB...' KHI CHẠY VÒNG XOAY
+@st.cache_data(ttl=60, show_spinner="Load DB...")
 def load_data_from_gsheets():
     try:
         creds = Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'])
@@ -92,10 +93,10 @@ class AutoSEOPipeline:
         self.dashboard = {str(k).strip(): str(v).strip() for k, v in zip(self.db['DASHBOARD']['DATA_KEY'], self.db['DASHBOARD']['DATA_CONTENT'])}
         self.now_vn, self.history_log = get_vn_now(), master_log_list
         self.target_web, self.publish_time, self.main_kw_row = None, None, None
-        self.all_kws, self.target_length, self.raw_html, self.final_title = [], 0, "", ""
+        self.raw_html, self.final_title = "", ""
         self.kcs_metrics, self.used_imgs, self.used_spins, self.failed_imgs = {}, [], [], []
         self.out_lim, self.in_lim, self.injected_ext, self.injected_int = 0, 0, 0, 0
-        self.is_short_form, self.serp_style, self.prompt_content = False, "", ""
+        self.serp_style, self.prompt_content = "", ""
         self.min_w, self.max_w = 0, 0
         
         self.retry_count = 0
@@ -183,7 +184,6 @@ class AutoSEOPipeline:
         self.add_log(ui_log, f"📐 [QUOTA LINK] Out: {self.out_lim} + In: {self.in_lim} => Tổng: {total_links} Links.", "quota")
         
         kws_needed = max(1, total_links)
-        
         pool_subs = df_kw[(df_kw['KW_TEXT'] != m_kw) & (df_kw['KW_CONTENT'] == str(self.main_kw_row.get('KW_CONTENT', '')))].copy()
         if not pool_subs.empty:
             pool_subs = pool_subs.sample(frac=1).sort_values('KW_STATUS')
@@ -268,25 +268,25 @@ class AutoSEOPipeline:
         if self.retry_count == 0:
             self.add_log(ui_log, f"🧠 [PROMPT_CONTENT TỔNG HỢP]:\n{self.prompt_content[:300]}...", "detail")
 
-        # ĐỘNG CƠ RANDOM HÓA CẤU TRÚC ĐỂ CHỐNG VĂN MẪU
         sapo_styles = ["Hỏi đáp xoáy vào nỗi đau của khách hàng", "Đưa ra 1 con số thống kê thực tế", "Kể một tình huống thực tế ngắn gọn", "Phủ định một quan niệm cũ kỹ"]
         chosen_sapo = random.choice(sapo_styles)
+        seed_sang_tao = random.randint(10000, 99999)
         
         retry_cmd = ""
         if self.retry_count > 0:
             if self.last_word_count < self.min_w:
-                retry_cmd = f"\n[CẢNH BÁO TỪ HỆ THỐNG]: Bản nháp trước của bạn QUÁ NGẮN ({self.last_word_count} chữ). Bạn BẮT BUỘC phải phân tích sâu hơn, thêm luận điểm để TỔNG SỐ CHỮ VƯỢT MỨC {self.min_w} CHỮ."
+                retry_cmd = f"\n[CẢNH BÁO TỪ HỆ THỐNG]: Bản nháp trước của bạn QUÁ NGẮN ({self.last_word_count} chữ). Bạn BẮT BUỘC phải phân tích sâu hơn, đưa nhiều ví dụ hơn để TỔNG SỐ CHỮ VƯỢT MỨC {self.min_w} CHỮ."
             elif self.last_word_count > self.max_w:
-                retry_cmd = f"\n[CẢNH BÁO TỪ HỆ THỐNG]: Bản nháp trước của bạn QUÁ DÀI ({self.last_word_count} chữ). Bạn BẮT BUỘC RÚT GỌN LẠI, viết súc tích hơn, KHÔNG VƯỢT QUÁ {self.max_w} chữ."
+                retry_cmd = f"\n[CẢNH BÁO TỪ HỆ THỐNG]: Bản nháp trước của bạn QUÁ DÀI ({self.last_word_count} chữ). Bạn BẮT BUỘC RÚT GỌN LẠI, cô đọng nội dung, KHÔNG VƯỢT QUÁ {self.max_w} chữ."
             
         m_kw_str = self.all_topic_kws[0]
         force = f"""\n[YÊU CẦU SINH TỬ - BẮT BUỘC TUÂN THỦ MỌI ĐIỀU KIỆN SAU]:{retry_cmd}
-        1. SỐ LƯỢNG CHỮ (TIÊN QUYẾT): Bạn được cấp tối đa dung lượng (8192 tokens). TỔNG SỐ CHỮ BẮT BUỘC PHẢI TRONG KHOẢNG TỪ {self.min_w} ĐẾN TỐI ĐA {self.max_w} CHỮ. Bạn hãy tự do phân tích chuyên sâu.
+        1. SỐ LƯỢNG CHỮ (TIÊN QUYẾT): Bạn được cấp tối đa dung lượng (8192 tokens). TỔNG SỐ CHỮ BẮT BUỘC PHẢI TRONG KHOẢNG TỪ {self.min_w} ĐẾN TỐI ĐA {self.max_w} CHỮ. Hãy tự do phân tích chuyên sâu.
         2. CHỦ ĐỀ CHÍNH: Bài viết xoay quanh chủ đề: "{m_kw_str}".
         3. THẺ H1 BẮT BUỘC: Bài viết bắt đầu bằng 1 thẻ <h1> duy nhất. Thẻ H1 BẮT BUỘC chứa từ khóa "{m_kw_str}".
         4. TỪ KHÓA TỰ NHIÊN: TUYỆT ĐỐI KHÔNG bọc từ khóa trong dấu ngoặc kép (' ', " ") hay dấu backtick (`). Cứ để trần tự nhiên.
         5. CHỐNG RẬP KHUÔN MỞ BÀI: Mở bài theo phong cách: {chosen_sapo.upper()}. Tuyệt đối CẤM dùng các câu văn mẫu lặp đi lặp lại như "Trong cuộc sống bận rộn...", "Trong thế giới ngày nay...".
-        6. CHỐNG RẬP KHUÔN TIÊU ĐỀ: CẤM đặt tiêu đề H2 theo định dạng "A - B" (Ví dụ cấm: "Chi phí - Bài toán nan giải"). Tiêu đề phải là một câu trực diện.
+        6. CHỐNG RẬP KHUÔN TIÊU ĐỀ: CẤM đặt tiêu đề H2 theo định dạng "A - B" (Ví dụ cấm: "Chi phí - Bài toán nan giải"). Tiêu đề phải là một câu trực diện, liền mạch.
         7. CẤU TRÚC ĐOẠN: Dùng {random.randint(5,8)} luận điểm (H2). Ngắn dài đan xen (2-5 câu/đoạn). Mỗi đoạn bọc trong thẻ <p>. Xóa cấu trúc cũ: {st.session_state.evolution_cache}.
         8. ĐỊNH DẠNG HTML: Viết hoa chữ cái đầu tiên của câu và ý liệt kê. Dùng thẻ <ul> và <li> để liệt kê (CẤM dùng *, -). H3 đánh số 1., 2..
         9. TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>."""
@@ -336,21 +336,20 @@ class AutoSEOPipeline:
         self.raw_html = re.sub(r'```html|```', '', self.raw_html).strip()
         self.raw_html = re.sub(r'\*\*(.*?)\*\*', r'\1', self.raw_html) 
         
-        # BƯỚC 1: QUÉT SẠCH DẤU NHÁY QUANH TỪ KHÓA NẾU AI VẪN LÌ LỢM THÊM VÀO
+        # ĐÃ FIX: QUÉT SẠCH DẤU NHÁY ĐƠN/KÉP QUANH TỪ KHÓA (Regex an toàn)
         for k in self.all_topic_kws:
-            self.raw_html = re.sub(rf"[`'‘’\"“”]\s*(?i)({re.escape(k)})\s*[`'‘’\"“”]", r"\1", self.raw_html)
+            self.raw_html = re.sub(rf"[`'‘’\"“”]\s*({re.escape(k)})\s*[`'‘’\"“”]", r"\1", self.raw_html, flags=re.IGNORECASE)
         
-        # Sửa cấu trúc HTML cơ bản
         self.raw_html = re.sub(r'(?<!^)\s+\*\s+([A-ZĐÁÀẢÃẠĂÂẤẦẨẪẬÊẾỀỂỄỆÔỐỒỔỖỘƠỚỜỞỠỢƯỨỪỬỮỰÍÌỈĨỊÝỲỶỸỴ])', r'</p><p>• \1', self.raw_html)
         if '<p>' not in self.raw_html.lower():
             paras = [p.strip() for p in re.split(r'\n+', self.raw_html) if p.strip()]
             self.raw_html = "".join([f"<p>{p}</p>" for p in paras])
             
-        # BƯỚC 2: DEEP SCAN - ÉP VIẾT HOA CHỮ CÁI ĐẦU DÒNG CỦA MỌI ĐOẠN VÀ TIÊU ĐỀ
+        # ĐÃ FIX: DEEP SCAN ÉP VIẾT HOA CHỮ CÁI ĐẦU DÒNG
         soup = BeautifulSoup(self.raw_html, 'html.parser')
         for tag in soup.find_all(['p', 'li', 'h1', 'h2', 'h3', 'h4']):
             for text_node in tag.find_all(string=True):
-                if text_node.strip(): # Chỉ xử lý text node đầu tiên có nội dung
+                if text_node.strip(): 
                     stripped = text_node.lstrip()
                     new_text = stripped[0].upper() + stripped[1:]
                     space_prefix = text_node[:len(text_node)-len(stripped)]
@@ -368,14 +367,15 @@ class AutoSEOPipeline:
 
     def step5_6_spin_and_dom(self, ui_log):
         df_spin = self.db.get('SPIN', pd.DataFrame())
-        for i, k in enumerate(self.all_topic_kws): self.raw_html = re.sub(r'(?i)' + re.escape(k), f'__IRON_{i}__', self.raw_html, count=1)
+        for i, k in enumerate(self.all_topic_kws): 
+            self.raw_html = re.sub(re.escape(k), f'__IRON_{i}__', self.raw_html, count=1, flags=re.IGNORECASE)
         if not df_spin.empty:
             for _, r in df_spin.iterrows():
                 o, v_str = str(r.get('SPIN_ORIGINAL', '')).strip(), str(r.get('SPIN_VARIANTS', '')).strip()
                 if o and v_str:
                     vars = [v.strip() for v in v_str.replace(';', ',').split(',') if v.strip()]
-                    if vars and re.search(r'(?i)\b' + re.escape(o) + r'\b', self.raw_html):
-                        self.raw_html = re.sub(r'(?i)\b' + re.escape(o) + r'\b', random.choice(vars), self.raw_html)
+                    if vars and re.search(re.escape(o), self.raw_html, flags=re.IGNORECASE):
+                        self.raw_html = re.sub(re.escape(o), random.choice(vars), self.raw_html, flags=re.IGNORECASE)
                         self.used_spins.append(o)
         for i, k in enumerate(self.all_topic_kws): self.raw_html = self.raw_html.replace(f'__IRON_{i}__', k)
 
@@ -384,52 +384,74 @@ class AutoSEOPipeline:
         for h in soup.find_all(['h1', 'h2']):
             if h.find('a'): h.a.unwrap()
 
-        # =======================================================
-        # THUẬT TOÁN HẬU XỬ LÝ QUÉT VÀ GẮN TỪ KHÓA VÀO BÀI
-        # =======================================================
         self.injected_kws_list = []
         total_links_needed = min(self.out_lim + self.in_lim, len(self.all_topic_kws))
         kws_to_inject = self.all_topic_kws[:total_links_needed]
         
-        for k in kws_to_inject:
-            injected = False
-            for p in soup.find_all(['p', 'li']):
-                if not p.find('a') and re.search(r'(?i)' + re.escape(k), p.get_text()):
-                    url, is_e = "", False
-                    if self.injected_ext < self.out_lim and ou: url, is_e = random.choice(ou), True
-                    elif self.injected_int < self.in_lim and iu: url, is_e = random.choice(iu), False
-                    
-                    if url:
-                        p.replace_with(BeautifulSoup(re.sub(r'(?i)' + re.escape(k), lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(p), count=1), 'html.parser'))
-                        injected = True
-                        self.injected_kws_list.append(k)
-                        if is_e: self.injected_ext += 1
-                        else: self.injected_int += 1
-                    break
-            
-            # GẮN BACKUP LỊCH SỰ NẾU TỪ KHÓA CHƯA ĐƯỢC CHÈN
-            if not injected:
+        avail_p = [p for p in soup.find_all(['p', 'li']) if len(p.get_text(strip=True)) > 20 and not p.find('a') and not p.find('img')]
+        
+        gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
+        gem_mods = [m.strip() for m in str(self.dashboard.get('GEMINI_MODEL', 'gemini-1.5-flash')).split(',') if m.strip()]
+
+        if avail_p and kws_to_inject:
+            n_chunks = len(kws_to_inject)
+            chunk_size = max(1, len(avail_p) // n_chunks)
+
+            for i, k in enumerate(kws_to_inject):
+                start_idx = min(i * chunk_size, len(avail_p) - 1)
+                end_idx = min((i + 1) * chunk_size, len(avail_p)) if i < n_chunks - 1 else len(avail_p)
+                chunk_p = avail_p[start_idx:end_idx]
+                if not chunk_p: chunk_p = avail_p
+
                 url, is_e = "", False
                 if self.injected_ext < self.out_lim and ou: url, is_e = random.choice(ou), True
                 elif self.injected_int < self.in_lim and iu: url, is_e = random.choice(iu), False
-                
-                if url:
-                    fallback_html = f"<br><em>* Tham khảo thêm: <a href='{url}'>{k.capitalize()}</a></em>"
-                    all_p = soup.find_all('p')
-                    if len(all_p) > 1:
-                        all_p[random.randint(1, len(all_p) - 1)].append(BeautifulSoup(fallback_html, 'html.parser'))
-                    elif all_p:
-                        all_p[0].append(BeautifulSoup(fallback_html, 'html.parser'))
-                        
-                    self.injected_kws_list.append(k)
-                    self.add_log(ui_log, f"⚠️ Dùng phương án dự phòng Related Link cho từ '{k}'.", "warn")
-                    if is_e: self.injected_ext += 1
-                    else: self.injected_int += 1
+                if not url: continue
 
-        self.add_log(ui_log, f"🛠️ [GẮN LINK] Đã chốt: {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int.", "success")
+                injected = False
+                for p in chunk_p:
+                    if re.search(re.escape(k), p.get_text(), flags=re.IGNORECASE):
+                        p.replace_with(BeautifulSoup(re.sub(re.escape(k), lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(p), count=1, flags=re.IGNORECASE), 'html.parser'))
+                        injected = True
+                        break
+
+                if not injected:
+                    target_p = random.choice(chunk_p)
+                    original_text = target_p.get_text(strip=True)
+                    gen_txt = ""
+                    if gem_keys:
+                        try:
+                            genai.configure(api_key=gem_keys[0])
+                            fb_pmt = f"Viết lại đoạn văn sau cho mượt mà, chuyên nghiệp. BẮT BUỘC chèn khéo léo cụm từ '{k}' vào giữa đoạn. TRẢ VỀ TEXT TRƠN, KHÔNG MARKDOWN.\n\nGốc: {original_text}"
+                            with concurrent.futures.ThreadPoolExecutor() as ex:
+                                gen_txt = ex.submit(lambda: genai.GenerativeModel(gem_mods[0]).generate_content(fb_pmt).text).result(timeout=15).strip()
+                                gen_txt = gen_txt.replace('**', '')
+                        except: pass
+
+                    if gen_txt and k.lower() in gen_txt.lower():
+                        pattern = re.compile(re.escape(k), re.IGNORECASE)
+                        final_html = pattern.sub(f"<a href='{url}'>{k}</a>", gen_txt, count=1)
+                        target_p.replace_with(BeautifulSoup(f"<p>{final_html}</p>", 'html.parser'))
+                        self.add_log(ui_log, f"🎯 AI đã viết lại 1 đoạn ở Khúc {i+1} để chèn từ '{k}'.", "success")
+                    else:
+                        fallback_sentences = [
+                            f" Hơn thế nữa, để hiểu rõ bản chất, việc tham khảo {k} là một hướng đi đúng đắn.",
+                            f" Đồng thời, các khía cạnh liên quan đến {k} cũng cần được phân tích kỹ lưỡng.",
+                            f" Điều này phần nào lý giải tại sao vấn đề {k} ngày càng được quan tâm."
+                        ]
+                        gen_txt = random.choice(fallback_sentences)
+                        pattern = re.compile(re.escape(k), re.IGNORECASE)
+                        final_html = pattern.sub(f"<a href='{url}'>{k}</a>", gen_txt, count=1)
+                        target_p.append(BeautifulSoup(final_html, 'html.parser'))
+                        self.add_log(ui_log, f"⚠️ Dùng câu nối cho từ '{k}' ở Khúc {i+1}.", "warn")
+
+                self.injected_kws_list.append(k)
+                if is_e: self.injected_ext += 1
+                else: self.injected_int += 1
+
+        self.add_log(ui_log, f"🛠️ [GẮN LINK] Chốt: {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int.", "success")
         self.add_log(ui_log, f"📋 [DANH SÁCH TỪ KHÓA ĐÃ DÙNG]: {', '.join(self.injected_kws_list)}", "detail")
 
-        # GẮN ẢNH CHUẨN XÁC SAU THẺ P, H2, H3
         mx_img = self.parse_rng(self.target_web.get('WS_IMG_LIMIT', 1), 1)
         req_img = min(len(self.injected_kws_list) if self.injected_kws_list else 1, mx_img)
         self.add_log(ui_log, f"🖼️ [QUOTA ẢNH] Cần {req_img} ảnh. Bắt đầu Ping (Timeout 5s)...", "detail")
@@ -451,7 +473,7 @@ class AutoSEOPipeline:
                 img_html = f"<br><p align='center'><img src='{self.used_imgs[0]}' alt='{kw_img}'></p><br>"
                 inserted = False
                 for tag in soup.find_all(['p', 'h2', 'h3']):
-                    if re.search(r'(?i)' + re.escape(kw_img), tag.get_text()):
+                    if re.search(re.escape(kw_img), tag.get_text(), flags=re.IGNORECASE):
                         tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
                         inserted = True
                         break
@@ -463,7 +485,7 @@ class AutoSEOPipeline:
                     img_html = f"<br><p align='center'><img src='{img_u}' alt='{kw_img}'></p><br>"
                     inserted = False
                     for tag in soup.find_all(['p', 'h2', 'h3']):
-                        if re.search(r'(?i)' + re.escape(kw_img), tag.get_text()) and not tag.find_next_sibling('p', align='center'):
+                        if re.search(re.escape(kw_img), tag.get_text(), flags=re.IGNORECASE) and not tag.find_next_sibling('p', align='center'):
                             tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
                             inserted = True
                             break
@@ -507,7 +529,6 @@ class AutoSEOPipeline:
         if ai > 20: fails.append(f"AI ({ai}%)")
         if read < 60: fails.append(f"Read ({read})")
         
-        # CHỐT LUẬT KCS CHUẨN XÁC: RỚT NẾU QUÁ NGẮN HOẶC QUÁ DÀI
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
         if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
@@ -522,7 +543,6 @@ class AutoSEOPipeline:
         return "PENDING"
 
     def step8_sync_db(self, ui_log, final_result):
-        # BỌC VÒNG LẶP RETRY CHO GOOGLE SHEETS
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -563,7 +583,6 @@ class AutoSEOPipeline:
                                     if i_d != -1: upds.append({'range': f'{gspread.utils.rowcol_to_a1(i, i_d+1)}', 'values': [[ts]]})
                         if upds: ws.batch_update(upds)
 
-                    # CHỈ UPDATE KW_STATUS CHO CÁC TỪ KHÓA ĐÃ THỰC SỰ ĐƯỢC CHÈN
                     batch_upd(ss.worksheet('KEYWORD'), 'KW_TEXT', self.injected_kws_list, 'KW_STATUS', 'KW_DATE')
                     batch_upd(ss.worksheet('IMAGE'), 'IMG_URL', self.used_imgs, 'IMG_STATUS', 'IMG_DATE')
                     if self.used_spins: batch_upd(ss.worksheet('SPIN'), 'SPIN_ORIGINAL', self.used_spins, None, 'SPIN_DATE')
@@ -590,7 +609,7 @@ class AutoSEOPipeline:
                 send_telegram_noti(self.dashboard, telegram_msg)
                 
                 self.add_log(ui_log, f"🎉 [HOÀN TẤT] Lưu DB xong. Trạng thái bài viết: {final_result}", "success")
-                break # Thoát vòng lặp khi ghi DB thành công
+                break 
             except Exception as e: 
                 if attempt == max_retries - 1:
                     self.add_log(ui_log, f"🛑 Lỗi ghi Database sau 3 lần thử: {str(e)[:100]}", "error")
@@ -629,16 +648,23 @@ with tab1:
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    btn_col1, btn_col2, btn_col3 = st.columns(3)
-    btn_start = btn_col1.button("🔥 Bắt đầu Soạn bài AI", use_container_width=True, type="primary")
-    btn_force = btn_col2.button("⚡ Ép Lên bài ngay", use_container_width=True)
-    btn_refresh = btn_col3.button("🔄 Làm mới dữ liệu", use_container_width=True)
+    if "is_processing" not in st.session_state:
+        st.session_state.is_processing = False
+
+    action_col = st.empty()
+    with action_col.container():
+        btn_col1, btn_col2, btn_col3 = st.columns(3)
+        btn_start = btn_col1.button("🔥 Bắt đầu Soạn bài AI", use_container_width=True, type="primary", disabled=st.session_state.is_processing)
+        btn_force = btn_col2.button("⚡ Ép Lên bài ngay", use_container_width=True, disabled=st.session_state.is_processing)
+        btn_refresh = btn_col3.button("🔄 Làm mới dữ liệu", use_container_width=True, disabled=st.session_state.is_processing)
     
     if btn_refresh:
         load_data_from_gsheets.clear()
         st.rerun()
         
     if btn_force:
+        st.session_state.is_processing = True
+        action_col.empty() # Khóa nút tránh click đúp
         st.markdown("---")
         info_msg = st.empty()
         info_msg.info("⏳ ĐANG KIỂM TRA BÀI QUÁ HẠN...")
@@ -694,17 +720,22 @@ with tab1:
                         ws.batch_update(upd)
                         st.success(f"🎉 Đã chốt sổ và bắn thành công {count} bài quá hạn!")
                         time.sleep(2)
+                        st.session_state.is_processing = False
                         st.rerun()
                     else: 
                         auto_time = dash_dict.get('AUTO_RUN_TIME', '')
-                        bot.add_log(ui_log, f"ℹ️ Không có bài viết ở trạng thái PENDING hoặc đang ngoài giờ lên bài lúc ({auto_time}). Kiểm tra lại nhé Ní ^^!", "warn")
+                        bot.add_log(ui_log, f"ℹ️ Không có bài viết ở trạng thái PENDING hoặc đang ngoài giờ lên bài lúc ({auto_time}).", "warn")
                 else: bot.add_log(ui_log, "🛑 Không tìm thấy cột trạng thái trong Sheet REPORT.", "error")
         except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi hệ thống Đăng bài: {str(e)[:150]}", "error")
+        st.session_state.is_processing = False
+        if st.button("Trở lại"): st.rerun()
 
     if btn_start:
+        st.session_state.is_processing = True
+        action_col.empty() # Khóa nút tránh click đúp
         st.markdown("---")
         status_box = st.empty()
-        status_box.info("⏳ HỆ THỐNG ĐANG SOẠN BÀI TỰ ĐỘNG... BẠN CỨ ĐỂ YÊN MÀN HÌNH NÀY CHO TỚI KHI BÁO XONG NHA!")
+        status_box.info("⏳ HỆ THỐNG ĐANG SOẠN BÀI TỰ ĐỘNG... VUI LÒNG KHÔNG TẮT TAB NÀY!")
         load_data_from_gsheets.clear()
         
         ui_log = st.empty()
@@ -748,6 +779,8 @@ with tab1:
                     break
             bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
             status_box.success(f"✅ Đã hoàn tất tạo bài viết, PENDING: {success_count} | FAIL: {fail_count}")
+        st.session_state.is_processing = False
+        if st.button("Hoàn tất"): st.rerun()
 
 with tab2:
     if not df_rep.empty:
