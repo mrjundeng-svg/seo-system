@@ -402,17 +402,22 @@ class AutoSEOPipeline:
             
         soup = BeautifulSoup(self.raw_html, 'html.parser')
         
-        # PYTHON AUTO-NUMBERING H3 (ĐÁNH SỐ TỰ ĐỘNG CHO H3 DƯỚI MỖI H2)
-        for h2 in soup.find_all('h2'):
-            next_node = h2.find_next_sibling()
+        # 1. MÁY HÚT BỤI: QUÉT SẠCH ẢNH DO AI TỰ CHẾ (TRÁNH LỖI BROKEN IMAGE)
+        for img in soup.find_all('img'):
+            img.decompose()
+            
+        # 2. MÁY QUÉT X-RAY: ĐÁNH SỐ TỰ ĐỘNG CHO H3 DƯỚI MỖI H2
+        h2_list = soup.find_all('h2')
+        for h2 in h2_list:
             h3_count = 1
-            while next_node and next_node.name != 'h2':
-                if next_node.name == 'h3':
-                    text = next_node.get_text(strip=True)
+            curr = h2.find_next()
+            while curr and curr.name != 'h2':
+                if curr.name == 'h3':
+                    text = curr.get_text(strip=True)
                     if not re.match(r'^\d+[\.\-\)]', text):
-                        next_node.string = f"{h3_count}. {text}"
+                        curr.string = f"{h3_count}. {text}"
                     h3_count += 1
-                next_node = next_node.find_next_sibling()
+                curr = curr.find_next()
 
         for tag in soup.find_all(['p', 'li', 'h1', 'h2', 'h3', 'h4']):
             for text_node in tag.find_all(string=True):
@@ -578,6 +583,7 @@ class AutoSEOPipeline:
                 if i < len(target_kw_idx):
                     target_kw_text = self.injected_kws_list[target_kw_idx[i]]
                     for t_idx, tag in enumerate(all_tags):
+                        # LUẬT CHỐNG DÍNH CHÙM: Khoảng cách tối thiểu 3 thẻ so với ảnh đã chèn
                         if not any(abs(t_idx - ins_idx) < 3 for ins_idx in inserted_tag_indices):
                             if tag.name in ['p', 'h2', 'h3'] and re.search(re.escape(target_kw_text), tag.get_text(), flags=re.IGNORECASE):
                                 tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
@@ -877,6 +883,9 @@ with tab1:
         load_data_from_gsheets.clear()
         st.rerun()
 
+    # ===============================================
+    # TIẾN TRÌNH 1: ÉP LÊN BÀI (CÓ AUTO-CLEAN DỮ LIỆU)
+    # ===============================================
     if st.session_state.run_mode == "force":
         action_col.empty()
         st.markdown("---")
@@ -923,12 +932,12 @@ with tab1:
                                         success, msg = post_to_cms(web_info.iloc[0], title, html_content, dash_dict)
                                         if success:
                                             bot.add_log(ui_log, f"✅ {msg} (Sẽ xóa rác HTML & LOG)", "success")
+                                            # AUTO-CLEAN DỮ LIỆU ĐỂ NHẸ GOOGLE SHEET
                                             upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_res+1)}', 'values': [['DONE']]})
                                             if idx_html != -1: upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_html+1)}', 'values': [['']]})
                                             if idx_log != -1: upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_log+1)}', 'values': [['']]})
                                             count += 1
                                             
-                                            # GỬI THÔNG BÁO TELEGRAM KHI ĐĂNG THÀNH CÔNG LÊN WEB
                                             telegram_msg = f"✅ [ĐÃ PUBLISHED] {dash_dict.get('PROJECT_NAME', 'Auto SEO Pipeline')}\n\n🌐 Website: {ws_name}\n📑 Title: {title}\n🚥 Trạng thái: Lên Top Google thôi!"
                                             send_telegram_noti(dash_dict, telegram_msg)
                                             
@@ -952,6 +961,9 @@ with tab1:
             with c2:
                 st.button("✅ Xác nhận & Quay lại", type="primary", use_container_width=True, key="done_force", on_click=cb_done)
 
+    # ===============================================
+    # TIẾN TRÌNH 2: TỰ ĐỘNG SOẠN BÀI
+    # ===============================================
     if st.session_state.run_mode == "auto":
         action_col.empty()
         st.markdown("---")
