@@ -543,36 +543,41 @@ class AutoSEOPipeline:
                     else: self.failed_imgs.append(u_img)
                 except: self.failed_imgs.append(u_img)
 
+        ws_banner = str(self.target_web.get('WS_BANNER', '')).strip()
+        if not ws_banner:
+            img_max_w = '100%'
+            self.add_log(ui_log, f"⚠️ Web chưa cấu hình WS_BANNER, tự động dùng size mặc định 100%.", "warn")
+        else:
+            img_max_w = ws_banner
+
         # ==========================================
-        # PYTHON LOGIC: RẢI ẢNH CHỐNG DÍNH CHÙM
+        # PYTHON LOGIC: RẢI ẢNH CHỐNG DÍNH CHÙM TỐI ƯU
         # ==========================================
         if self.used_imgs:
             n_imgs = len(self.used_imgs)
             n_kws = len(self.injected_kws_list)
             target_kw_idx = []
             
-            # Phân bổ vị trí mục tiêu theo luật của Sếp
+            # Phân bổ vị trí mục tiêu
             if n_imgs == 1:
                 target_kw_idx = [0] if n_kws > 0 else []
             elif n_imgs == 2:
-                if n_kws >= 3: target_kw_idx = [0, 2] # Chèn ảnh ở keyword 1 và 3
+                if n_kws >= 3: target_kw_idx = [0, 2] 
                 else: target_kw_idx = [0, 1] if n_kws >= 2 else ([0] if n_kws > 0 else [])
-            else: # >= 3 ảnh
-                target_kw_idx = list(range(min(n_imgs, n_kws))) # Chèn tuần tự 1, 2, 3...
+            else: 
+                target_kw_idx = list(range(min(n_imgs, n_kws))) 
 
             all_tags = soup.find_all(['p', 'h2', 'h3'])
             inserted_tag_indices = []
             
             for i, img_u in enumerate(self.used_imgs):
                 kw_img_alt = self.injected_kws_list[target_kw_idx[i]] if i < len(target_kw_idx) else self.all_topic_kws[0]
-                img_html = f"<br><p align='center'><img src='{img_u}' alt='{kw_img_alt}'></p><br>"
+                img_html = f"<br><p align='center'><img src='{img_u}' alt='{kw_img_alt}' loading='lazy' style='max-width: {img_max_w}; height: auto; width: 100%; display: block; margin: 0 auto;'></p><br>"
                 inserted = False
 
-                # Lượt 1: Cố chèn dưới từ khóa mục tiêu (có cắm link)
                 if i < len(target_kw_idx):
                     target_kw_text = self.injected_kws_list[target_kw_idx[i]]
                     for t_idx, tag in enumerate(all_tags):
-                        # LUẬT CHỐNG DÍNH CHÙM: Khoảng cách tối thiểu 3 đoạn so với ảnh đã chèn
                         if not any(abs(t_idx - ins_idx) < 3 for ins_idx in inserted_tag_indices):
                             if tag.name in ['p', 'h2', 'h3'] and re.search(re.escape(target_kw_text), tag.get_text(), flags=re.IGNORECASE):
                                 tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
@@ -580,7 +585,6 @@ class AutoSEOPipeline:
                                 inserted = True
                                 break
                                 
-                # Lượt 2: Fallback (Nếu không tìm thấy hoặc bị dính chùm, tự động rải đều theo index)
                 if not inserted:
                     for t_idx, tag in enumerate(all_tags):
                         if tag.name == 'p' and not any(abs(t_idx - ins_idx) < 4 for ins_idx in inserted_tag_indices):
@@ -589,12 +593,11 @@ class AutoSEOPipeline:
                             inserted = True
                             break
                             
-                    # Lượt 3: Nhét đại xuống cuối bài nếu cùng đường
                     if not inserted and all_tags:
                         all_tags[-1].insert_after(BeautifulSoup(img_html, 'html.parser'))
 
         if self.failed_imgs: self.add_log(ui_log, f"⚠️ Đã loại {len(self.failed_imgs)} ảnh lỗi.", "warn")
-        self.add_log(ui_log, f"🖼️ [GẮN ẢNH] DOM Inject thành công {len(self.used_imgs)} ảnh (Anti-Clump Bật).")
+        self.add_log(ui_log, f"🖼️ [GẮN ẢNH] DOM Inject thành công {len(self.used_imgs)} ảnh (Max-width: {img_max_w} | Anti-Clump Bật).")
         self.raw_html = str(soup); return True
 
     def step7_qa_validation(self, ui_log) -> str:
@@ -874,9 +877,6 @@ with tab1:
         load_data_from_gsheets.clear()
         st.rerun()
 
-    # ===============================================
-    # TIẾN TRÌNH 1: ÉP LÊN BÀI (CÓ AUTO-CLEAN DỮ LIỆU)
-    # ===============================================
     if st.session_state.run_mode == "force":
         action_col.empty()
         st.markdown("---")
@@ -923,11 +923,15 @@ with tab1:
                                         success, msg = post_to_cms(web_info.iloc[0], title, html_content, dash_dict)
                                         if success:
                                             bot.add_log(ui_log, f"✅ {msg} (Sẽ xóa rác HTML & LOG)", "success")
-                                            # AUTO-CLEAN DỮ LIỆU ĐỂ NHẸ GOOGLE SHEET
                                             upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_res+1)}', 'values': [['DONE']]})
                                             if idx_html != -1: upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_html+1)}', 'values': [['']]})
                                             if idx_log != -1: upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_log+1)}', 'values': [['']]})
                                             count += 1
+                                            
+                                            # GỬI THÔNG BÁO TELEGRAM KHI ĐĂNG THÀNH CÔNG LÊN WEB
+                                            telegram_msg = f"✅ [ĐÃ PUBLISHED] {dash_dict.get('PROJECT_NAME', 'Auto SEO Pipeline')}\n\n🌐 Website: {ws_name}\n📑 Title: {title}\n🚥 Trạng thái: Lên Top Google thôi!"
+                                            send_telegram_noti(dash_dict, telegram_msg)
+                                            
                                         else: bot.add_log(ui_log, f"🛑 {msg}", "error")
                                     else: bot.add_log(ui_log, f"⚠️ Không tìm thấy cấu hình tài khoản cho Web '{ws_name}'", "warn")
                                         
@@ -948,9 +952,6 @@ with tab1:
             with c2:
                 st.button("✅ Xác nhận & Quay lại", type="primary", use_container_width=True, key="done_force", on_click=cb_done)
 
-    # ===============================================
-    # TIẾN TRÌNH 2: TỰ ĐỘNG SOẠN BÀI
-    # ===============================================
     if st.session_state.run_mode == "auto":
         action_col.empty()
         st.markdown("---")
