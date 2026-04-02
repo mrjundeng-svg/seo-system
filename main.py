@@ -37,7 +37,6 @@ def check_password():
 
 if not check_password(): st.stop()
 
-# ĐÃ SỬA THÀNH 'Load DB...' KHI CHẠY VÒNG XOAY
 @st.cache_data(ttl=60, show_spinner="Load DB...")
 def load_data_from_gsheets():
     try:
@@ -103,6 +102,9 @@ class AutoSEOPipeline:
         self.last_word_count = 0
         self.all_topic_kws = []
         self.injected_kws_list = []
+        
+        self.copyscape_user = self.dashboard.get('COPYSCAPE_USERNAME', '').strip()
+        self.copyscape_key = self.dashboard.get('COPYSCAPE_API_KEY', '').strip()
         
         if 'evolution_cache' not in st.session_state: st.session_state.evolution_cache = ""
 
@@ -210,32 +212,44 @@ class AutoSEOPipeline:
         self.max_w = int(self.min_w * 1.3)
         self.add_log(ui_log, f"📏 [RULE BÀI] Khóa cứng Word Count: Tối thiểu {self.min_w}, Tối đa {self.max_w} chữ.", "detail")
         
+        # SỬ DỤNG SERPER.DEV
         s_key = self.dashboard.get('SERPAPI_KEY', '').strip()
         c_list = [c.strip() for c in str(self.dashboard.get('COMPETITOR_LIST', '')).split(',') if c.strip()]
         serp_chunks, scraped_urls = [], []
 
         if s_key:
-            self.add_log(ui_log, f"🕵️ [SERP] Quét data đối thủ...", "detail")
+            self.add_log(ui_log, f"🕵️ [SERP] Quét data qua Serper.dev...", "detail")
             for kw in ai_seed_kws:
                 try:
-                    res = requests.get("https://serpapi.com/search", params={"q": kw, "hl": "vi", "gl": "vn", "api_key": s_key}, timeout=10).json()
-                    orgs = res.get("organic_results", [])
-                    t_link = None
-                    if c_list:
-                        clinks = [r["link"] for r in orgs[:10] if any(c in r.get("link","") for c in c_list)]
-                        if clinks: t_link = clinks[0]
-                    if not t_link and orgs: t_link = random.choice([r["link"] for r in orgs[:3]])
+                    headers = {
+                        'X-API-KEY': s_key,
+                        'Content-Type': 'application/json'
+                    }
+                    payload = {"q": kw, "gl": "vn", "hl": "vi"}
+                    res = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=15)
+                    if res.status_code == 200:
+                        orgs = res.json().get('organic', [])
+                        urls = [item['link'] for item in orgs if 'link' in item]
                         
-                    if t_link:
-                        rh = requests.get(t_link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-                        if rh.status_code == 200:
-                            soup = BeautifulSoup(rh.text, 'html.parser')
-                            for t in soup(["script", "style", "nav", "footer", "header"]): t.decompose()
-                            ext = "\n".join([t.get_text(strip=True) for t in soup.find_all(['h2', 'h3', 'p'])])[:1000]
-                            if ext: 
-                                serp_chunks.append(f"--- Data cho '{kw}' ---\n{ext}")
-                                scraped_urls.append(t_link)
-                except: pass
+                        t_link = None
+                        if c_list:
+                            clinks = [u for u in urls if any(c in u for c in c_list)]
+                            if clinks: t_link = clinks[0]
+                        if not t_link and urls: t_link = random.choice(urls[:3])
+                            
+                        if t_link:
+                            rh = requests.get(t_link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+                            if rh.status_code == 200:
+                                soup = BeautifulSoup(rh.text, 'html.parser')
+                                for t in soup(["script", "style", "nav", "footer", "header"]): t.decompose()
+                                ext = "\n".join([t.get_text(strip=True) for t in soup.find_all(['h2', 'h3', 'p'])])[:1000]
+                                if ext: 
+                                    serp_chunks.append(f"--- Data cho '{kw}' ---\n{ext}")
+                                    scraped_urls.append(t_link)
+                    else:
+                        self.add_log(ui_log, f"⚠️ Lỗi Serper API: {res.text[:100]}", "warn")
+                except Exception as e:
+                    self.add_log(ui_log, f"⚠️ Lỗi kết nối Serper: {e}", "warn")
             
             if serp_chunks:
                 raw_serp_text = "\n\n".join(serp_chunks)[:3000]
@@ -336,16 +350,17 @@ class AutoSEOPipeline:
         self.raw_html = re.sub(r'```html|```', '', self.raw_html).strip()
         self.raw_html = re.sub(r'\*\*(.*?)\*\*', r'\1', self.raw_html) 
         
-        # ĐÃ FIX: QUÉT SẠCH DẤU NHÁY ĐƠN/KÉP QUANH TỪ KHÓA (Regex an toàn)
+        # BƯỚC 1: QUÉT SẠCH DẤU NHÁY QUANH TỪ KHÓA
         for k in self.all_topic_kws:
             self.raw_html = re.sub(rf"[`'‘’\"“”]\s*({re.escape(k)})\s*[`'‘’\"“”]", r"\1", self.raw_html, flags=re.IGNORECASE)
         
+        # Sửa cấu trúc HTML cơ bản
         self.raw_html = re.sub(r'(?<!^)\s+\*\s+([A-ZĐÁÀẢÃẠĂÂẤẦẨẪẬÊẾỀỂỄỆÔỐỒỔỖỘƠỚỜỞỠỢƯỨỪỬỮỰÍÌỈĨỊÝỲỶỸỴ])', r'</p><p>• \1', self.raw_html)
         if '<p>' not in self.raw_html.lower():
             paras = [p.strip() for p in re.split(r'\n+', self.raw_html) if p.strip()]
             self.raw_html = "".join([f"<p>{p}</p>" for p in paras])
             
-        # ĐÃ FIX: DEEP SCAN ÉP VIẾT HOA CHỮ CÁI ĐẦU DÒNG
+        # BƯỚC 2: DEEP SCAN - ÉP VIẾT HOA CHỮ CÁI ĐẦU DÒNG
         soup = BeautifulSoup(self.raw_html, 'html.parser')
         for tag in soup.find_all(['p', 'li', 'h1', 'h2', 'h3', 'h4']):
             for text_node in tag.find_all(string=True):
@@ -532,6 +547,27 @@ class AutoSEOPipeline:
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
         if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
+        if self.copyscape_user and self.copyscape_key:
+            self.add_log(ui_log, "🕵️ [PLAGIARISM] Đang check đạo văn qua Copyscape API...", "detail")
+            try:
+                cs_data = {
+                    'u': self.copyscape_user, 'k': self.copyscape_key,
+                    'o': 'csearch', 'e': 'UTF-8', 't': txt, 'f': 'json'
+                }
+                res = requests.post('https://www.copyscape.com/api/', data=cs_data, timeout=30)
+                if res.status_code == 200:
+                    cs_json = res.json()
+                    if 'error' in cs_json:
+                        self.add_log(ui_log, f"⚠️ Lỗi Copyscape: {cs_json['error']}", "warn")
+                    else:
+                        all_matched = int(cs_json.get('allwordsmatched', 0))
+                        plag_score = round((all_matched / max(wc, 1)) * 100, 2)
+                        self.add_log(ui_log, f"📊 [PLAGIARISM] Tỷ lệ trùng lặp: {plag_score}%", "detail")
+                        if plag_score > 10: 
+                            fails.append(f"Đạo văn cao ({plag_score}% > 10%)")
+            except Exception as e:
+                self.add_log(ui_log, f"⚠️ Lỗi kết nối Copyscape API: {e}", "warn")
+
         if h1: h1.decompose()
         self.raw_html = str(soup)
         
@@ -664,7 +700,7 @@ with tab1:
         
     if btn_force:
         st.session_state.is_processing = True
-        action_col.empty() # Khóa nút tránh click đúp
+        action_col.empty()
         st.markdown("---")
         info_msg = st.empty()
         info_msg.info("⏳ ĐANG KIỂM TRA BÀI QUÁ HẠN...")
@@ -732,7 +768,7 @@ with tab1:
 
     if btn_start:
         st.session_state.is_processing = True
-        action_col.empty() # Khóa nút tránh click đúp
+        action_col.empty()
         st.markdown("---")
         status_box = st.empty()
         status_box.info("⏳ HỆ THỐNG ĐANG SOẠN BÀI TỰ ĐỘNG... VUI LÒNG KHÔNG TẮT TAB NÀY!")
