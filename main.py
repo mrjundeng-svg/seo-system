@@ -11,13 +11,40 @@ from email.mime.multipart import MIMEMultipart
 import concurrent.futures
 
 # ==========================================
-# ⚙️ CẤU HÌNH HỆ THỐNG
+# ⚙️ CẤU HÌNH HỆ THỐNG & CSS NÂNG CAO
 # ==========================================
 VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
 def get_vn_now(): return datetime.datetime.now(VN_TZ)
 
 st.set_page_config(page_title="Auto SEO Pipeline | Lái Hộ", layout="wide", page_icon="🛡️")
-st.markdown("""<style>.log-box {background-color: #0f172a; color: #10b981; font-family: monospace; font-size: 14px; padding: 15px; border-radius: 8px; height: 800px; overflow-y: auto; border: 1px solid #334155; line-height: 1.6; word-wrap: break-word;} .log-error {color: #ef4444; font-weight: bold;} .log-warn {color: #f59e0b;} .log-success {color: #3b82f6; font-weight: bold;} .log-quota {color: #a855f7; font-weight: bold;} .log-detail {color: #94a3b8; font-size: 13px; font-style: italic;}</style>""", unsafe_allow_html=True)
+
+# CẤY CSS HIỆU ỨNG NHẤP NHÁY VÀ BẢNG THÔNG BÁO LỚN
+st.markdown("""
+<style>
+    .log-box {background-color: #0f172a; color: #10b981; font-family: monospace; font-size: 14px; padding: 15px; border-radius: 8px; height: 800px; overflow-y: auto; border: 1px solid #334155; line-height: 1.6; word-wrap: break-word;} 
+    .log-error {color: #ef4444; font-weight: bold;} 
+    .log-warn {color: #f59e0b;} 
+    .log-success {color: #3b82f6; font-weight: bold;} 
+    .log-quota {color: #a855f7; font-weight: bold;} 
+    .log-detail {color: #94a3b8; font-size: 13px; font-style: italic;}
+    
+    /* Hiệu ứng chớp tắt khi đang chạy */
+    .alert-processing {
+        animation: blinker 1.5s linear infinite;
+        color: #b91c1c; font-weight: bold; font-size: 18px; 
+        padding: 15px; background: #fee2e2; border-radius: 8px; border: 2px solid #ef4444;
+        text-align: center; margin-bottom: 15px;
+    }
+    @keyframes blinker { 50% { opacity: 0.3; } }
+    
+    /* Bảng báo cáo thành công siêu bự */
+    .alert-done {
+        color: #15803d; font-weight: bold; font-size: 22px; 
+        padding: 20px; background: #dcfce7; border-radius: 8px; border: 2px solid #22c55e;
+        text-align: center; margin-bottom: 15px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    }
+</style>
+""", unsafe_allow_html=True)
 
 SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw' 
 
@@ -212,7 +239,6 @@ class AutoSEOPipeline:
         self.max_w = int(self.min_w * 1.3)
         self.add_log(ui_log, f"📏 [RULE BÀI] Khóa cứng Word Count: Tối thiểu {self.min_w}, Tối đa {self.max_w} chữ.", "detail")
         
-        # SỬ DỤNG SERPER.DEV
         s_key = self.dashboard.get('SERPAPI_KEY', '').strip()
         c_list = [c.strip() for c in str(self.dashboard.get('COMPETITOR_LIST', '')).split(',') if c.strip()]
         serp_chunks, scraped_urls = [], []
@@ -350,17 +376,14 @@ class AutoSEOPipeline:
         self.raw_html = re.sub(r'```html|```', '', self.raw_html).strip()
         self.raw_html = re.sub(r'\*\*(.*?)\*\*', r'\1', self.raw_html) 
         
-        # BƯỚC 1: QUÉT SẠCH DẤU NHÁY QUANH TỪ KHÓA
         for k in self.all_topic_kws:
             self.raw_html = re.sub(rf"[`'‘’\"“”]\s*({re.escape(k)})\s*[`'‘’\"“”]", r"\1", self.raw_html, flags=re.IGNORECASE)
         
-        # Sửa cấu trúc HTML cơ bản
         self.raw_html = re.sub(r'(?<!^)\s+\*\s+([A-ZĐÁÀẢÃẠĂÂẤẦẨẪẬÊẾỀỂỄỆÔỐỒỔỖỘƠỚỜỞỠỢƯỨỪỬỮỰÍÌỈĨỊÝỲỶỸỴ])', r'</p><p>• \1', self.raw_html)
         if '<p>' not in self.raw_html.lower():
             paras = [p.strip() for p in re.split(r'\n+', self.raw_html) if p.strip()]
             self.raw_html = "".join([f"<p>{p}</p>" for p in paras])
             
-        # BƯỚC 2: DEEP SCAN - ÉP VIẾT HOA CHỮ CÁI ĐẦU DÒNG
         soup = BeautifulSoup(self.raw_html, 'html.parser')
         for tag in soup.find_all(['p', 'li', 'h1', 'h2', 'h3', 'h4']):
             for text_node in tag.find_all(string=True):
@@ -547,6 +570,7 @@ class AutoSEOPipeline:
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
         if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
+        # ĐÃ FIX: SOFT-FAIL CHO COPYSCAPE
         if self.copyscape_user and self.copyscape_key:
             self.add_log(ui_log, "🕵️ [PLAGIARISM] Đang check đạo văn qua Copyscape API...", "detail")
             try:
@@ -558,7 +582,8 @@ class AutoSEOPipeline:
                 if res.status_code == 200:
                     cs_json = res.json()
                     if 'error' in cs_json:
-                        self.add_log(ui_log, f"⚠️ Lỗi Copyscape: {cs_json['error']}", "warn")
+                        # CHỈ BÁO CẢNH BÁO, KHÔNG ĐÁNH FAIL BÀI VIẾT
+                        self.add_log(ui_log, f"⚠️ Copyscape báo lỗi: {cs_json['error']}. Bỏ qua check đạo văn, duyệt tiếp!", "warn")
                     else:
                         all_matched = int(cs_json.get('allwordsmatched', 0))
                         plag_score = round((all_matched / max(wc, 1)) * 100, 2)
@@ -566,7 +591,7 @@ class AutoSEOPipeline:
                         if plag_score > 10: 
                             fails.append(f"Đạo văn cao ({plag_score}% > 10%)")
             except Exception as e:
-                self.add_log(ui_log, f"⚠️ Lỗi kết nối Copyscape API: {e}", "warn")
+                self.add_log(ui_log, f"⚠️ Không kết nối được Copyscape: {e}. Bỏ qua check đạo văn.", "warn")
 
         if h1: h1.decompose()
         self.raw_html = str(soup)
@@ -686,6 +711,8 @@ with tab1:
     
     if "is_processing" not in st.session_state:
         st.session_state.is_processing = False
+    if "cancel_run" not in st.session_state:
+        st.session_state.cancel_run = False
 
     action_col = st.empty()
     with action_col.container():
@@ -702,121 +729,168 @@ with tab1:
         st.session_state.is_processing = True
         action_col.empty()
         st.markdown("---")
-        info_msg = st.empty()
-        info_msg.info("⏳ ĐANG KIỂM TRA BÀI QUÁ HẠN...")
+        
+        status_col, btn_c_col = st.columns([4, 1])
+        with status_col:
+            st.markdown('<div class="alert-processing">⏳ ĐANG KIỂM TRA VÀ ĐĂNG BÀI QUÁ HẠN... VUI LÒNG KHÔNG TẮT TRÌNH DUYỆT!</div>', unsafe_allow_html=True)
+        with btn_c_col:
+            if st.button("❌ Hủy chạy (Cancel)", use_container_width=True):
+                st.session_state.cancel_run = True
+                st.rerun()
+                
         ui_log = st.empty()
         bot = AutoSEOPipeline(db_mock, [])
         
-        try:
-            ss = gspread.authorize(Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=['https://www.googleapis.com/auth/spreadsheets'])).open_by_key(SHEET_ID)
-            ws = ss.worksheet('REPORT')
-            data = ws.get_all_values()
-            ws_df = db_mock.get('WEBSITE', pd.DataFrame())
-            
-            if len(data) > 1:
-                headers = [str(h).strip() for h in data[0]]
-                idx_res = headers.index('REP_RESULT') if 'REP_RESULT' in headers else -1
-                idx_pub = headers.index('REP_PUBLISH_DATE') if 'REP_PUBLISH_DATE' in headers else -1
-                idx_html = headers.index('REP_HTML') if 'REP_HTML' in headers else -1
-                idx_ws = headers.index('REP_WS_NAME') if 'REP_WS_NAME' in headers else -1
-                idx_title = headers.index('REP_TITLE') if 'REP_TITLE' in headers else -1
+        if not st.session_state.cancel_run:
+            try:
+                ss = gspread.authorize(Credentials.from_service_account_info(dict(st.secrets["service_account"]), scopes=['https://www.googleapis.com/auth/spreadsheets'])).open_by_key(SHEET_ID)
+                ws = ss.worksheet('REPORT')
+                data = ws.get_all_values()
+                ws_df = db_mock.get('WEBSITE', pd.DataFrame())
+                
+                if len(data) > 1:
+                    headers = [str(h).strip() for h in data[0]]
+                    idx_res = headers.index('REP_RESULT') if 'REP_RESULT' in headers else -1
+                    idx_pub = headers.index('REP_PUBLISH_DATE') if 'REP_PUBLISH_DATE' in headers else -1
+                    idx_html = headers.index('REP_HTML') if 'REP_HTML' in headers else -1
+                    idx_ws = headers.index('REP_WS_NAME') if 'REP_WS_NAME' in headers else -1
+                    idx_title = headers.index('REP_TITLE') if 'REP_TITLE' in headers else -1
 
-                if idx_res != -1 and idx_pub != -1:
-                    upd, count = [], 0
-                    now = get_vn_now()
-                    for i, row in enumerate(data[1:], 2):
-                        if len(row) > max(idx_res, idx_pub) and row[idx_res].strip() == 'PENDING':
-                            try:
-                                pub_dt = VN_TZ.localize(datetime.datetime.strptime(str(row[idx_pub]).strip(), '%Y-%m-%d %H:%M'))
-                                is_due = pub_dt <= now
-                            except: is_due = False
+                    if idx_res != -1 and idx_pub != -1:
+                        upd, count = [], 0
+                        now = get_vn_now()
+                        for i, row in enumerate(data[1:], 2):
+                            if st.session_state.cancel_run: break
                             
-                            if is_due:
-                                ws_name = row[idx_ws] if idx_ws != -1 else ""
-                                title = row[idx_title] if idx_title != -1 else "No Title"
-                                html_content = row[idx_html] if idx_html != -1 else ""
+                            if len(row) > max(idx_res, idx_pub) and row[idx_res].strip() == 'PENDING':
+                                try:
+                                    pub_dt = VN_TZ.localize(datetime.datetime.strptime(str(row[idx_pub]).strip(), '%Y-%m-%d %H:%M'))
+                                    is_due = pub_dt <= now
+                                except: is_due = False
                                 
-                                bot.add_log(ui_log, f"➤ Xử lý bài: '{title}' -> Web: {ws_name}")
-                                
-                                web_info = ws_df[ws_df['WS_NAME'].astype(str).str.strip() == ws_name.strip()]
-                                if not web_info.empty:
-                                    w_row = web_info.iloc[0]
-                                    success, msg = post_to_cms(w_row, title, html_content, dash_dict)
-                                    if success:
-                                        bot.add_log(ui_log, f"✅ {msg}", "success")
-                                        upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_res+1)}', 'values': [['DONE']]})
-                                        count += 1
-                                    else:
-                                        bot.add_log(ui_log, f"🛑 {msg}", "error")
-                                else:
-                                    bot.add_log(ui_log, f"⚠️ Không tìm thấy cấu hình tài khoản cho Web '{ws_name}'", "warn")
+                                if is_due:
+                                    ws_name = row[idx_ws] if idx_ws != -1 else ""
+                                    title = row[idx_title] if idx_title != -1 else "No Title"
+                                    html_content = row[idx_html] if idx_html != -1 else ""
                                     
-                    info_msg.empty()
-                    if upd:
-                        ws.batch_update(upd)
-                        st.success(f"🎉 Đã chốt sổ và bắn thành công {count} bài quá hạn!")
-                        time.sleep(2)
-                        st.session_state.is_processing = False
-                        st.rerun()
-                    else: 
-                        auto_time = dash_dict.get('AUTO_RUN_TIME', '')
-                        bot.add_log(ui_log, f"ℹ️ Không có bài viết ở trạng thái PENDING hoặc đang ngoài giờ lên bài lúc ({auto_time}).", "warn")
-                else: bot.add_log(ui_log, "🛑 Không tìm thấy cột trạng thái trong Sheet REPORT.", "error")
-        except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi hệ thống Đăng bài: {str(e)[:150]}", "error")
-        st.session_state.is_processing = False
-        if st.button("Trở lại"): st.rerun()
+                                    bot.add_log(ui_log, f"➤ Xử lý bài: '{title}' -> Web: {ws_name}")
+                                    
+                                    web_info = ws_df[ws_df['WS_NAME'].astype(str).str.strip() == ws_name.strip()]
+                                    if not web_info.empty:
+                                        w_row = web_info.iloc[0]
+                                        success, msg = post_to_cms(w_row, title, html_content, dash_dict)
+                                        if success:
+                                            bot.add_log(ui_log, f"✅ {msg}", "success")
+                                            upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_res+1)}', 'values': [['DONE']]})
+                                            count += 1
+                                        else:
+                                            bot.add_log(ui_log, f"🛑 {msg}", "error")
+                                    else:
+                                        bot.add_log(ui_log, f"⚠️ Không tìm thấy cấu hình tài khoản cho Web '{ws_name}'", "warn")
+                                        
+                        if not st.session_state.cancel_run:
+                            if upd:
+                                ws.batch_update(upd)
+                                status_col.empty()
+                                btn_c_col.empty()
+                                st.markdown(f'<div class="alert-done">🎉 ĐÃ CHỐT SỔ VÀ BẮN THÀNH CÔNG {count} BÀI QUÁ HẠN!</div>', unsafe_allow_html=True)
+                            else: 
+                                auto_time = dash_dict.get('AUTO_RUN_TIME', '')
+                                bot.add_log(ui_log, f"ℹ️ Không có bài viết ở trạng thái PENDING hoặc đang ngoài giờ lên bài lúc ({auto_time}).", "warn")
+                                status_col.empty()
+                                btn_c_col.empty()
+                                st.markdown(f'<div class="alert-done">✅ Đã kiểm tra xong. Không có bài mới.</div>', unsafe_allow_html=True)
+                    else: bot.add_log(ui_log, "🛑 Không tìm thấy cột trạng thái trong Sheet REPORT.", "error")
+            except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi hệ thống Đăng bài: {str(e)[:150]}", "error")
+        
+        if st.button("✅ Xác nhận & Quay lại Dashboard", type="primary", use_container_width=True):
+            st.session_state.is_processing = False
+            st.session_state.cancel_run = False
+            st.rerun()
 
     if btn_start:
         st.session_state.is_processing = True
+        st.session_state.cancel_run = False
         action_col.empty()
         st.markdown("---")
-        status_box = st.empty()
-        status_box.info("⏳ HỆ THỐNG ĐANG SOẠN BÀI TỰ ĐỘNG... VUI LÒNG KHÔNG TẮT TAB NÀY!")
-        load_data_from_gsheets.clear()
         
+        # HIỂN THỊ CỤM THÔNG BÁO FLASHING VÀ NÚT HỦY KHI CHẠY SOẠN BÀI
+        status_col, btn_c_col = st.columns([4, 1])
+        with status_col:
+            st.markdown('<div class="alert-processing">⏳ HỆ THỐNG ĐANG SOẠN BÀI TỰ ĐỘNG... VUI LÒNG KHÔNG TẮT TRÌNH DUYỆT!</div>', unsafe_allow_html=True)
+        with btn_c_col:
+            if st.button("❌ Hủy chạy (Cancel)", use_container_width=True):
+                st.session_state.cancel_run = True
+                st.rerun()
+                
+        load_data_from_gsheets.clear()
         ui_log = st.empty()
+        
         needed = batch - p_today
-        if needed <= 0: ui_log.markdown('<div class="log-box"><span class="log-error">🛑 Đã đạt BATCH_SIZE hôm nay. Không chạy thêm.</span></div>', unsafe_allow_html=True)
+        if needed <= 0: 
+            ui_log.markdown('<div class="log-box"><span class="log-error">🛑 Đã đạt BATCH_SIZE hôm nay. Không chạy thêm.</span></div>', unsafe_allow_html=True)
+            status_col.empty()
+            btn_c_col.empty()
+            st.markdown(f'<div class="alert-done">✅ Hoàn thành tiến trình hôm nay.</div>', unsafe_allow_html=True)
         else:
             master_logs = []
             success_count = 0
             fail_count = 0
+            
             for i in range(needed):
+                if st.session_state.cancel_run:
+                    bot = AutoSEOPipeline(db_mock, master_logs)
+                    bot.add_log(ui_log, "🛑 NGƯỜI DÙNG ĐÃ HỦY TIẾN TRÌNH. ĐANG LƯU LẠI DỮ LIỆU CŨ...", "error")
+                    break
+                    
                 bot = AutoSEOPipeline(db_mock, master_logs)
                 bot.add_log(ui_log, f"<br>🚀 --- BẮT ĐẦU CHẠY BÀI {i+1}/{needed} ---", "success")
                 st_t = time.time()
                 try:
                     if bot.step1_allocate_slot(ui_log):
+                        if st.session_state.cancel_run: break
                         if bot.step2_3_keyword_and_serp(ui_log):
                             
                             final_res = "FAIL"
                             for attempt in range(3):  
+                                if st.session_state.cancel_run: break
                                 bot.retry_count = attempt
                                 if attempt > 0:
                                     bot.reset_state_for_retry()
                                     bot.add_log(ui_log, f"🔄 [AUTO-RETRY] Bài trước fail KCS. Đang ép AI viết lại...", "warn")
                                 
                                 if bot.step4_llm_generation(ui_log):
+                                    if st.session_state.cancel_run: break
                                     bot.step5_6_spin_and_dom(ui_log)
                                     final_res = bot.step7_qa_validation(ui_log)
                                     if final_res == "PENDING":
                                         break 
                                 else:
                                     break 
-                                    
-                            bot.step8_sync_db(ui_log, final_res)
-                            db_mock = load_data_from_gsheets()
-                            if final_res == "PENDING": success_count += 1
-                            else: fail_count += 1
+                            
+                            if not st.session_state.cancel_run:      
+                                bot.step8_sync_db(ui_log, final_res)
+                                db_mock = load_data_from_gsheets()
+                                if final_res == "PENDING": success_count += 1
+                                else: fail_count += 1
                 except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi chí mạng: {str(e)[:150]}", "error")
                 
                 if time.time() - st_t > 300:
                     bot.add_log(ui_log, "🛑 Quá 5 phút, tự ngắt để cứu hệ thống.", "error")
                     break
-            bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
-            status_box.success(f"✅ Đã hoàn tất tạo bài viết, PENDING: {success_count} | FAIL: {fail_count}")
-        st.session_state.is_processing = False
-        if st.button("Hoàn tất"): st.rerun()
+            
+            if not st.session_state.cancel_run:
+                bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
+                
+            status_col.empty()
+            btn_c_col.empty()
+            # BẢNG THÔNG BÁO HOÀN THÀNH TO LỚN
+            st.markdown(f'<div class="alert-done">🎉 ĐÃ HOÀN TẤT TẠO BÀI VIẾT!<br><span style="font-size:16px; font-weight:normal; color:#475569;">PENDING (Thành công): {success_count} | FAIL (Thất bại): {fail_count}</span></div>', unsafe_allow_html=True)
+            
+        if st.button("✅ Xác nhận & Quay lại Dashboard", type="primary", use_container_width=True):
+            st.session_state.is_processing = False
+            st.session_state.cancel_run = False
+            st.rerun()
 
 with tab2:
     if not df_rep.empty:
