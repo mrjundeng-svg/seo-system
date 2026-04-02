@@ -18,7 +18,6 @@ def get_vn_now(): return datetime.datetime.now(VN_TZ)
 
 st.set_page_config(page_title="Auto SEO Pipeline | Lái Hộ", layout="wide", page_icon="🛡️")
 
-# CẤY CSS HIỆU ỨNG NHẤP NHÁY VÀ BẢNG THÔNG BÁO LỚN
 st.markdown("""
 <style>
     .log-box {background-color: #0f172a; color: #10b981; font-family: monospace; font-size: 14px; padding: 15px; border-radius: 8px; height: 800px; overflow-y: auto; border: 1px solid #334155; line-height: 1.6; word-wrap: break-word;} 
@@ -28,20 +27,18 @@ st.markdown("""
     .log-quota {color: #a855f7; font-weight: bold;} 
     .log-detail {color: #94a3b8; font-size: 13px; font-style: italic;}
     
-    /* Hiệu ứng chớp tắt khi đang chạy */
     .alert-processing {
         animation: blinker 1.5s linear infinite;
         color: #b91c1c; font-weight: bold; font-size: 18px; 
-        padding: 15px; background: #fee2e2; border-radius: 8px; border: 2px solid #ef4444;
-        text-align: center; margin-bottom: 15px;
+        padding: 12px 15px; background: #fee2e2; border-radius: 8px; border: 2px solid #ef4444;
+        text-align: center; margin-bottom: 0px; height: 100%; display: flex; align-items: center; justify-content: center;
     }
-    @keyframes blinker { 50% { opacity: 0.3; } }
+    @keyframes blinker { 50% { opacity: 0.4; } }
     
-    /* Bảng báo cáo thành công siêu bự */
     .alert-done {
-        color: #15803d; font-weight: bold; font-size: 22px; 
-        padding: 20px; background: #dcfce7; border-radius: 8px; border: 2px solid #22c55e;
-        text-align: center; margin-bottom: 15px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        color: #15803d; font-weight: bold; font-size: 20px; 
+        padding: 12px 15px; background: #dcfce7; border-radius: 8px; border: 2px solid #22c55e;
+        text-align: center; margin-bottom: 0px; height: 100%; display: flex; align-items: center; justify-content: center;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -247,10 +244,7 @@ class AutoSEOPipeline:
             self.add_log(ui_log, f"🕵️ [SERP] Quét data qua Serper.dev...", "detail")
             for kw in ai_seed_kws:
                 try:
-                    headers = {
-                        'X-API-KEY': s_key,
-                        'Content-Type': 'application/json'
-                    }
+                    headers = {'X-API-KEY': s_key, 'Content-Type': 'application/json'}
                     payload = {"q": kw, "gl": "vn", "hl": "vi"}
                     res = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=15)
                     if res.status_code == 200:
@@ -488,7 +482,6 @@ class AutoSEOPipeline:
                 else: self.injected_int += 1
 
         self.add_log(ui_log, f"🛠️ [GẮN LINK] Chốt: {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int.", "success")
-        self.add_log(ui_log, f"📋 [DANH SÁCH TỪ KHÓA ĐÃ DÙNG]: {', '.join(self.injected_kws_list)}", "detail")
 
         mx_img = self.parse_rng(self.target_web.get('WS_IMG_LIMIT', 1), 1)
         req_img = min(len(self.injected_kws_list) if self.injected_kws_list else 1, mx_img)
@@ -570,7 +563,6 @@ class AutoSEOPipeline:
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
         if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
-        # ĐÃ FIX: SOFT-FAIL CHO COPYSCAPE
         if self.copyscape_user and self.copyscape_key:
             self.add_log(ui_log, "🕵️ [PLAGIARISM] Đang check đạo văn qua Copyscape API...", "detail")
             try:
@@ -582,8 +574,7 @@ class AutoSEOPipeline:
                 if res.status_code == 200:
                     cs_json = res.json()
                     if 'error' in cs_json:
-                        # CHỈ BÁO CẢNH BÁO, KHÔNG ĐÁNH FAIL BÀI VIẾT
-                        self.add_log(ui_log, f"⚠️ Copyscape báo lỗi: {cs_json['error']}. Bỏ qua check đạo văn, duyệt tiếp!", "warn")
+                        self.add_log(ui_log, f"⚠️ Lỗi Copyscape: {cs_json['error']}. Bỏ qua check đạo văn.", "warn")
                     else:
                         all_matched = int(cs_json.get('allwordsmatched', 0))
                         plag_score = round((all_matched / max(wc, 1)) * 100, 2)
@@ -709,10 +700,8 @@ with tab1:
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    if "is_processing" not in st.session_state:
-        st.session_state.is_processing = False
-    if "cancel_run" not in st.session_state:
-        st.session_state.cancel_run = False
+    if "is_processing" not in st.session_state: st.session_state.is_processing = False
+    if "cancel_run" not in st.session_state: st.session_state.cancel_run = False
 
     action_col = st.empty()
     with action_col.container():
@@ -730,14 +719,16 @@ with tab1:
         action_col.empty()
         st.markdown("---")
         
-        status_col, btn_c_col = st.columns([4, 1])
-        with status_col:
-            st.markdown('<div class="alert-processing">⏳ ĐANG KIỂM TRA VÀ ĐĂNG BÀI QUÁ HẠN... VUI LÒNG KHÔNG TẮT TRÌNH DUYỆT!</div>', unsafe_allow_html=True)
-        with btn_c_col:
-            if st.button("❌ Hủy chạy (Cancel)", use_container_width=True):
-                st.session_state.cancel_run = True
-                st.rerun()
-                
+        top_control_area = st.empty()
+        with top_control_area.container():
+            status_col, btn_c_col = st.columns([4, 1])
+            with status_col:
+                st.markdown('<div class="alert-processing">⏳ ĐANG KIỂM TRA VÀ ĐĂNG BÀI QUÁ HẠN... VUI LÒNG KHÔNG TẮT TRÌNH DUYỆT!</div>', unsafe_allow_html=True)
+            with btn_c_col:
+                if st.button("❌ Hủy chạy (Cancel)", use_container_width=True, key="cancel_force"):
+                    st.session_state.cancel_run = True
+                    st.rerun()
+                    
         ui_log = st.empty()
         bot = AutoSEOPipeline(db_mock, [])
         
@@ -789,24 +780,26 @@ with tab1:
                                         bot.add_log(ui_log, f"⚠️ Không tìm thấy cấu hình tài khoản cho Web '{ws_name}'", "warn")
                                         
                         if not st.session_state.cancel_run:
+                            top_control_area.empty()
                             if upd:
                                 ws.batch_update(upd)
-                                status_col.empty()
-                                btn_c_col.empty()
-                                st.markdown(f'<div class="alert-done">🎉 ĐÃ CHỐT SỔ VÀ BẮN THÀNH CÔNG {count} BÀI QUÁ HẠN!</div>', unsafe_allow_html=True)
+                                with top_control_area.container():
+                                    c1, c2 = st.columns([4, 1])
+                                    with c1: st.markdown(f'<div class="alert-done">🎉 ĐÃ CHỐT SỔ VÀ BẮN THÀNH CÔNG {count} BÀI QUÁ HẠN!</div>', unsafe_allow_html=True)
+                                    with c2:
+                                        if st.button("✅ Xác nhận & Quay lại", type="primary", use_container_width=True, key="done_force_1"):
+                                            st.session_state.is_processing = False; st.session_state.cancel_run = False; st.rerun()
                             else: 
                                 auto_time = dash_dict.get('AUTO_RUN_TIME', '')
                                 bot.add_log(ui_log, f"ℹ️ Không có bài viết ở trạng thái PENDING hoặc đang ngoài giờ lên bài lúc ({auto_time}).", "warn")
-                                status_col.empty()
-                                btn_c_col.empty()
-                                st.markdown(f'<div class="alert-done">✅ Đã kiểm tra xong. Không có bài mới.</div>', unsafe_allow_html=True)
+                                with top_control_area.container():
+                                    c1, c2 = st.columns([4, 1])
+                                    with c1: st.markdown(f'<div class="alert-done">✅ Đã kiểm tra xong. Không có bài mới.</div>', unsafe_allow_html=True)
+                                    with c2:
+                                        if st.button("✅ Xác nhận & Quay lại", type="primary", use_container_width=True, key="done_force_2"):
+                                            st.session_state.is_processing = False; st.session_state.cancel_run = False; st.rerun()
                     else: bot.add_log(ui_log, "🛑 Không tìm thấy cột trạng thái trong Sheet REPORT.", "error")
             except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi hệ thống Đăng bài: {str(e)[:150]}", "error")
-        
-        if st.button("✅ Xác nhận & Quay lại Dashboard", type="primary", use_container_width=True):
-            st.session_state.is_processing = False
-            st.session_state.cancel_run = False
-            st.rerun()
 
     if btn_start:
         st.session_state.is_processing = True
@@ -814,14 +807,15 @@ with tab1:
         action_col.empty()
         st.markdown("---")
         
-        # HIỂN THỊ CỤM THÔNG BÁO FLASHING VÀ NÚT HỦY KHI CHẠY SOẠN BÀI
-        status_col, btn_c_col = st.columns([4, 1])
-        with status_col:
-            st.markdown('<div class="alert-processing">⏳ HỆ THỐNG ĐANG SOẠN BÀI TỰ ĐỘNG... VUI LÒNG KHÔNG TẮT TRÌNH DUYỆT!</div>', unsafe_allow_html=True)
-        with btn_c_col:
-            if st.button("❌ Hủy chạy (Cancel)", use_container_width=True):
-                st.session_state.cancel_run = True
-                st.rerun()
+        top_control_area = st.empty()
+        with top_control_area.container():
+            status_col, btn_c_col = st.columns([4, 1])
+            with status_col:
+                st.markdown('<div class="alert-processing">⏳ HỆ THỐNG ĐANG SOẠN BÀI TỰ ĐỘNG... VUI LÒNG KHÔNG TẮT TRÌNH DUYỆT!</div>', unsafe_allow_html=True)
+            with btn_c_col:
+                if st.button("❌ Hủy chạy (Cancel)", use_container_width=True, key="cancel_start"):
+                    st.session_state.cancel_run = True
+                    st.rerun()
                 
         load_data_from_gsheets.clear()
         ui_log = st.empty()
@@ -829,9 +823,13 @@ with tab1:
         needed = batch - p_today
         if needed <= 0: 
             ui_log.markdown('<div class="log-box"><span class="log-error">🛑 Đã đạt BATCH_SIZE hôm nay. Không chạy thêm.</span></div>', unsafe_allow_html=True)
-            status_col.empty()
-            btn_c_col.empty()
-            st.markdown(f'<div class="alert-done">✅ Hoàn thành tiến trình hôm nay.</div>', unsafe_allow_html=True)
+            top_control_area.empty()
+            with top_control_area.container():
+                c1, c2 = st.columns([4, 1])
+                with c1: st.markdown(f'<div class="alert-done">✅ Hoàn thành tiến trình hôm nay.</div>', unsafe_allow_html=True)
+                with c2:
+                    if st.button("✅ Xác nhận & Quay lại", type="primary", use_container_width=True, key="done_start_0"):
+                        st.session_state.is_processing = False; st.session_state.cancel_run = False; st.rerun()
         else:
             master_logs = []
             success_count = 0
@@ -882,15 +880,14 @@ with tab1:
             if not st.session_state.cancel_run:
                 bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
                 
-            status_col.empty()
-            btn_c_col.empty()
-            # BẢNG THÔNG BÁO HOÀN THÀNH TO LỚN
-            st.markdown(f'<div class="alert-done">🎉 ĐÃ HOÀN TẤT TẠO BÀI VIẾT!<br><span style="font-size:16px; font-weight:normal; color:#475569;">PENDING (Thành công): {success_count} | FAIL (Thất bại): {fail_count}</span></div>', unsafe_allow_html=True)
-            
-        if st.button("✅ Xác nhận & Quay lại Dashboard", type="primary", use_container_width=True):
-            st.session_state.is_processing = False
-            st.session_state.cancel_run = False
-            st.rerun()
+            top_control_area.empty()
+            with top_control_area.container():
+                c1, c2 = st.columns([4, 1])
+                with c1: 
+                    st.markdown(f'<div class="alert-done">🎉 ĐÃ HOÀN TẤT TẠO BÀI VIẾT! <span style="font-size:16px; font-weight:normal; color:#475569; margin-left: 10px;"> PENDING (Thành công): {success_count} | FAIL (Thất bại): {fail_count}</span></div>', unsafe_allow_html=True)
+                with c2:
+                    if st.button("✅ Xác nhận & Quay lại Dashboard", type="primary", use_container_width=True, key="done_start_1"):
+                        st.session_state.is_processing = False; st.session_state.cancel_run = False; st.rerun()
 
 with tab2:
     if not df_rep.empty:
