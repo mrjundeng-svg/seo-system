@@ -809,9 +809,9 @@ class AutoSEOPipeline:
 🌐 Target Domain: {self.target_web.get('WS_NAME', '')}
 📑 Title: {self.final_title}
 🔑 Keywords: {" | ".join(self.injected_kws_list)}
-📊 SEO: {self.kcs_metrics.get('SEO', 0)} | AI: {self.kcs_metrics.get('AI', 100)}%
+📊 SEO: {self.kcs_metrics.get('SEO', 0)} | AI Rate: {self.kcs_metrics.get('AI', 100)}% | READ: {self.kcs_metrics.get('READ', 0)} | COPYSCAPE: {plag_val} | LLM_JUDGE: {judge_val}
 🚥 Status: {final_result}
-🧱 Schedule: {self.publish_time.strftime('%Y-%m-%d %H:%M')}"""
+🧱 Schedule Time: {self.publish_time.strftime('%Y-%m-%d %H:%M')}"""
                 send_telegram_noti(self.dashboard, telegram_msg)
                 
                 self.add_log(ui_log, f"🎉 [HOÀN TẤT] Lưu DB xong. Trạng thái bài viết: {final_result}", "success")
