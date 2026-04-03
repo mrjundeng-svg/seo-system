@@ -136,7 +136,7 @@ class AutoSEOPipeline:
         self.copyscape_key = self.dashboard.get('COPYSCAPE_API_KEY', '').strip()
 
     def reset_state_for_retry(self):
-        # ĐẬP ĐI XÂY LẠI: Xóa toàn bộ dữ liệu của lần chạy trước (Đã dọn rác previous_draft)
+        # ĐẬP ĐI XÂY LẠI: Xóa toàn bộ dữ liệu của lần chạy trước
         self.raw_html, self.final_title = "", ""
         self.used_imgs, self.used_spins, self.failed_imgs = [], [], []
         self.injected_ext, self.injected_int = 0, 0
@@ -347,11 +347,12 @@ class AutoSEOPipeline:
         
         math_skeleton = f"""
         [BỘ LỆNH TOÁN HỌC ĐIỀU KHIỂN CẤU TRÚC - TUYỆT ĐỐI TUÂN THỦ]:
-        1. KIỂM SOÁT ĐỘ DÀI TOÀN BÀI: Tổng số chữ chỉ được dao động quanh {self.target_wc} chữ. CẤM VIẾT LAN MAN VƯỢT QUÁ {self.max_w} CHỮ. Hãy đi thẳng vào trọng tâm.
-        2. QUY LẬT HEADING 2: Xây dựng chính xác {num_h2} thẻ <h2> (Không tính H1).
-        3. GIỚI HẠN TEXT MỖI H2: Dưới mỗi thẻ <h2>, CHỈ VIẾT NGẮN GỌN TỐI ĐA {words_per_h2 + 20} CHỮ. Tuyệt đối không phân tích dây dưa.
-        4. QUY LUẬT HEADING 3: {h3_instruction}
-        5. QUY TẮC CHÍNH TẢ & TỰ NHIÊN: CẤM IN HOA TOÀN BỘ ở các thẻ H2, H3. ĐẶC BIỆT TUYỆT ĐỐI KHÔNG dùng các từ khóa mang tính chất ra lệnh (như "Case study", "Bảng so sánh", "Câu hỏi thường gặp") làm tiêu đề. Hãy tự sáng tạo tiêu đề giật tít, tự nhiên như người thật viết.
+        1. KIỂM SOÁT ĐỘ DÀI TOÀN BÀI: Tổng số chữ chỉ được dao động quanh {self.target_wc} chữ. CẤM VIẾT LAN MAN VƯỢT QUÁ {self.max_w} CHỮ.
+        2. QUY LẬT THẺ H1 (TIÊU ĐỀ CHÍNH): Bài viết BẮT ĐẦU BẰNG ĐÚNG MỘT thẻ <h1>. Thẻ <h1> này PHẢI LÀ MỘT TIÊU ĐỀ GIẬT TÍT DÀI, HẤP DẪN (chứa từ khóa '{m_kw_str}'). TUYỆT ĐỐI KHÔNG chỉ viết cộc lốc từ khóa vào H1. CẤM chèn thẻ <h2> ngay dưới <h1> để làm phụ đề. (Ví dụ đúng: <h1>{m_kw_str.upper()} - Giải Pháp Nâng Tầm Đẳng Cấp Doanh Nhân</h1>).
+        3. QUY LẬT HEADING 2: Xây dựng chính xác {num_h2} thẻ <h2> (Không tính H1). Dưới H1 phải là nội dung mở bài (thẻ <p>), tuyệt đối không được là thẻ <h2>.
+        4. GIỚI HẠN TEXT MỖI H2: Dưới mỗi thẻ <h2>, CHỈ VIẾT NGẮN GỌN TỐI ĐA {words_per_h2 + 20} CHỮ. Tuyệt đối không phân tích dây dưa.
+        5. QUY LUẬT HEADING 3: {h3_instruction}
+        6. QUY TẮC CHÍNH TẢ & TỰ NHIÊN: CẤM IN HOA TOÀN BỘ ở các thẻ H2, H3. Hãy tự sáng tạo tiêu đề giật tít tự nhiên, cấm dùng các từ "Case study", "Bảng so sánh" làm tiêu đề.
         """
 
         retry_cmd = ""
@@ -475,6 +476,9 @@ class AutoSEOPipeline:
         self.raw_html = str(soup)
         
         self.final_title = h1.get_text(strip=True) if h1 else f"Bài: {self.all_topic_kws[0].upper()}"
+        if h1: h1.decompose() # Xóa H1 khỏi nội dung bài để tránh lặp tiêu đề
+        self.raw_html = str(soup)
+
         if self.retry_count == 0:
             self.add_log(ui_log, f"🏷️ [THÔNG TIN BÀI VIẾT] Tiêu đề: {self.final_title}", "success")
         return True
@@ -636,12 +640,9 @@ class AutoSEOPipeline:
         
         self.add_log(ui_log, f"📏 [ĐỘ DÀI THỰC TẾ] Đạt {wc} chữ (Luật: MIN {self.min_w} | Chuẩn {self.target_wc} | MAX {self.max_w} chữ).", "detail")
         
-        h1 = soup.find('h1')
-        h1_text = h1.get_text().lower() if h1 else ""
+        match_h1 = k0 in self.final_title.lower() or remove_vn_accents(k0) in remove_vn_accents(self.final_title.lower())
         
-        match_h1 = k0 in h1_text or remove_vn_accents(k0) in remove_vn_accents(h1_text)
-        
-        s_h1 = 30 if h1 and match_h1 else 0
+        s_h1 = 30 if self.final_title and match_h1 else 0
         s_h2 = 20 if any(k0 in h.get_text().lower() or remove_vn_accents(k0) in remove_vn_accents(h.get_text().lower()) for h in soup.find_all('h2')) else 0
         s_bd = 10 if k0 in txt.lower() or remove_vn_accents(k0) in remove_vn_accents(txt.lower()) else 0
         s_alt = 10 if soup.find('img', alt=re.compile(r'(?i)' + re.escape(k0))) else 0
@@ -668,7 +669,6 @@ class AutoSEOPipeline:
             self.kcs_metrics['PLAGIARISM'] = "Skipped"
             self.kcs_metrics['JUDGE'] = "Skipped"
             self.add_log(ui_log, f"❌ [KCS FAIL] Trượt tiêu chuẩn cơ bản do: {', '.join(fails)}", "error")
-            if h1: h1.decompose()
             self.raw_html = str(soup)
             return "FAIL"
 
@@ -698,7 +698,6 @@ class AutoSEOPipeline:
         if fails:
             self.kcs_metrics['JUDGE'] = "Skipped"
             self.add_log(ui_log, f"❌ [KCS FAIL] Bị loại ở vòng Copyscape: {', '.join(fails)}", "error")
-            if h1: h1.decompose()
             self.raw_html = str(soup)
             return "FAIL"
                 
@@ -737,7 +736,6 @@ class AutoSEOPipeline:
         
         self.add_log(ui_log, f"   > KCS Tổng kết: Điểm SEO {seo}/100 | AI {ai}% | READ {read}/100 | COPYSCAPE: {plag_disp} | JUDGE: {judge_disp}", "detail")
 
-        if h1: h1.decompose()
         self.raw_html = str(soup)
         
         if fails:
@@ -1009,7 +1007,7 @@ with tab1:
             success_count = 0
             fail_count = 0
             total_runs = 0
-            max_runs = needed * 3 # Cho phép thử tối đa gấp 3 lần số bài cần thiết để tránh loop vô hạn
+            max_runs = needed * 3 
             
             while success_count < needed and total_runs < max_runs:
                 if st.session_state.cancel_run:
@@ -1017,7 +1015,6 @@ with tab1:
                     bot.add_log(ui_log, "🛑 ĐÃ BỊ HỦY BỞI NGƯỜI DÙNG...", "error")
                     break
                     
-                # Nghỉ 7-10 giây sau mỗi 3 lần chạy BẤT KỂ pass hay fail
                 if total_runs > 0 and total_runs % 3 == 0:
                     bot = AutoSEOPipeline(db_mock, master_logs)
                     sleep_time = random.randint(7, 10)
@@ -1058,7 +1055,7 @@ with tab1:
                                     bot.add_log(ui_log, f"⚠️ [HỆ THỐNG] Đã lưu bài FAIL. Tự động bù một bài mới để đạt đủ Quota!", "warn")
                     else:
                         bot.add_log(ui_log, "🛑 Không tìm thấy Website nào còn Slot hợp lệ để chạy tiếp.", "error")
-                        break # Hết slot thật sự, thoát while
+                        break
                 except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi: {str(e)[:150]}", "error")
                 
                 total_runs += 1
