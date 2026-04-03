@@ -239,7 +239,8 @@ class AutoSEOPipeline:
         else:
             subs = []
             
-        kws_needed = max(3, self.out_lim + self.in_lim + 1)
+        # FIX: Tối đa 5 Keyword (1 chính + 4 phụ) để khớp 5 cột DB
+        kws_needed = min(4, self.out_lim + self.in_lim)
         self.all_topic_kws = [m_kw] + subs[:kws_needed]
         
         self.add_log(ui_log, f"📦 [KWs ĐIỀU HƯỚNG AI] Tập hợp {len(self.all_topic_kws)} Keywords: {', '.join(self.all_topic_kws)}", "detail")
@@ -327,6 +328,7 @@ class AutoSEOPipeline:
         p_template = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_TEMPLATE', ''))
         p_strategy = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_CONTENT_STRATEGY', ''))
         p_humanizer = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_AI_HUMANIZER', ''))
+        
         p_end = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_END', ''))
         
         p_serp_rule = str(self.dashboard.get('PROMPT_SERP_STYLE', '')).strip()
@@ -341,20 +343,19 @@ class AutoSEOPipeline:
         m_kw_str = self.all_topic_kws[0]
         kws_injection_str = ", ".join([f"'{k}'" for k in self.all_topic_kws])
 
-        num_h2 = max(3, self.target_wc // 350)
-        if num_h2 > 6: num_h2 = 6
-        
-        words_per_h2 = max(150, int((self.target_wc * 0.6) / num_h2))
+        # FIX: Ép AI viết ngắn lại để tránh over-generation (Bài dài lố)
+        num_h2 = max(3, self.target_wc // 400)
+        if num_h2 > 5: num_h2 = 5
+        words_per_h2 = max(120, int((self.target_wc * 0.45) / num_h2))
         
         h3_instruction = f"TẠI ĐÚNG 2 THẺ H2 BẤT KỲ TRONG BÀI, bạn bắt buộc phải chia nhỏ nội dung xuống thành 2-3 thẻ <h3>. Các thẻ H2 còn lại chỉ dùng thẻ <p> hoặc <ul>."
         
         math_skeleton = f"""
-        [BỘ LỆNH TOÁN HỌC ĐIỀU KHIỂN CẤU TRÚC]:
-        1. TARGET WORD COUNT: Giới hạn nghiêm ngặt tổng số chữ của bài viết từ {self.target_wc} đến TỐI ĐA {self.max_w} chữ. TUYỆT ĐỐI KHÔNG VIẾT DÀI HƠN MỨC NÀY.
+        [BỘ LỆNH TOÁN HỌC ĐIỀU KHIỂN CẤU TRÚC - TUYỆT ĐỐI TUÂN THỦ]:
+        1. KIỂM SOÁT ĐỘ DÀI TOÀN BÀI: Tổng số chữ chỉ được dao động quanh {self.target_wc} chữ. CẤM VIẾT LAN MAN VƯỢT QUÁ {self.max_w} CHỮ. Hãy đi thẳng vào trọng tâm.
         2. QUY LẬT HEADING 2: Xây dựng chính xác {num_h2} thẻ <h2> (Không tính H1).
-        3. QUY LUẬT ĐỔ TEXT: Dưới MỖI một thẻ <h2>, viết phần nội dung dao động từ {words_per_h2} đến {words_per_h2 + 50} chữ. Không viết lan man.
+        3. GIỚI HẠN TEXT MỖI H2: Dưới mỗi thẻ <h2>, CHỈ VIẾT NGẮN GỌN TỐI ĐA {words_per_h2 + 20} CHỮ. Tuyệt đối không phân tích dây dưa.
         4. QUY LUẬT HEADING 3: {h3_instruction}
-        5. QUY TẮC CHÍNH TẢ: CẤM VIẾT HOA TOÀN BỘ (ALL CAPS) Ở CÁC THẺ H2, H3, H4. CHỈ DUY NHẤT H1 LÀ ĐƯỢC IN HOA.
         """
 
         retry_cmd = ""
@@ -365,12 +366,15 @@ class AutoSEOPipeline:
             end_module_instruction = "- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, tự đúc kết và kết thúc bài viết một cách tự nhiên."
         elif self.retry_count > 0:
             if self.last_word_count < self.min_w:
-                retry_cmd = f"\n[LỆNH BƠM OXY]: Bản nháp trước QUÁ NGẮN ({self.last_word_count} chữ). BẮT BUỘC giữ nguyên ý chính, đắp thêm chi tiết vào từng H2. ĐẶC BIỆT, ĐỂ BÀI DÀI HƠN, BẠN PHẢI THÊM MỘT PHẦN MỚI Ở CUỐI BÀI."
-                draft_injection = f"\n\n--- BẢN NHÁP CŨ ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
+                # FIX Lỗi 227 chữ: Lệnh ép phân tích sâu + Bơm Module
+                retry_cmd = f"\n[LỆNH BƠM OXY CẤP CỨU]: Bản nháp trước của bạn bị LỖI NGHIÊM TRỌNG vì QUÁ NGẮN (Chỉ có {self.last_word_count} chữ). Bạn PHẢI MỞ RỘNG nội dung, phân tích sâu sắc hơn, thêm ví dụ thực tế để ép bài viết dài ra. ĐẶC BIỆT, PHẢI THÊM MỘT PHẦN MỚI Ở CUỐI BÀI."
+                if self.previous_draft and len(self.previous_draft) > 500:
+                    draft_injection = f"\n\n--- BẢN NHÁP CŨ (KÉO DÀI NÓ RA) ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
                 end_module_instruction = f"- MODULE DỰ PHÒNG Ở CUỐI BÀI (BẮT BUỘC): Để kéo dài bài viết, hãy tạo nội dung sau ở vị trí cuối cùng của bài: {p_end.upper()}.\n- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, KẾT THÚC LÀ MÃ ĐÓNG MODULE DỰ PHÒNG ĐÃ NÊU TRÊN."
             elif self.last_word_count > self.max_w:
                 retry_cmd = f"\n[LỆNH GỌT DŨA]: Bản nháp trước QUÁ DÀI ({self.last_word_count} chữ). BẮT BUỘC rút gọn các đoạn lan man, ép bài viết xuống mức {self.target_wc} chữ nhưng giữ nguyên cấu trúc thẻ HTML."
-                draft_injection = f"\n\n--- BẢN NHÁP CŨ (HÃY LÀM NGẮN LẠI) ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
+                if self.previous_draft:
+                    draft_injection = f"\n\n--- BẢN NHÁP CŨ (HÃY LÀM NGẮN LẠI) ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
                 end_module_instruction = "- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1> và kết thúc bài tự nhiên."
             
         force = f"""\n[TỔNG HỢP YÊU CẦU SINH TỬ]:{retry_cmd}
@@ -452,14 +456,14 @@ class AutoSEOPipeline:
                     h3_count += 1
                 curr = curr.find_next()
 
-        # 1. Trị bệnh AI la hét (ALL CAPS) trong thẻ H2, H3, H4
+        # FIX: Chống AI la hét (ALL CAPS) - Ép nó xuống Capitalize
         for tag in soup.find_all(['h2', 'h3', 'h4']):
-            for text_node in tag.find_all(string=True):
-                if text_node.isupper() and len(text_node.strip()) > 3:
-                    text_node.replace_with(text_node.lower())
+            text = tag.get_text(strip=True)
+            if text.isupper():
+                tag.string = text.capitalize()
 
-        # 2. Xử lý viết hoa chữ cái đầu tiên (Đã xuyên qua số như "1. ")
-        for tag in soup.find_all(['p', 'li', 'h1', 'h2', 'h3', 'h4']):
+        # FIX: Viết hoa chữ cái đầu tiên (Đã xuyên qua các con số như "1. ")
+        for tag in soup.find_all(['p', 'li', 'h2', 'h3', 'h4']):
             for text_node in tag.find_all(string=True):
                 if text_node.strip():
                     text_str = str(text_node)
@@ -470,7 +474,7 @@ class AutoSEOPipeline:
                         text_node.replace_with(new_text)
                     break 
                     
-        # 3. Đảm bảo H1 luôn luôn UPPERCASE toàn bộ
+        # H1 thì vẫn uy quyền IN HOA TOÀN BỘ
         h1 = soup.find('h1')
         if h1: h1.string = h1.get_text(strip=True).upper()
             
@@ -665,6 +669,8 @@ class AutoSEOPipeline:
         if ai > 20: fails.append(f"AI ({ai}%)")
         if read < 60: fails.append(f"Read ({read})")
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
+        
+        # Đã dẹp bỏ hoàn toàn nới lỏng. Lố MAX là chém!
         if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
         if fails:
