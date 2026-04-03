@@ -136,7 +136,7 @@ class AutoSEOPipeline:
         self.copyscape_key = self.dashboard.get('COPYSCAPE_API_KEY', '').strip()
 
     def reset_state_for_retry(self):
-        # ĐẬP ĐI XÂY LẠI: Xóa toàn bộ dữ liệu của lần chạy trước
+        # ĐẬP ĐI XÂY LẠI: Xóa toàn bộ dữ liệu của lần chạy trước (Đã dọn rác previous_draft)
         self.raw_html, self.final_title = "", ""
         self.used_imgs, self.used_spins, self.failed_imgs = [], [], []
         self.injected_ext, self.injected_int = 0, 0
@@ -361,10 +361,10 @@ class AutoSEOPipeline:
             end_module_instruction = "- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, tự đúc kết và kết thúc bài viết một cách tự nhiên."
         elif self.retry_count > 0:
             if self.last_word_count < self.min_w:
-                retry_cmd = f"\n[LỆNH CẢNH CÁO CHÍ MẠNG]: Lần chạy trước bạn viết QUÁ NGẮN ({self.last_word_count} chữ). BẮT BUỘC BỎ QUA BẢN NHÁP CŨ, XÂY LẠI BÀI HOÀN TOÀN MỚI TỪ ĐẦU! Phải đảm bảo ĐỦ ĐỘ DÀI {self.target_wc} chữ bằng cách mở rộng các luận điểm sâu sắc hơn. ĐẶC BIỆT, ĐỂ BÀI DÀI HƠN, BẠN PHẢI THÊM MỘT PHẦN MỚI Ở CUỐI BÀI."
+                retry_cmd = f"\n[LỆNH CẢNH CÁO CHÍ MẠNG]: Lần chạy trước bạn viết QUÁ NGẮN ({self.last_word_count} chữ). BẮT BUỘC XÂY LẠI BÀI HOÀN TOÀN MỚI TỪ ĐẦU! Phải đảm bảo ĐỦ ĐỘ DÀI {self.target_wc} chữ bằng cách mở rộng các luận điểm sâu sắc hơn. ĐẶC BIỆT, ĐỂ BÀI DÀI HƠN, BẠN PHẢI THÊM MỘT PHẦN MỚI Ở CUỐI BÀI."
                 end_module_instruction = f"- MODULE DỰ PHÒNG Ở CUỐI BÀI (BẮT BUỘC): Để kéo dài bài viết, hãy tạo nội dung sau ở vị trí cuối cùng của bài: {p_end.upper()}.\n- LƯU Ý VỀ MODULE: TUYỆT ĐỐI KHÔNG dùng tên module (như 'Case study', 'Bảng giá') làm tiêu đề. Hãy đặt tiêu đề H2/H3 thật hấp dẫn và phù hợp ngữ cảnh.\n- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, KẾT THÚC LÀ MÃ ĐÓNG MODULE DỰ PHÒNG."
             elif self.last_word_count > self.max_w:
-                retry_cmd = f"\n[LỆNH CẢNH CÁO CHÍ MẠNG]: Lần chạy trước bạn viết QUÁ DÀI ({self.last_word_count} chữ). BẮT BUỘC BỎ QUA BẢN NHÁP CŨ, XÂY LẠI BÀI HOÀN TOÀN MỚI TỪ ĐẦU! Phải ép bài viết ngắn gọn, súc tích lại quanh mốc {self.target_wc} chữ. Không viết lan man."
+                retry_cmd = f"\n[LỆNH CẢNH CÁO CHÍ MẠNG]: Lần chạy trước bạn viết QUÁ DÀI ({self.last_word_count} chữ). BẮT BUỘC XÂY LẠI BÀI HOÀN TOÀN MỚI TỪ ĐẦU! Phải ép bài viết ngắn gọn, súc tích lại quanh mốc {self.target_wc} chữ. Không viết lan man."
                 end_module_instruction = "- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1> và kết thúc bài tự nhiên."
             
         force = f"""\n[TỔNG HỢP YÊU CẦU SINH TỬ]:{retry_cmd}
@@ -1008,22 +1008,25 @@ with tab1:
             master_logs = []
             success_count = 0
             fail_count = 0
+            total_runs = 0
+            max_runs = needed * 3 # Cho phép thử tối đa gấp 3 lần số bài cần thiết để tránh loop vô hạn
             
-            for i in range(needed):
+            while success_count < needed and total_runs < max_runs:
                 if st.session_state.cancel_run:
                     bot = AutoSEOPipeline(db_mock, master_logs)
                     bot.add_log(ui_log, "🛑 ĐÃ BỊ HỦY BỞI NGƯỜI DÙNG...", "error")
                     break
                     
-                if i > 0 and i % 3 == 0:
+                # Nghỉ 7-10 giây sau mỗi 3 lần chạy BẤT KỂ pass hay fail
+                if total_runs > 0 and total_runs % 3 == 0:
                     bot = AutoSEOPipeline(db_mock, master_logs)
                     sleep_time = random.randint(7, 10)
-                    bot.add_log(ui_log, f"♻️ [SYSTEM] Xả hơi {sleep_time}s chống sập API...", "warn")
+                    bot.add_log(ui_log, f"♻️ [SYSTEM] Xả hơi {sleep_time}s dọn rác bộ nhớ...", "warn")
                     time.sleep(sleep_time)
                     gc.collect()
                     
                 bot = AutoSEOPipeline(db_mock, master_logs)
-                bot.add_log(ui_log, f"<br>🚀 --- BẮT ĐẦU CHẠY BÀI {i+1}/{needed} ---", "success")
+                bot.add_log(ui_log, f"<br>🚀 --- BẮT ĐẦU TẠO BÀI (Mục tiêu: {success_count+1}/{needed} bài thành công) ---", "success")
                 st_t = time.time()
                 try:
                     if bot.step1_allocate_slot(ui_log):
@@ -1048,15 +1051,24 @@ with tab1:
                             if not st.session_state.cancel_run:      
                                 bot.step8_sync_db(ui_log, final_res)
                                 db_mock = load_data_from_gsheets()
-                                if final_res == "PENDING": success_count += 1
-                                else: fail_count += 1
+                                if final_res == "PENDING": 
+                                    success_count += 1
+                                else: 
+                                    fail_count += 1
+                                    bot.add_log(ui_log, f"⚠️ [HỆ THỐNG] Đã lưu bài FAIL. Tự động bù một bài mới để đạt đủ Quota!", "warn")
+                    else:
+                        bot.add_log(ui_log, "🛑 Không tìm thấy Website nào còn Slot hợp lệ để chạy tiếp.", "error")
+                        break # Hết slot thật sự, thoát while
                 except Exception as e: bot.add_log(ui_log, f"🛑 Lỗi: {str(e)[:150]}", "error")
+                
+                total_runs += 1
                 
                 if time.time() - st_t > 300:
                     bot.add_log(ui_log, "🛑 Quá 5 phút, tự ngắt để cứu hệ thống.", "error")
                     break
             
-            if not st.session_state.cancel_run: bot.add_log(ui_log, "<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT.", "success")
+            if not st.session_state.cancel_run: 
+                bot.add_log(ui_log, f"<br>✅ TOÀN BỘ TIẾN TRÌNH HOÀN TẤT. (OK: {success_count} | FAIL: {fail_count})", "success")
                 
             top_control_area.empty()
             with top_control_area.container():
