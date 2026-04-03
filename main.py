@@ -328,7 +328,6 @@ class AutoSEOPipeline:
         p_strategy = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_CONTENT_STRATEGY', ''))
         p_humanizer = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_AI_HUMANIZER', ''))
         
-        # Bốc sẵn End-Module nhưng CHƯA DÙNG VỘI, chỉ dùng khi cần Bơm Oxy
         p_end = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_END', ''))
         
         p_serp_rule = str(self.dashboard.get('PROMPT_SERP_STYLE', '')).strip()
@@ -363,16 +362,13 @@ class AutoSEOPipeline:
         end_module_instruction = ""
         
         if self.retry_count == 0:
-            # Nhịp 1: Không bắt buộc nhét End-Module, để bài viết kết thúc tự nhiên
             end_module_instruction = "- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, tự đúc kết và kết thúc bài viết một cách tự nhiên."
         elif self.retry_count > 0:
             if self.last_word_count < self.min_w:
-                # Nhịp 2 (Bơm Oxy): Bài ngắn quá -> Mới lôi End-Module ra ép vào để đôn chữ
                 retry_cmd = f"\n[LỆNH BƠM OXY]: Bản nháp trước QUÁ NGẮN ({self.last_word_count} chữ). BẮT BUỘC giữ nguyên ý chính, đắp thêm chi tiết vào từng H2. ĐẶC BIỆT, ĐỂ BÀI DÀI HƠN, BẠN PHẢI THÊM MỘT PHẦN MỚI Ở CUỐI BÀI."
                 draft_injection = f"\n\n--- BẢN NHÁP CŨ ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
                 end_module_instruction = f"- MODULE DỰ PHÒNG Ở CUỐI BÀI (BẮT BUỘC): Để kéo dài bài viết, hãy tạo nội dung sau ở vị trí cuối cùng của bài: {p_end.upper()}.\n- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, KẾT THÚC LÀ MÃ ĐÓNG MODULE DỰ PHÒNG ĐÃ NÊU TRÊN."
             elif self.last_word_count > self.max_w:
-                # Bài dài quá -> Yêu cầu cắt ngắn, tuyệt đối không thêm End-Module
                 retry_cmd = f"\n[LỆNH GỌT DŨA]: Bản nháp trước QUÁ DÀI ({self.last_word_count} chữ). BẮT BUỘC rút gọn các đoạn lan man, ép bài viết xuống mức {self.target_wc} chữ nhưng giữ nguyên cấu trúc thẻ HTML."
                 draft_injection = f"\n\n--- BẢN NHÁP CŨ (HÃY LÀM NGẮN LẠI) ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
                 end_module_instruction = "- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1> và kết thúc bài tự nhiên."
@@ -660,8 +656,8 @@ class AutoSEOPipeline:
         if read < 60: fails.append(f"Read ({read})")
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
         
-        max_allow = int(self.max_w * 1.25)
-        if wc > max_allow: fails.append(f"Viết Quá dài ({wc} > {max_allow})")
+        # Đã dẹp bỏ cái lố 25%. MAX là MAX.
+        if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
         if fails:
             self.kcs_metrics['PLAGIARISM'] = "Skipped"
