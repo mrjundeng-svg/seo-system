@@ -327,7 +327,6 @@ class AutoSEOPipeline:
         p_template = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_TEMPLATE', ''))
         p_strategy = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_CONTENT_STRATEGY', ''))
         p_humanizer = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_AI_HUMANIZER', ''))
-        
         p_end = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_END', ''))
         
         p_serp_rule = str(self.dashboard.get('PROMPT_SERP_STYLE', '')).strip()
@@ -355,6 +354,7 @@ class AutoSEOPipeline:
         2. QUY LẬT HEADING 2: Xây dựng chính xác {num_h2} thẻ <h2> (Không tính H1).
         3. QUY LUẬT ĐỔ TEXT: Dưới MỖI một thẻ <h2>, viết phần nội dung dao động từ {words_per_h2} đến {words_per_h2 + 50} chữ. Không viết lan man.
         4. QUY LUẬT HEADING 3: {h3_instruction}
+        5. QUY TẮC CHÍNH TẢ: CẤM VIẾT HOA TOÀN BỘ (ALL CAPS) Ở CÁC THẺ H2, H3, H4. CHỈ DUY NHẤT H1 LÀ ĐƯỢC IN HOA.
         """
 
         retry_cmd = ""
@@ -452,15 +452,25 @@ class AutoSEOPipeline:
                     h3_count += 1
                 curr = curr.find_next()
 
+        # 1. Trị bệnh AI la hét (ALL CAPS) trong thẻ H2, H3, H4
+        for tag in soup.find_all(['h2', 'h3', 'h4']):
+            for text_node in tag.find_all(string=True):
+                if text_node.isupper() and len(text_node.strip()) > 3:
+                    text_node.replace_with(text_node.lower())
+
+        # 2. Xử lý viết hoa chữ cái đầu tiên (Đã xuyên qua số như "1. ")
         for tag in soup.find_all(['p', 'li', 'h1', 'h2', 'h3', 'h4']):
             for text_node in tag.find_all(string=True):
-                if text_node.strip(): 
-                    stripped = text_node.lstrip()
-                    new_text = stripped[0].upper() + stripped[1:]
-                    space_prefix = text_node[:len(text_node)-len(stripped)]
-                    text_node.replace_with(space_prefix + new_text)
-                    break
+                if text_node.strip():
+                    text_str = str(text_node)
+                    m = re.search(r'[a-zA-ZđĐáàảãạăâấầẩẫậêếềểễệôốồổỗộơớờởỡợưứừửữựíìỉĩịýỳỷỹỵ]', text_str)
+                    if m:
+                        idx = m.start()
+                        new_text = text_str[:idx] + text_str[idx].upper() + text_str[idx+1:]
+                        text_node.replace_with(new_text)
+                    break 
                     
+        # 3. Đảm bảo H1 luôn luôn UPPERCASE toàn bộ
         h1 = soup.find('h1')
         if h1: h1.string = h1.get_text(strip=True).upper()
             
@@ -655,8 +665,6 @@ class AutoSEOPipeline:
         if ai > 20: fails.append(f"AI ({ai}%)")
         if read < 60: fails.append(f"Read ({read})")
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
-        
-        # Đã dẹp bỏ cái lố 25%. MAX là MAX.
         if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
         if fails:
