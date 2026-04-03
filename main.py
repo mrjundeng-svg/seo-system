@@ -121,14 +121,12 @@ class AutoSEOPipeline:
         self.now_vn, self.history_log = get_vn_now(), master_log_list
         self.target_web, self.publish_time, self.main_kw_row = None, None, None
         self.raw_html, self.final_title = "", ""
-        self.previous_draft = "" 
         self.kcs_metrics, self.used_imgs, self.used_spins, self.failed_imgs = {}, [], [], []
         self.out_lim, self.in_lim, self.injected_ext, self.injected_int = 0, 0, 0, 0
-        self.serp_style, self.prompt_content = "", ""
+        self.serp_style = ""
         
         self.min_w, self.mid_w, self.max_w = 0, 0, 0
         self.target_wc = 0
-        
         self.retry_count = 0
         self.last_word_count = 0
         self.all_topic_kws = []
@@ -138,7 +136,7 @@ class AutoSEOPipeline:
         self.copyscape_key = self.dashboard.get('COPYSCAPE_API_KEY', '').strip()
 
     def reset_state_for_retry(self):
-        self.previous_draft = self.raw_html 
+        # ĐẬP ĐI XÂY LẠI: Xóa toàn bộ dữ liệu của lần chạy trước
         self.raw_html, self.final_title = "", ""
         self.used_imgs, self.used_spins, self.failed_imgs = [], [], []
         self.injected_ext, self.injected_int = 0, 0
@@ -239,11 +237,10 @@ class AutoSEOPipeline:
         else:
             subs = []
             
-        # FIX: Tối đa 5 Keyword (1 chính + 4 phụ) để khớp 5 cột DB
         kws_needed = min(4, self.out_lim + self.in_lim)
         self.all_topic_kws = [m_kw] + subs[:kws_needed]
         
-        self.add_log(ui_log, f"📦 [KWs ĐIỀU HƯỚNG AI] Tập hợp {len(self.all_topic_kws)} Keywords: {', '.join(self.all_topic_kws)}", "detail")
+        self.add_log(ui_log, f"📦 [KEYWORD LIST] Tập hợp {len(self.all_topic_kws)} Keywords: {', '.join(self.all_topic_kws)}", "detail")
         
         try:
             wrng_str = str(self.dashboard.get('WORD_COUNT_RANGE', '1000-1200|1500')).strip()
@@ -265,7 +262,7 @@ class AutoSEOPipeline:
             self.mid_w, self.max_w = 1200, 1500
             
         self.target_wc = random.randint(self.min_w, self.mid_w)
-        self.add_log(ui_log, f"📏 [RULE TOÁN HỌC] Khóa mục tiêu độ dài: {self.target_wc} chữ. (Min: {self.min_w}, Max: {self.max_w})", "detail")
+        self.add_log(ui_log, f"📏 [WORD_COUNT_RANGE] Khóa mục tiêu độ dài: {self.target_wc} chữ. (Min: {self.min_w}, Max: {self.max_w})", "detail")
         
         s_key = self.dashboard.get('SERPAPI_KEY', '').strip()
         c_list = [c.strip() for c in str(self.dashboard.get('COMPETITOR_LIST', '')).split(',') if c.strip()]
@@ -328,22 +325,20 @@ class AutoSEOPipeline:
         p_template = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_TEMPLATE', ''))
         p_strategy = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_CONTENT_STRATEGY', ''))
         p_humanizer = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_AI_HUMANIZER', ''))
-        
         p_end = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_END', ''))
         
         p_serp_rule = str(self.dashboard.get('PROMPT_SERP_STYLE', '')).strip()
         p_kw_rule = str(self.dashboard.get('PROMPT_KEYWORD_SEARCH', '')).strip()
         p_seo_global = str(self.dashboard.get('PROMPT_SEO_GLOBAL_RULE', '')).strip()
 
-        self.add_log(ui_log, f"🎲 [MA TRẬN XỔ SỐ TẦNG 1] Persona: {p_template[:60]}...", "detail")
-        self.add_log(ui_log, f"🎲 [MA TRẬN XỔ SỐ TẦNG 2] Strategy: {p_strategy[:60]}...", "detail")
-        self.add_log(ui_log, f"🎲 [MA TRẬN XỔ SỐ TẦNG 3] Humanizer: {p_humanizer[:60]}...", "detail")
-        self.add_log(ui_log, f"🎲 [MA TRẬN XỔ SỐ TẦNG 4] End-Module (Dự phòng bơm Oxy): {p_end[:60]}...", "detail")
+        self.add_log(ui_log, f"🎲 [PROMPT_TEMPLATE] Persona: {p_template[:60]}...", "detail")
+        self.add_log(ui_log, f"🎲 [PROMPT_CONTENT_STRATEGY] Strategy: {p_strategy[:60]}...", "detail")
+        self.add_log(ui_log, f"🎲 [PROMPT_AI_HUMANIZER] Humanizer: {p_humanizer[:60]}...", "detail")
+        self.add_log(ui_log, f"🎲 [PROMPT_END] Dự phòng bơm Oxy: {p_end[:60]}...", "detail")
         
         m_kw_str = self.all_topic_kws[0]
         kws_injection_str = ", ".join([f"'{k}'" for k in self.all_topic_kws])
 
-        # FIX: Ép AI viết ngắn lại để tránh over-generation (Bài dài lố)
         num_h2 = max(3, self.target_wc // 400)
         if num_h2 > 5: num_h2 = 5
         words_per_h2 = max(120, int((self.target_wc * 0.45) / num_h2))
@@ -356,32 +351,27 @@ class AutoSEOPipeline:
         2. QUY LẬT HEADING 2: Xây dựng chính xác {num_h2} thẻ <h2> (Không tính H1).
         3. GIỚI HẠN TEXT MỖI H2: Dưới mỗi thẻ <h2>, CHỈ VIẾT NGẮN GỌN TỐI ĐA {words_per_h2 + 20} CHỮ. Tuyệt đối không phân tích dây dưa.
         4. QUY LUẬT HEADING 3: {h3_instruction}
+        5. QUY TẮC CHÍNH TẢ & TỰ NHIÊN: CẤM IN HOA TOÀN BỘ ở các thẻ H2, H3. ĐẶC BIỆT TUYỆT ĐỐI KHÔNG dùng các từ khóa mang tính chất ra lệnh (như "Case study", "Bảng so sánh", "Câu hỏi thường gặp") làm tiêu đề. Hãy tự sáng tạo tiêu đề giật tít, tự nhiên như người thật viết.
         """
 
         retry_cmd = ""
-        draft_injection = ""
         end_module_instruction = ""
         
         if self.retry_count == 0:
             end_module_instruction = "- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, tự đúc kết và kết thúc bài viết một cách tự nhiên."
         elif self.retry_count > 0:
             if self.last_word_count < self.min_w:
-                # FIX Lỗi 227 chữ: Lệnh ép phân tích sâu + Bơm Module
-                retry_cmd = f"\n[LỆNH BƠM OXY CẤP CỨU]: Bản nháp trước của bạn bị LỖI NGHIÊM TRỌNG vì QUÁ NGẮN (Chỉ có {self.last_word_count} chữ). Bạn PHẢI MỞ RỘNG nội dung, phân tích sâu sắc hơn, thêm ví dụ thực tế để ép bài viết dài ra. ĐẶC BIỆT, PHẢI THÊM MỘT PHẦN MỚI Ở CUỐI BÀI."
-                if self.previous_draft and len(self.previous_draft) > 500:
-                    draft_injection = f"\n\n--- BẢN NHÁP CŨ (KÉO DÀI NÓ RA) ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
-                end_module_instruction = f"- MODULE DỰ PHÒNG Ở CUỐI BÀI (BẮT BUỘC): Để kéo dài bài viết, hãy tạo nội dung sau ở vị trí cuối cùng của bài: {p_end.upper()}.\n- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, KẾT THÚC LÀ MÃ ĐÓNG MODULE DỰ PHÒNG ĐÃ NÊU TRÊN."
+                retry_cmd = f"\n[LỆNH CẢNH CÁO CHÍ MẠNG]: Lần chạy trước bạn viết QUÁ NGẮN ({self.last_word_count} chữ). BẮT BUỘC BỎ QUA BẢN NHÁP CŨ, XÂY LẠI BÀI HOÀN TOÀN MỚI TỪ ĐẦU! Phải đảm bảo ĐỦ ĐỘ DÀI {self.target_wc} chữ bằng cách mở rộng các luận điểm sâu sắc hơn. ĐẶC BIỆT, ĐỂ BÀI DÀI HƠN, BẠN PHẢI THÊM MỘT PHẦN MỚI Ở CUỐI BÀI."
+                end_module_instruction = f"- MODULE DỰ PHÒNG Ở CUỐI BÀI (BẮT BUỘC): Để kéo dài bài viết, hãy tạo nội dung sau ở vị trí cuối cùng của bài: {p_end.upper()}.\n- LƯU Ý VỀ MODULE: TUYỆT ĐỐI KHÔNG dùng tên module (như 'Case study', 'Bảng giá') làm tiêu đề. Hãy đặt tiêu đề H2/H3 thật hấp dẫn và phù hợp ngữ cảnh.\n- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, KẾT THÚC LÀ MÃ ĐÓNG MODULE DỰ PHÒNG."
             elif self.last_word_count > self.max_w:
-                retry_cmd = f"\n[LỆNH GỌT DŨA]: Bản nháp trước QUÁ DÀI ({self.last_word_count} chữ). BẮT BUỘC rút gọn các đoạn lan man, ép bài viết xuống mức {self.target_wc} chữ nhưng giữ nguyên cấu trúc thẻ HTML."
-                if self.previous_draft:
-                    draft_injection = f"\n\n--- BẢN NHÁP CŨ (HÃY LÀM NGẮN LẠI) ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
+                retry_cmd = f"\n[LỆNH CẢNH CÁO CHÍ MẠNG]: Lần chạy trước bạn viết QUÁ DÀI ({self.last_word_count} chữ). BẮT BUỘC BỎ QUA BẢN NHÁP CŨ, XÂY LẠI BÀI HOÀN TOÀN MỚI TỪ ĐẦU! Phải ép bài viết ngắn gọn, súc tích lại quanh mốc {self.target_wc} chữ. Không viết lan man."
                 end_module_instruction = "- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1> và kết thúc bài tự nhiên."
             
         force = f"""\n[TỔNG HỢP YÊU CẦU SINH TỬ]:{retry_cmd}
         {math_skeleton}
         - Chủ đề chính: "{m_kw_str}".
         - TỪ KHÓA BẮT BUỘC PHẢI RẢI ĐỀU: {kws_injection_str}. 
-        {end_module_instruction}{draft_injection}"""
+        {end_module_instruction}"""
         
         m_prompt = f"{p_template}\n\n{p_strategy}\n\n{p_serp_rule}\n[SERP_DATA]: {self.serp_style}\n\n{p_kw_rule}\n\n{p_seo_global}\n\n{p_humanizer}\n\n{force}"
 
@@ -456,13 +446,18 @@ class AutoSEOPipeline:
                     h3_count += 1
                 curr = curr.find_next()
 
-        # FIX: Chống AI la hét (ALL CAPS) - Ép nó xuống Capitalize
+        for table in soup.find_all('table'):
+            table['style'] = "border-collapse: collapse; width: 100%; margin: 20px 0; font-size: 16px; border: 1px solid #cbd5e1;"
+            for th in table.find_all('th'):
+                th['style'] = "border: 1px solid #cbd5e1; padding: 12px; background-color: #f8fafc; font-weight: bold; text-align: left;"
+            for td in table.find_all('td'):
+                td['style'] = "border: 1px solid #cbd5e1; padding: 12px; text-align: left;"
+
         for tag in soup.find_all(['h2', 'h3', 'h4']):
             text = tag.get_text(strip=True)
             if text.isupper():
                 tag.string = text.capitalize()
 
-        # FIX: Viết hoa chữ cái đầu tiên (Đã xuyên qua các con số như "1. ")
         for tag in soup.find_all(['p', 'li', 'h2', 'h3', 'h4']):
             for text_node in tag.find_all(string=True):
                 if text_node.strip():
@@ -474,12 +469,10 @@ class AutoSEOPipeline:
                         text_node.replace_with(new_text)
                     break 
                     
-        # H1 thì vẫn uy quyền IN HOA TOÀN BỘ
         h1 = soup.find('h1')
         if h1: h1.string = h1.get_text(strip=True).upper()
             
         self.raw_html = str(soup)
-        st.session_state.evolution_cache = f"{len(soup.find_all('h2'))} H2, {len(soup.find_all('h3'))} H3"
         
         self.final_title = h1.get_text(strip=True) if h1 else f"Bài: {self.all_topic_kws[0].upper()}"
         if self.retry_count == 0:
@@ -669,8 +662,6 @@ class AutoSEOPipeline:
         if ai > 20: fails.append(f"AI ({ai}%)")
         if read < 60: fails.append(f"Read ({read})")
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
-        
-        # Đã dẹp bỏ hoàn toàn nới lỏng. Lố MAX là chém!
         if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
         
         if fails:
@@ -1045,7 +1036,7 @@ with tab1:
                                 bot.retry_count = attempt
                                 if attempt > 0:
                                     bot.reset_state_for_retry()
-                                    bot.add_log(ui_log, f"🔄 [AUTO-RETRY] Bài fail KCS. Bơm Oxy hiệp {attempt+1}...", "warn")
+                                    bot.add_log(ui_log, f"🔄 [AUTO-RETRY] Bài fail KCS. Đập đi xây lại hiệp {attempt+1}...", "warn")
                                 
                                 if bot.step4_llm_generation(ui_log):
                                     if st.session_state.cancel_run: break
