@@ -136,7 +136,6 @@ class AutoSEOPipeline:
         self.copyscape_key = self.dashboard.get('COPYSCAPE_API_KEY', '').strip()
 
     def reset_state_for_retry(self):
-        # ĐẬP ĐI XÂY LẠI: Xóa toàn bộ dữ liệu của lần chạy trước
         self.raw_html, self.final_title = "", ""
         self.used_imgs, self.used_spins, self.failed_imgs = [], [], []
         self.injected_ext, self.injected_int = 0, 0
@@ -348,7 +347,7 @@ class AutoSEOPipeline:
         math_skeleton = f"""
         [BỘ LỆNH TOÁN HỌC ĐIỀU KHIỂN CẤU TRÚC - TUYỆT ĐỐI TUÂN THỦ]:
         1. KIỂM SOÁT ĐỘ DÀI TOÀN BÀI: Tổng số chữ chỉ được dao động quanh {self.target_wc} chữ. CẤM VIẾT LAN MAN VƯỢT QUÁ {self.max_w} CHỮ.
-        2. QUY LẬT THẺ H1 (TIÊU ĐỀ CHÍNH): Bài viết BẮT ĐẦU BẰNG ĐÚNG MỘT thẻ <h1>. Thẻ <h1> này PHẢI LÀ MỘT TIÊU ĐỀ GIẬT TÍT DÀI, HẤP DẪN (chứa từ khóa '{m_kw_str}'). TUYỆT ĐỐI KHÔNG chỉ viết cộc lốc từ khóa vào H1. CẤM chèn thẻ <h2> ngay dưới <h1> để làm phụ đề. (Ví dụ đúng: <h1>{m_kw_str.upper()} - Giải Pháp Nâng Tầm Đẳng Cấp Doanh Nhân</h1>).
+        2. QUY LẬT THẺ H1 (TIÊU ĐỀ CHÍNH): Bài viết BẮT ĐẦU BẰNG ĐÚNG MỘT thẻ <h1>. Thẻ <h1> này PHẢI LÀ MỘT TIÊU ĐỀ GIẬT TÍT DÀI, HẤP DẪN, KHÁC BIỆT VÀ SÁNG TẠO 100% (bắt buộc chứa từ khóa '{m_kw_str}'). Hãy LUÂN PHIÊN NGẪU NHIÊN vị trí của từ khóa trong tiêu đề (có thể ở đầu, ở giữa hoặc ở cuối tiêu đề). TUYỆT ĐỐI KHÔNG dùng đi dùng lại một mẫu tiêu đề. CẤM viết cộc lốc mỗi cụm từ khóa. CẤM chèn thẻ <h2> ngay dưới <h1> để làm phụ đề.
         3. QUY LẬT HEADING 2: Xây dựng chính xác {num_h2} thẻ <h2> (Không tính H1). Dưới H1 phải là nội dung mở bài (thẻ <p>), tuyệt đối không được là thẻ <h2>.
         4. GIỚI HẠN TEXT MỖI H2: Dưới mỗi thẻ <h2>, CHỈ VIẾT NGẮN GỌN TỐI ĐA {words_per_h2 + 20} CHỮ. Tuyệt đối không phân tích dây dưa.
         5. QUY LUẬT HEADING 3: {h3_instruction}
@@ -476,7 +475,7 @@ class AutoSEOPipeline:
         self.raw_html = str(soup)
         
         self.final_title = h1.get_text(strip=True) if h1 else f"Bài: {self.all_topic_kws[0].upper()}"
-        if h1: h1.decompose() # Xóa H1 khỏi nội dung bài để tránh lặp tiêu đề
+        if h1: h1.decompose() 
         self.raw_html = str(soup)
 
         if self.retry_count == 0:
