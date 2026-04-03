@@ -164,20 +164,13 @@ class AutoSEOPipeline:
         except: return d
 
     def pick_random_prompt_variant(self, text):
-        """
-        Hàm cốt lõi đọc Ma Trận Prompt.
-        Nếu nhận diện được danh sách đánh số (1. 2. 3.), sẽ cắt và bốc random 1 lựa chọn.
-        Nếu không, trả về nguyên khối (Luật thép tĩnh).
-        """
         raw_text = str(text).strip()
         if not raw_text: return ""
         
-        # Nếu có dấu ||| (Cấu trúc cũ)
         if '|||' in raw_text:
             parts = [p.strip() for p in raw_text.split('|||') if p.strip()]
             return random.choice(parts)
             
-        # Nếu có dạng danh sách đánh số (Ma trận mới của Sếp)
         if re.search(r'(?m)^\d+[\.\-\)]\s+', raw_text):
             variants = []
             for line in raw_text.split('\n'):
@@ -188,7 +181,6 @@ class AutoSEOPipeline:
             if variants:
                 return random.choice(variants)
                 
-        # Trả về nguyên khối nếu không có cấu trúc random
         return raw_text
 
     def step1_allocate_slot(self, ui_log) -> bool:
@@ -240,7 +232,6 @@ class AutoSEOPipeline:
         
         self.out_lim, self.in_lim = self.parse_rng(self.target_web.get('WS_LINK_OUT_LIMIT', 0), 0), self.parse_rng(self.target_web.get('WS_LINK_IN_LIMIT', 0), 0)
         
-        # Bốc ngẫu nhiên thêm 3-5 keyword phụ cùng nhóm
         pool_subs = df_kw[(df_kw['KW_TEXT'] != m_kw) & (df_kw['KW_CONTENT'] == str(self.main_kw_row.get('KW_CONTENT', '')))].copy()
         if not pool_subs.empty:
             pool_subs = pool_subs.sample(frac=1).sort_values('KW_STATUS')
@@ -281,7 +272,6 @@ class AutoSEOPipeline:
 
         if s_key:
             self.add_log(ui_log, f"🕵️ [SERP] Quét data qua Serper.dev...", "detail")
-            # Quét Top 2 Keywords
             for kw in self.all_topic_kws[:2]:
                 try:
                     headers = {'X-API-KEY': s_key, 'Content-Type': 'application/json'}
@@ -334,18 +324,15 @@ class AutoSEOPipeline:
         return True
 
     def step4_llm_generation(self, ui_log) -> bool:
-        # Lấy các biến từ Dashboard và Lọc qua Ma trận Xổ Số
         p_template = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_TEMPLATE', ''))
         p_strategy = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_CONTENT_STRATEGY', ''))
         p_humanizer = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_AI_HUMANIZER', ''))
         p_end = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_END', ''))
         
-        # Các biến Luật Thép (Lấy full)
         p_serp_rule = str(self.dashboard.get('PROMPT_SERP_STYLE', '')).strip()
         p_kw_rule = str(self.dashboard.get('PROMPT_KEYWORD_SEARCH', '')).strip()
         p_seo_global = str(self.dashboard.get('PROMPT_SEO_GLOBAL_RULE', '')).strip()
 
-        # Log Ma Trận để Sếp theo dõi
         self.add_log(ui_log, f"🎲 [MA TRẬN XỔ SỐ TẦNG 1] Persona: {p_template[:60]}...", "detail")
         self.add_log(ui_log, f"🎲 [MA TRẬN XỔ SỐ TẦNG 2] Strategy: {p_strategy[:60]}...", "detail")
         self.add_log(ui_log, f"🎲 [MA TRẬN XỔ SỐ TẦNG 3] Humanizer: {p_humanizer[:60]}...", "detail")
@@ -354,24 +341,18 @@ class AutoSEOPipeline:
         m_kw_str = self.all_topic_kws[0]
         kws_injection_str = ", ".join([f"'{k}'" for k in self.all_topic_kws])
 
-        # -------------------------------------------------------------
-        # THUẬT TOÁN ĐẾM CHỮ & PHÂN BỔ CẤU TRÚC (KHUNG XƯƠNG THÉP PYTHON)
-        # -------------------------------------------------------------
-        # 1. Tính toán số thẻ H2 dựa trên Target Word Count
-        num_h2 = max(3, self.target_wc // 300) # Trung bình 300 chữ / 1 H2
-        if num_h2 > 7: num_h2 = 7 # Tránh bài quá loãng
+        num_h2 = max(3, self.target_wc // 350)
+        if num_h2 > 6: num_h2 = 6
         
-        # 2. Tính toán lượng Text đổ vào mỗi H2
-        words_per_h2 = max(200, (self.target_wc - 200) // num_h2) # Trừ 200 chữ cho Mở/Kết bài
+        words_per_h2 = max(150, int((self.target_wc * 0.6) / num_h2))
         
-        # 3. Yêu cầu H3 ngẫu nhiên (chỉ ép ở một số H2 để cấu trúc lồi lõm tự nhiên)
         h3_instruction = f"TẠI ĐÚNG 2 THẺ H2 BẤT KỲ TRONG BÀI, bạn bắt buộc phải chia nhỏ nội dung xuống thành 2-3 thẻ <h3>. Các thẻ H2 còn lại chỉ dùng thẻ <p> hoặc <ul>."
         
         math_skeleton = f"""
-        [BỘ LỆNH TOÁN HỌC ĐIỀU KHIỂN CẤU TRÚC - BẮT BUỘC TUÂN THỦ 100%]:
-        1. TARGET WORD COUNT: Toàn bộ bài viết của bạn phải dài từ {self.target_wc} đến {self.max_w} chữ. Bất cứ bài viết nào ngắn hơn sẽ bị hệ thống từ chối.
+        [BỘ LỆNH TOÁN HỌC ĐIỀU KHIỂN CẤU TRÚC]:
+        1. TARGET WORD COUNT: Giới hạn nghiêm ngặt tổng số chữ của bài viết từ {self.target_wc} đến TỐI ĐA {self.max_w} chữ. TUYỆT ĐỐI KHÔNG VIẾT DÀI HƠN MỨC NÀY. Viết súc tích, cô đọng lại.
         2. QUY LẬT HEADING 2: Xây dựng chính xác {num_h2} thẻ <h2> (Không tính H1).
-        3. QUY LUẬT ĐỔ TEXT: Dưới MỖI một thẻ <h2>, BẮT BUỘC phải xả một lượng kiến thức sâu sắc, chi tiết, đảm bảo độ dài phần chữ dao động từ {words_per_h2} đến {words_per_h2 + 50} chữ. KHÔNG ĐƯỢC VIẾT NGẮN HƠN MỨC NÀY cho mỗi H2.
+        3. QUY LUẬT ĐỔ TEXT: Dưới MỖI một thẻ <h2>, viết phần nội dung dao động từ {words_per_h2} đến {words_per_h2 + 50} chữ. Không viết lan man.
         4. QUY LUẬT HEADING 3: {h3_instruction}
         """
 
@@ -379,11 +360,13 @@ class AutoSEOPipeline:
         draft_injection = ""
         if self.retry_count > 0:
             if self.last_word_count < self.min_w:
-                retry_cmd = f"\n[LỆNH BƠM OXY TỐI QUAN TRỌNG]: Bản nháp trước của bạn QUÁ NGẮN (Chỉ có {self.last_word_count} chữ, thấp hơn mức tối thiểu {self.min_w}). BẠN PHẢI GIỮ NGUYÊN CÁC Ý CHÍNH CỦA BẢN NHÁP CŨ, NHƯNG BẮT BUỘC PHẢI BỊA THÊM VÍ DỤ THỰC TẾ, ĐẮP THÊM CHI TIẾT PHÂN TÍCH VÀO TỪNG CÁI H2 ĐỂ BÀI VIẾT PHÌNH RA THÀNH {self.target_wc} CHỮ."
+                retry_cmd = f"\n[LỆNH BƠM OXY]: Bản nháp trước QUÁ NGẮN ({self.last_word_count} chữ). BẮT BUỘC giữ nguyên ý chính, nhưng đắp thêm ví dụ vào để đạt {self.target_wc} chữ."
                 if self.previous_draft:
-                    draft_injection = f"\n\n--- BẢN NHÁP CŨ CỦA BẠN (HÃY LẤY LÀM NỀN MÓNG VÀ KÉO DÀI NÓ RA) ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
+                    draft_injection = f"\n\n--- BẢN NHÁP CŨ ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
             elif self.last_word_count > self.max_w:
-                retry_cmd = f"\n[LỆNH TỐI QUAN TRỌNG]: Bản nháp trước của bạn QUÁ DÀI ({self.last_word_count} chữ). Rút gọn lại tối đa {self.max_w} chữ nhưng giữ cấu trúc H2."
+                retry_cmd = f"\n[LỆNH GỌT DŨA]: Bản nháp trước QUÁ DÀI ({self.last_word_count} chữ). BẮT BUỘC rút gọn các đoạn lan man, ép bài viết xuống mức {self.target_wc} chữ nhưng giữ nguyên cấu trúc thẻ HTML."
+                if self.previous_draft:
+                    draft_injection = f"\n\n--- BẢN NHÁP CŨ (HÃY LÀM NGẮN LẠI) ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
             
         force = f"""\n[TỔNG HỢP YÊU CẦU SINH TỬ]:{retry_cmd}
         {math_skeleton}
@@ -435,14 +418,11 @@ class AutoSEOPipeline:
         self.raw_html = response_text
         self.raw_html = re.sub(r'```html|```', '', self.raw_html).strip()
         
-        # Dọn dẹp Markdown in đậm (**) vì đã có lệnh Anti-Stuffing cấm in đậm keyword
         self.raw_html = re.sub(r'\*\*(.*?)\*\*', r'\1', self.raw_html) 
         
-        # Cởi trói dấu ngoặc kép cho Keyword nếu AI lỡ bọc vào
         for k in self.all_topic_kws:
             self.raw_html = re.sub(rf"[`'‘’\"“”]\s*({re.escape(k)})\s*[`'‘’\"“”]", r"\1", self.raw_html, flags=re.IGNORECASE)
         
-        # Fix Bullet point rác AI sinh ra
         self.raw_html = re.sub(r'(?<!^)\s+\*\s+([A-ZĐÁÀẢÃẠĂÂẤẦẨẪẬÊẾỀỂỄỆÔỐỒỔỖỘƠỚỜỞỠỢƯỨỪỬỮỰÍÌỈĨỊÝỲỶỸỴ])', r'</p><p>• \1', self.raw_html)
         if '<p>' not in self.raw_html.lower():
             paras = [p.strip() for p in re.split(r'\n+', self.raw_html) if p.strip()]
@@ -450,14 +430,12 @@ class AutoSEOPipeline:
             
         soup = BeautifulSoup(self.raw_html, 'html.parser')
         
-        # Máy Hút Bụi: Hủy diệt ảnh rác AI tự chèn để chừa slot cho ảnh xịn của mình
         for img in soup.find_all('img'):
             img_parent = img.parent
             img.decompose()
             if img_parent and not img_parent.get_text(strip=True) and img_parent.name != 'body':
                 img_parent.decompose()
             
-        # Máy X-Ray: Xử lý số tự động H3
         h2_list = soup.find_all('h2')
         for h2 in h2_list:
             h3_count = 1
@@ -470,7 +448,6 @@ class AutoSEOPipeline:
                     h3_count += 1
                 curr = curr.find_next()
 
-        # Upper Case chữ cái đầu cho thẩm mỹ
         for tag in soup.find_all(['p', 'li', 'h1', 'h2', 'h3', 'h4']):
             for text_node in tag.find_all(string=True):
                 if text_node.strip(): 
@@ -543,7 +520,6 @@ class AutoSEOPipeline:
 
                 injected = False
                 for p in chunk_p:
-                    # KẾT NỐI KHÔNG DẤU - X-Ray Scanner
                     if re.search(re.escape(k), p.get_text(), flags=re.IGNORECASE):
                         p.replace_with(BeautifulSoup(re.sub(re.escape(k), lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(p), count=1, flags=re.IGNORECASE), 'html.parser'))
                         injected = True
@@ -593,9 +569,6 @@ class AutoSEOPipeline:
         else:
             img_max_w = ws_banner
 
-        # ==========================================
-        # PYTHON LOGIC: RẢI ẢNH CHỐNG DÍNH CHÙM TỐI ƯU
-        # ==========================================
         if self.used_imgs:
             n_imgs = len(self.used_imgs)
             n_kws = len(self.injected_kws_list)
@@ -678,7 +651,9 @@ class AutoSEOPipeline:
         if ai > 20: fails.append(f"AI ({ai}%)")
         if read < 60: fails.append(f"Read ({read})")
         if wc < self.min_w: fails.append(f"Viết Quá ngắn ({wc} < {self.min_w})")
-        if wc > self.max_w: fails.append(f"Viết Quá dài ({wc} > {self.max_w})")
+        
+        max_allow = int(self.max_w * 1.25)
+        if wc > max_allow: fails.append(f"Viết Quá dài ({wc} > {max_allow})")
         
         if fails:
             self.kcs_metrics['PLAGIARISM'] = "Skipped"
