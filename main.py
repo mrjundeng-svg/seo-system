@@ -48,10 +48,10 @@ SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw'
 def check_password():
     if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
     if not st.session_state["logged_in"]:
-        st.markdown("## 🔐 Hệ thống Tự động hóa SEO Lái Hộ")
+        st.markdown("## 🔐 xin đừng HACK tội em lắm")
         u = st.text_input("Username", key="username")
         p = st.text_input("Password", type="password", key="password")
-        if st.button("Đăng Nhập"):
+        if st.button("Zô làm ziệc!"):
             if u == st.secrets.get("admin_user", "admin") and p == st.secrets.get("admin_pass", "admin123"):
                 st.session_state["logged_in"] = True
                 st.rerun()
@@ -327,6 +327,8 @@ class AutoSEOPipeline:
         p_template = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_TEMPLATE', ''))
         p_strategy = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_CONTENT_STRATEGY', ''))
         p_humanizer = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_AI_HUMANIZER', ''))
+        
+        # Bốc sẵn End-Module nhưng CHƯA DÙNG VỘI, chỉ dùng khi cần Bơm Oxy
         p_end = self.pick_random_prompt_variant(self.dashboard.get('PROMPT_END', ''))
         
         p_serp_rule = str(self.dashboard.get('PROMPT_SERP_STYLE', '')).strip()
@@ -336,7 +338,7 @@ class AutoSEOPipeline:
         self.add_log(ui_log, f"🎲 [MA TRẬN XỔ SỐ TẦNG 1] Persona: {p_template[:60]}...", "detail")
         self.add_log(ui_log, f"🎲 [MA TRẬN XỔ SỐ TẦNG 2] Strategy: {p_strategy[:60]}...", "detail")
         self.add_log(ui_log, f"🎲 [MA TRẬN XỔ SỐ TẦNG 3] Humanizer: {p_humanizer[:60]}...", "detail")
-        self.add_log(ui_log, f"🎲 [MA TRẬN XỔ SỐ TẦNG 4] End-Module: {p_end[:60]}...", "detail")
+        self.add_log(ui_log, f"🎲 [MA TRẬN XỔ SỐ TẦNG 4] End-Module (Dự phòng bơm Oxy): {p_end[:60]}...", "detail")
         
         m_kw_str = self.all_topic_kws[0]
         kws_injection_str = ", ".join([f"'{k}'" for k in self.all_topic_kws])
@@ -350,7 +352,7 @@ class AutoSEOPipeline:
         
         math_skeleton = f"""
         [BỘ LỆNH TOÁN HỌC ĐIỀU KHIỂN CẤU TRÚC]:
-        1. TARGET WORD COUNT: Giới hạn nghiêm ngặt tổng số chữ của bài viết từ {self.target_wc} đến TỐI ĐA {self.max_w} chữ. TUYỆT ĐỐI KHÔNG VIẾT DÀI HƠN MỨC NÀY. Viết súc tích, cô đọng lại.
+        1. TARGET WORD COUNT: Giới hạn nghiêm ngặt tổng số chữ của bài viết từ {self.target_wc} đến TỐI ĐA {self.max_w} chữ. TUYỆT ĐỐI KHÔNG VIẾT DÀI HƠN MỨC NÀY.
         2. QUY LẬT HEADING 2: Xây dựng chính xác {num_h2} thẻ <h2> (Không tính H1).
         3. QUY LUẬT ĐỔ TEXT: Dưới MỖI một thẻ <h2>, viết phần nội dung dao động từ {words_per_h2} đến {words_per_h2 + 50} chữ. Không viết lan man.
         4. QUY LUẬT HEADING 3: {h3_instruction}
@@ -358,22 +360,28 @@ class AutoSEOPipeline:
 
         retry_cmd = ""
         draft_injection = ""
-        if self.retry_count > 0:
+        end_module_instruction = ""
+        
+        if self.retry_count == 0:
+            # Nhịp 1: Không bắt buộc nhét End-Module, để bài viết kết thúc tự nhiên
+            end_module_instruction = "- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, tự đúc kết và kết thúc bài viết một cách tự nhiên."
+        elif self.retry_count > 0:
             if self.last_word_count < self.min_w:
-                retry_cmd = f"\n[LỆNH BƠM OXY]: Bản nháp trước QUÁ NGẮN ({self.last_word_count} chữ). BẮT BUỘC giữ nguyên ý chính, nhưng đắp thêm ví dụ vào để đạt {self.target_wc} chữ."
-                if self.previous_draft:
-                    draft_injection = f"\n\n--- BẢN NHÁP CŨ ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
+                # Nhịp 2 (Bơm Oxy): Bài ngắn quá -> Mới lôi End-Module ra ép vào để đôn chữ
+                retry_cmd = f"\n[LỆNH BƠM OXY]: Bản nháp trước QUÁ NGẮN ({self.last_word_count} chữ). BẮT BUỘC giữ nguyên ý chính, đắp thêm chi tiết vào từng H2. ĐẶC BIỆT, ĐỂ BÀI DÀI HƠN, BẠN PHẢI THÊM MỘT PHẦN MỚI Ở CUỐI BÀI."
+                draft_injection = f"\n\n--- BẢN NHÁP CŨ ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
+                end_module_instruction = f"- MODULE DỰ PHÒNG Ở CUỐI BÀI (BẮT BUỘC): Để kéo dài bài viết, hãy tạo nội dung sau ở vị trí cuối cùng của bài: {p_end.upper()}.\n- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, KẾT THÚC LÀ MÃ ĐÓNG MODULE DỰ PHÒNG ĐÃ NÊU TRÊN."
             elif self.last_word_count > self.max_w:
+                # Bài dài quá -> Yêu cầu cắt ngắn, tuyệt đối không thêm End-Module
                 retry_cmd = f"\n[LỆNH GỌT DŨA]: Bản nháp trước QUÁ DÀI ({self.last_word_count} chữ). BẮT BUỘC rút gọn các đoạn lan man, ép bài viết xuống mức {self.target_wc} chữ nhưng giữ nguyên cấu trúc thẻ HTML."
-                if self.previous_draft:
-                    draft_injection = f"\n\n--- BẢN NHÁP CŨ (HÃY LÀM NGẮN LẠI) ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
+                draft_injection = f"\n\n--- BẢN NHÁP CŨ (HÃY LÀM NGẮN LẠI) ---\n{self.previous_draft[:5000]}\n--- KẾT THÚC BẢN NHÁP CŨ ---"
+                end_module_instruction = "- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1> và kết thúc bài tự nhiên."
             
         force = f"""\n[TỔNG HỢP YÊU CẦU SINH TỬ]:{retry_cmd}
         {math_skeleton}
         - Chủ đề chính: "{m_kw_str}".
         - TỪ KHÓA BẮT BUỘC PHẢI RẢI ĐỀU: {kws_injection_str}. 
-        - MODULE ĐẶC BIỆT Ở CUỐI BÀI: Để kết thúc mã HTML của bài viết, BẮT BUỘC phải tạo nội dung sau: {p_end.upper()}.
-        - TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, KẾT THÚC LÀ MÃ ĐÓNG MODULE ĐẶC BIỆT ĐÃ NÊU TRÊN.{draft_injection}"""
+        {end_module_instruction}{draft_injection}"""
         
         m_prompt = f"{p_template}\n\n{p_strategy}\n\n{p_serp_rule}\n[SERP_DATA]: {self.serp_style}\n\n{p_kw_rule}\n\n{p_seo_global}\n\n{p_humanizer}\n\n{force}"
 
