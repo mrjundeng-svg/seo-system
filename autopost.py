@@ -1,125 +1,113 @@
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
+import time, datetime, pytz, requests, json, os
 import smtplib
-from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-import datetime
-import time
-import re
+from email.mime.multipart import MIMEMultipart
 
-print("🚀 Khởi động Robot Shipper (Bản Bất Tử - Xuyên Thủng Mọi Lỗi Format)...")
+# ==========================================
+# 1. CẤU HÌNH BẢO MẬT (Đọc từ GitHub hoặc Streamlit)
+# ==========================================
+def get_secret(key):
+    # Thử đọc từ GitHub Actions (Environment Variables)
+    val = os.environ.get(key)
+    if val: return val
+    # Nếu không có, thử đọc từ Streamlit Secrets (Dành cho chạy local test)
+    try:
+        import streamlit as st
+        return st.secrets.get(key)
+    except: return None
 
-# 1. KẾT NỐI GOOGLE SHEET (DÙNG MẮT THẦN REGEX)
-try:
-    with open(".streamlit/secrets.toml", "r", encoding="utf-8") as f:
-        raw_secrets = f.read()
+SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw'
+VN_TZ = pytz.timezone('Asia/Ho_Chi_Minh')
+def get_vn_now(): return datetime.datetime.now(VN_TZ)
 
-    # Móc Email Bot
-    email_match = re.search(r'([a-zA-Z0-9_\-\.]+@[a-zA-Z0-9_\-\.]+\.iam\.gserviceaccount\.com)', raw_secrets)
-    if not email_match:
-        raise Exception("Không tìm thấy Email Bot đuôi .iam.gserviceaccount.com")
-    client_email = email_match.group(1)
+# ==========================================
+# 2. CÁC HÀM XỬ LÝ LÕI
+# ==========================================
+def get_google_sheet():
+    # Lấy thông tin Service Account từ Secret
+    creds_json = get_secret("service_account")
+    if isinstance(creds_json, str):
+        info = json.loads(creds_json)
+    else:
+        info = dict(creds_json)
+        
+    creds = Credentials.from_service_account_info(info, scopes=['https://www.googleapis.com/auth/spreadsheets'])
+    return gspread.authorize(creds).open_by_key(SHEET_ID)
 
-    # Móc Private Key (Nguyên khối từ BEGIN đến END)
-    pk_match = re.search(r'(-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----)', raw_secrets, re.DOTALL)
-    if not pk_match:
-        raise Exception("Không tìm thấy đoạn khóa BEGIN PRIVATE KEY")
+def post_to_cms(website_row, title, html_content, dash_config):
+    blog_receiver = str(website_row.get('WS_BLOG_CONTENT', '')).strip()
+    u = str(website_row.get('WS_LOGIN_USER', '')).strip()
+    p = str(website_row.get('WS_LOGIN_PASS', '')).strip()
     
-    # Biến \n ảo (text) thành \n thật (xuống dòng) cho Google Auth đọc được
-    private_key = pk_match.group(1).replace('\\n', '\n')
-
-    s_creds = {
-        "type": "service_account",
-        "project_id": client_email.split('@')[1].replace('.iam.gserviceaccount.com', ''),
-        "private_key": private_key,
-        "client_email": client_email,
-        "token_uri": "https://oauth2.googleapis.com/token"
-    }
-
-    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    creds = Credentials.from_service_account_info(s_creds, scopes=scopes)
-    client = gspread.authorize(creds)
-    
-    SHEET_ID = '1bSc4nd7HPTNXkUZ5cFW3mfkcbuZumHQxhN5uIhfIguw'
-    spreadsheet = client.open_by_key(SHEET_ID)
-    print("✅ Kết nối Google Sheet THÀNH CÔNG RỰC RỠ!")
-except Exception as e:
-    print(f"❌ Lỗi kết nối: {e}")
-    exit()
-
-# 2. LẤY DỮ LIỆU TỪ CÁC TAB
-try:
-    ws_report = spreadsheet.worksheet('REPORT')
-    df_report = pd.DataFrame(ws_report.get_all_records())
-    ws_website = spreadsheet.worksheet('WEBSITE')
-    df_website = pd.DataFrame(ws_website.get_all_records())
-    ws_dashboard = spreadsheet.worksheet('DASHBOARD')
-    dashboard = {str(row['DATA_KEY']).strip(): str(row['DATA_CONTENT']).strip() for row in ws_dashboard.get_all_records()}
-    
-    email_sender = dashboard.get('EMAIL_SENDER', '').strip()
-    email_pwd = dashboard.get('EMAIL_SENDER_PASSWORD', '').replace(' ', '').strip()
-    
-    if not email_sender or not email_pwd:
-        print("❌ Lỗi: Thiếu cấu hình Email Sender hoặc App Password trong tab DASHBOARD.")
-        exit()
-except Exception as e:
-    print(f"❌ Lỗi đọc dữ liệu các Tab: {e}")
-    exit()
-
-# 3. QUÉT BÀI VIẾT PENDING ĐÃ ĐẾN GIỜ ĐĂNG
-now = datetime.datetime.utcnow() + datetime.timedelta(hours=7)
-print(f"🕒 Giờ hệ thống hiện tại (VN): {now.strftime('%Y-%m-%d %H:%M')}")
-
-headers = ws_report.row_values(1)
-res_col_idx = headers.index('REP_RESULT') + 1
-url_col_idx = headers.index('REP_POST_URL') + 1
-
-posted_count = 0
-
-for idx, row in df_report.iterrows():
-    if str(row.get('REP_RESULT', '')).strip() == 'PENDING':
-        pub_date_str = str(row.get('REP_PUBLISH_DATE', '')).strip()
+    if "@blogger.com" in blog_receiver.lower():
+        s_mail = dash_config.get('EMAIL_SENDER', '').strip()
+        s_pass = dash_config.get('EMAIL_SENDER_PASSWORD', '').strip()
         try:
-            pub_date = datetime.datetime.strptime(pub_date_str, '%Y-%m-%d %H:%M')
-            if now >= pub_date:
-                ws_name = str(row.get('REP_WS_NAME', '')).strip()
-                title = str(row.get('REP_TITLE', '')).strip()
-                html_content = str(row.get('REP_HTML', '')).strip()
+            msg = MIMEMultipart()
+            msg['From'], msg['To'], msg['Subject'] = s_mail, blog_receiver, title
+            msg.attach(MIMEText(html_content, 'html'))
+            server = smtplib.SMTP('smtp.gmail.com', 587)
+            server.starttls()
+            server.login(s_mail, s_pass)
+            server.send_message(msg)
+            server.quit()
+            return True, "Bán Blogspot OK"
+        except Exception as e: return False, str(e)
+    else:
+        domain = str(website_row.get('WS_LINK_IN_BACKLINK', '')).split(',')[0].strip()
+        try:
+            res = requests.post(f"{domain.rstrip('/')}/wp-json/wp/v2/posts", auth=(u, p), json={'title': title, 'content': html_content, 'status': 'publish'}, timeout=30)
+            if res.status_code in [200, 201]: return True, "Đăng WP OK"
+            return False, res.text[:100]
+        except Exception as e: return False, str(e)
 
-                if len(html_content) < 100:
-                    continue
+def send_telegram_noti(dash_config, msg_text):
+    token = dash_config.get('TELEGRAM_BOT_TOKEN', '').strip()
+    chat_id = dash_config.get('TELEGRAM_CHAT_ID', '').strip()
+    if token and chat_id:
+        try: requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": msg_text, "parse_mode": "HTML"}, timeout=5)
+        except: pass
 
-                target_web = df_website[df_website['WS_NAME'].astype(str).str.strip() == ws_name]
-                if not target_web.empty:
-                    target_email = str(target_web.iloc[0].get('WS_BLOG_CONTENT', '')).strip()
-                    
-                    if target_email and '@' in target_email:
-                        print(f"📧 Đang gửi bài '{title}' tới {target_email}...")
-                        
-                        msg = MIMEMultipart()
-                        msg['From'] = email_sender
-                        msg['To'] = target_email
-                        msg['Subject'] = title
-                        msg.attach(MIMEText(html_content, 'html'))
+def run_job():
+    now = get_vn_now()
+    print(f"[{now.strftime('%H:%M:%S')}] 🔍 Bắt đầu quét bài PENDING...")
+    ss = get_google_sheet()
+    ws_report = ss.worksheet('REPORT')
+    data_report = ws_report.get_all_values()
+    
+    dash_data = ss.worksheet('DASHBOARD').get_all_values()
+    dash_dict = {str(k).strip(): str(v).strip() for k, v in zip(pd.DataFrame(dash_data[1:])[0], pd.DataFrame(dash_data[1:])[1])}
+    
+    web_data = ss.worksheet('WEBSITE').get_all_values()
+    df_web = pd.DataFrame(web_data[1:], columns=[str(h).strip() for h in web_data[0]])
 
-                        server = smtplib.SMTP('smtp.gmail.com', 587)
-                        server.starttls()
-                        server.login(email_sender, email_pwd)
-                        server.send_message(msg)
-                        server.quit()
+    headers = [str(h).strip() for h in data_report[0]]
+    idx_res = headers.index('REP_RESULT')
+    idx_pub = headers.index('REP_PUBLISH_DATE')
+    idx_html = headers.index('REP_HTML'); idx_log = headers.index('REP_LOG')
+    idx_ws = headers.index('REP_WS_NAME'); idx_title = headers.index('REP_TITLE')
 
-                        sheet_row_num = idx + 2
-                        ws_report.update_cell(sheet_row_num, res_col_idx, 'DONE')
-                        ws_report.update_cell(sheet_row_num, url_col_idx, 'Đã đẩy qua Mail2Blogger')
-                        
-                        print(f"✅ Đăng bài thành công: {title}")
-                        posted_count += 1
-                        time.sleep(2)
-        except Exception as e:
-            print(f"❌ Lỗi xử lý hàng {idx+2}: {e}")
+    upd = []
+    for i, row in enumerate(data_report[1:], 2):
+        if row[idx_res].strip() == 'PENDING':
+            try: pub_dt = VN_TZ.localize(datetime.datetime.strptime(row[idx_pub].strip(), '%Y-%m-%d %H:%M'))
+            except: continue
+            
+            if pub_dt <= now:
+                ws_name = row[idx_ws]; title = row[idx_title]; html_content = row[idx_html]
+                web_info = df_web[df_web['WS_NAME'].astype(str).str.strip() == ws_name.strip()]
+                if not web_info.empty:
+                    success, msg = post_to_cms(web_info.iloc[0], title, html_content, dash_dict)
+                    if success:
+                        upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_res+1)}', 'values': [['DONE']]})
+                        upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_html+1)}', 'values': [['']]})
+                        upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_log+1)}', 'values': [['']]})
+                        send_telegram_noti(dash_dict, f"⏰ <b>AUTO PUBLISH</b>\n✅ Web: {ws_name}\n📑 {title}")
 
-if posted_count == 0:
-    print("ℹ️ Không có bài viết nào khớp điều kiện đăng lúc này.")
-else:
-    print(f"🎉 Hoàn tất! Đã đăng tổng cộng {posted_count} bài.")
+    if upd: ws_report.batch_update(upd)
+
+if __name__ == "__main__":
+    run_job()
