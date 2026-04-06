@@ -1,30 +1,28 @@
-name: He Thong Auto Post 24/7
+name: Auto Publish Robot
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
-  workflow_dispatch:
+    # Cứ mỗi 30 phút chạy 1 lần (giờ UTC)
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Cho phép bấm chạy bằng tay để test
 
 jobs:
-  run-bot:
+  build:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Cai dat Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
 
-    - name: Cai dat thu vien
-      run: |
-        pip install pandas gspread google-auth requests beautifulsoup4 toml
+      - name: Install dependencies
+        run: |
+          pip install pandas gspread google-auth pytz requests
 
-    - name: Nap Chia Khoa Secrets
-      run: |
-        mkdir -p .streamlit
-        echo "${{ secrets.STREAMLIT_SECRETS }}" > .streamlit/secrets.toml
-
-    - name: Chay File Dang Bai
-      run: python autopost.py
+      - name: Run publish script
+        env:
+          service_account: ${{ secrets.service_account }}
+        run: python auto_publish.py
