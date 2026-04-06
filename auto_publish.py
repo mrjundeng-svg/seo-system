@@ -7,13 +7,11 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # ==========================================
-# 1. CẤU HÌNH BẢO MẬT (Đọc từ GitHub hoặc Streamlit)
+# 1. CẤU HÌNH BẢO MẬT 
 # ==========================================
 def get_secret(key):
-    # Thử đọc từ GitHub Actions (Environment Variables)
     val = os.environ.get(key)
     if val: return val
-    # Nếu không có, thử đọc từ Streamlit Secrets (Dành cho chạy local test)
     try:
         import streamlit as st
         return st.secrets.get(key)
@@ -27,10 +25,21 @@ def get_vn_now(): return datetime.datetime.now(VN_TZ)
 # 2. CÁC HÀM XỬ LÝ LÕI
 # ==========================================
 def get_google_sheet():
-    # Lấy thông tin Service Account từ Secret
     creds_json = get_secret("service_account")
+    
+    # KHIÊN CHỐNG ĐẠN 1: Báo lỗi tiếng Việt nếu GitHub bị mất Secret
+    if not creds_json or str(creds_json).strip() == "":
+        print("🚨 LỖI BẢO MẬT: GitHub đang không tìm thấy Secret 'service_account'.")
+        print("➤ Cách sửa: Vào Settings -> Secrets and variables -> Actions -> Tạo lại Repository secret!")
+        return None
+
     if isinstance(creds_json, str):
-        info = json.loads(creds_json)
+        try:
+            info = json.loads(creds_json)
+        except Exception as e:
+            # KHIÊN CHỐNG ĐẠN 2: Báo lỗi nếu Sếp dán nhầm text không phải JSON
+            print(f"🚨 LỖI ĐỊNH DẠNG: Cái dán trong Secret không phải là chuẩn JSON. Lỗi chi tiết: {e}")
+            return None
     else:
         info = dict(creds_json)
         
@@ -54,7 +63,7 @@ def post_to_cms(website_row, title, html_content, dash_config):
             server.login(s_mail, s_pass)
             server.send_message(msg)
             server.quit()
-            return True, "Bán Blogspot OK"
+            return True, "Bắn Blogspot OK"
         except Exception as e: return False, str(e)
     else:
         domain = str(website_row.get('WS_LINK_IN_BACKLINK', '')).split(',')[0].strip()
@@ -74,7 +83,12 @@ def send_telegram_noti(dash_config, msg_text):
 def run_job():
     now = get_vn_now()
     print(f"[{now.strftime('%H:%M:%S')}] 🔍 Bắt đầu quét bài PENDING...")
+    
     ss = get_google_sheet()
+    if not ss: 
+        print("🛑 Tiến trình hủy bỏ vì không có quyền truy cập Google Sheet.")
+        return
+
     ws_report = ss.worksheet('REPORT')
     data_report = ws_report.get_all_values()
     
@@ -91,23 +105,37 @@ def run_job():
     idx_ws = headers.index('REP_WS_NAME'); idx_title = headers.index('REP_TITLE')
 
     upd = []
+    found_any = False
+    
     for i, row in enumerate(data_report[1:], 2):
         if row[idx_res].strip() == 'PENDING':
             try: pub_dt = VN_TZ.localize(datetime.datetime.strptime(row[idx_pub].strip(), '%Y-%m-%d %H:%M'))
             except: continue
             
             if pub_dt <= now:
+                found_any = True
                 ws_name = row[idx_ws]; title = row[idx_title]; html_content = row[idx_html]
+                print(f"➤ Đang xử lý: '{title}' lên Web: {ws_name}")
+                
                 web_info = df_web[df_web['WS_NAME'].astype(str).str.strip() == ws_name.strip()]
                 if not web_info.empty:
                     success, msg = post_to_cms(web_info.iloc[0], title, html_content, dash_dict)
                     if success:
+                        print(f"✅ Thành công: {msg}")
                         upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_res+1)}', 'values': [['DONE']]})
                         upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_html+1)}', 'values': [['']]})
                         upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_log+1)}', 'values': [['']]})
                         send_telegram_noti(dash_dict, f"⏰ <b>AUTO PUBLISH</b>\n✅ Web: {ws_name}\n📑 {title}")
+                    else:
+                        print(f"🛑 Thất bại: {msg}")
+                else:
+                    print(f"⚠️ Cảnh báo: Không tìm thấy web {ws_name} trong bảng cấu hình.")
 
-    if upd: ws_report.batch_update(upd)
+    if upd: 
+        ws_report.batch_update(upd)
+        print("🎉 Đã lưu thay đổi trạng thái vào Google Sheet.")
+    elif not found_any:
+        print("💤 Không có bài nào tới giờ đăng. Robot đi ngủ tiếp.")
 
 if __name__ == "__main__":
     run_job()
