@@ -91,7 +91,7 @@ def post_to_cms(website_row, title, html_content, dash_config):
             return True, f"Bắn Blogspot OK: {blog_receiver}"
         except Exception as e: return False, f"Lỗi Mail: {e}"
     else:
-        domain = str(website_row.get('WS_LINK_IN_BACKLINK', '')).split(',')[0].strip()
+        domain = str(website_row.get('WS_LINK_IN_BACKLINK', '')).split()[0].strip()
         if not domain: return False, "Thiếu domain WP."
         try:
             res = requests.post(f"{domain.rstrip('/')}/wp-json/wp/v2/posts", auth=(u, p), json={'title': title, 'content': html_content, 'status': 'publish'}, timeout=30)
@@ -269,6 +269,11 @@ class AutoSEOPipeline:
 
         if s_key:
             self.add_log(ui_log, f"🕵️ [SERP] Quét data qua Serper.dev...", "detail")
+            
+            # ---------------------------------------------------------
+            # BẢN VÁ LỖI 4: VÒNG LẶP CÀO ÉP ĐỦ 3 BÀI TỪ NHIỀU NGUỒN
+            # ---------------------------------------------------------
+            all_urls = []
             for kw in self.all_topic_kws[:2]:
                 try:
                     headers = {'X-API-KEY': s_key, 'Content-Type': 'application/json'}
@@ -276,33 +281,37 @@ class AutoSEOPipeline:
                     res = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=15)
                     if res.status_code == 200:
                         orgs = res.json().get('organic', [])
-                        urls = [item['link'] for item in orgs if 'link' in item]
-                        
-                        t_link = None
-                        if c_list:
-                            clinks = [u for u in urls if any(c in u for c in c_list)]
-                            if clinks: t_link = clinks[0]
-                        if not t_link and urls: t_link = random.choice(urls[:3])
-                            
-                        if t_link:
-                            rh = requests.get(t_link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-                            if rh.status_code == 200:
-                                soup = BeautifulSoup(rh.text, 'html.parser')
-                                for t in soup(["script", "style", "nav", "footer", "header"]): t.decompose()
-                                ext = "\n".join([t.get_text(strip=True) for t in soup.find_all(['h2', 'h3', 'p'])])[:1000]
-                                if ext: 
-                                    serp_chunks.append(f"--- Data cho '{kw}' ---\n{ext}")
-                                    scraped_urls.append(t_link)
-                    else:
-                        self.add_log(ui_log, f"⚠️ Lỗi Serper API: {res.text[:100]}", "warn")
+                        all_urls.extend([item['link'] for item in orgs if 'link' in item])
                 except Exception as e:
-                    self.add_log(ui_log, f"⚠️ Lỗi kết nối Serper: {e}", "warn")
+                    self.add_log(ui_log, f"⚠️ Lỗi kết nối Serper cho từ khóa '{kw}': {e}", "warn")
             
+            unique_urls = list(dict.fromkeys(all_urls)) # Xóa trùng lặp
+            # Đưa các URL của đối thủ (c_list) lên ưu tiên hàng đầu, các URL khác xếp sau
+            prioritized_urls = [u for u in unique_urls if any(c in u for c in c_list)] + [u for u in unique_urls if not any(c in u for c in c_list)]
+            
+            successful_scrapes = 0
+            for t_link in prioritized_urls:
+                if successful_scrapes >= 3: break # Ép cào đủ 3 bài là dừng
+                try:
+                    rh = requests.get(t_link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+                    if rh.status_code == 200:
+                        soup = BeautifulSoup(rh.text, 'html.parser')
+                        for t in soup(["script", "style", "nav", "footer", "header"]): t.decompose()
+                        ext = "\n".join([t.get_text(strip=True) for t in soup.find_all(['h2', 'h3', 'p'])])[:1000]
+                        if ext: 
+                            serp_chunks.append(f"--- Data từ: {t_link} ---\n{ext}")
+                            scraped_urls.append(t_link)
+                            successful_scrapes += 1
+                    else:
+                        self.add_log(ui_log, f"⚠️ Web chặn Bot (Status {rh.status_code}): {t_link}", "warn")
+                except Exception as e:
+                    self.add_log(ui_log, f"⚠️ Timeout/Lỗi cào Web: {t_link} -> Bỏ qua, thử link khác.", "warn")
+            # ---------------------------------------------------------
+
             if serp_chunks:
                 raw_serp_text = "\n\n".join(serp_chunks)[:3000]
-                unique_urls = list(set(scraped_urls))
-                url_list_str = "\n".join([f"   + {u}" for u in unique_urls])
-                self.add_log(ui_log, f"✅ [SERP] Cào data từ {len(unique_urls)} URL:\n{url_list_str}", "success")
+                url_list_str = "\n".join([f"   + {u}" for u in scraped_urls])
+                self.add_log(ui_log, f"✅ [SERP] Đã cào thành công Data từ {len(scraped_urls)} URL:\n{url_list_str}", "success")
                 
                 gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
                 if gem_keys:
@@ -344,10 +353,13 @@ class AutoSEOPipeline:
         
         h3_instruction = f"TẠI ĐÚNG 2 THẺ H2 BẤT KỲ TRONG BÀI, bạn bắt buộc phải chia nhỏ nội dung xuống thành 2-3 thẻ <h3>. Các thẻ H2 còn lại chỉ dùng thẻ <p> hoặc <ul>."
         
+        # ---------------------------------------------------------
+        # BẢN VÁ LỖI 1: LỆNH TỬ THẦN KHÓA ĐỘ DÀI TIÊU ĐỀ H1
+        # ---------------------------------------------------------
         math_skeleton = f"""
         [BỘ LỆNH TOÁN HỌC ĐIỀU KHIỂN CẤU TRÚC - TUYỆT ĐỐI TUÂN THỦ]:
         1. KIỂM SOÁT ĐỘ DÀI TOÀN BÀI: Tổng số chữ chỉ được dao động quanh {self.target_wc} chữ. CẤM VIẾT LAN MAN VƯỢT QUÁ {self.max_w} CHỮ.
-        2. QUY LẬT THẺ H1 (TIÊU ĐỀ CHÍNH): Bài viết BẮT ĐẦU BẰNG ĐÚNG MỘT thẻ <h1>. Thẻ <h1> này PHẢI LÀ MỘT TIÊU ĐỀ GIẬT TÍT DÀI, HẤP DẪN, KHÁC BIỆT VÀ SÁNG TẠO 100% (bắt buộc chứa từ khóa '{m_kw_str}'). Hãy LUÂN PHIÊN NGẪU NHIÊN vị trí của từ khóa trong tiêu đề (có thể ở đầu, ở giữa hoặc ở cuối tiêu đề). TUYỆT ĐỐI KHÔNG dùng đi dùng lại một mẫu tiêu đề. CẤM viết cộc lốc mỗi cụm từ khóa. CẤM chèn thẻ <h2> ngay dưới <h1> để làm phụ đề.
+        2. QUY LẬT THẺ H1 (TIÊU ĐỀ CHÍNH): Bài viết BẮT ĐẦU BẰNG ĐÚNG MỘT thẻ <h1>. LỆNH TỐI CAO: Tiêu đề (H1) tuyệt đối KHÔNG ĐƯỢC VƯỢT QUÁ 14 TỪ (Dưới 65 ký tự). Phải ngắn gọn, sắc bén, SÁNG TẠO 100% và bắt buộc chứa từ khóa '{m_kw_str}'. Hãy LUÂN PHIÊN NGẪU NHIÊN vị trí của từ khóa trong tiêu đề (có thể ở đầu, ở giữa hoặc cuối). CẤM viết cộc lốc mỗi cụm từ khóa. CẤM chèn thẻ <h2> ngay dưới <h1>.
         3. QUY LẬT HEADING 2: Xây dựng chính xác {num_h2} thẻ <h2> (Không tính H1). Dưới H1 phải là nội dung mở bài (thẻ <p>), tuyệt đối không được là thẻ <h2>.
         4. GIỚI HẠN TEXT MỖI H2: Dưới mỗi thẻ <h2>, CHỈ VIẾT NGẮN GỌN TỐI ĐA {words_per_h2 + 20} CHỮ. Tuyệt đối không phân tích dây dưa.
         5. QUY LUẬT HEADING 3: {h3_instruction}
@@ -361,8 +373,8 @@ class AutoSEOPipeline:
             end_module_instruction = "- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, tự đúc kết và kết thúc bài viết một cách tự nhiên."
         elif self.retry_count > 0:
             if self.last_word_count < self.min_w:
-                retry_cmd = f"\n[LỆNH CẢNH CÁO CHÍ MẠNG]: Lần chạy trước bạn viết QUÁ NGẮN ({self.last_word_count} chữ). BẮT BUỘC XÂY LẠI BÀI HOÀN TOÀN MỚI TỪ ĐẦU! Phải đảm bảo ĐỦ ĐỘ DÀI {self.target_wc} chữ bằng cách mở rộng các luận điểm sâu sắc hơn. ĐẶC BIỆT, ĐỂ BÀI DÀI HƠN, BẠN PHẢI THÊM MỘT PHẦN MỚI Ở CUỐI BÀI."
-                end_module_instruction = f"- MODULE DỰ PHÒNG Ở CUỐI BÀI (BẮT BUỘC): Để kéo dài bài viết, hãy tạo nội dung sau ở vị trí cuối cùng của bài: {p_end.upper()}.\n- LƯU Ý VỀ MODULE: TUYỆT ĐỐI KHÔNG dùng tên module (như 'Case study', 'Bảng giá') làm tiêu đề. Hãy đặt tiêu đề H2/H3 thật hấp dẫn và phù hợp ngữ cảnh.\n- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>, KẾT THÚC LÀ MÃ ĐÓNG MODULE DỰ PHÒNG."
+                retry_cmd = f"\n[LỆNH CẢNH CÁO CHÍ MẠNG]: Lần chạy trước bạn viết QUÁ NGẮN ({self.last_word_count} chữ). BẮT BUỘC XÂY LẠI BÀI HOÀN TOÀN MỚI TỪ ĐẦU! Phải đảm bảo ĐỦ ĐỘ DÀI {self.target_wc} chữ bằng cách mở rộng các luận điểm sâu sắc hơn. ĐẶC BIỆT, ĐỂ BÀI DÀI HƠN, BẠN PHẢI THÊM MỘT PHẦN MỚI TỪ THẺ H2 SỐ 2 TRỞ XUỐNG."
+                end_module_instruction = f"- MODULE DỰ PHÒNG (BẮT BUỘC): Để kéo dài bài viết, hãy chèn ngẫu nhiên nội dung sau vào TỪ THẺ H2 SỐ 2 TRỞ ĐI: {p_end.upper()}.\n- LƯU Ý VỀ MODULE: TUYỆT ĐỐI KHÔNG dùng tên module (như 'Case study') làm tiêu đề.\n- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1>."
             elif self.last_word_count > self.max_w:
                 retry_cmd = f"\n[LỆNH CẢNH CÁO CHÍ MẠNG]: Lần chạy trước bạn viết QUÁ DÀI ({self.last_word_count} chữ). BẮT BUỘC XÂY LẠI BÀI HOÀN TOÀN MỚI TỪ ĐẦU! Phải ép bài viết ngắn gọn, súc tích lại quanh mốc {self.target_wc} chữ. Không viết lan man."
                 end_module_instruction = "- TRẢ VỀ DUY NHẤT HTML CODE, BẮT ĐẦU BẰNG <h1> và kết thúc bài tự nhiên."
@@ -515,32 +527,45 @@ class AutoSEOPipeline:
         total_links_needed = min(self.out_lim + self.in_lim, len(self.all_topic_kws))
         kws_to_inject = self.all_topic_kws[:total_links_needed]
         
+        # ---------------------------------------------------------
+        # BẢN VÁ LỖI 3: PHÂN BỔ TỪ KHÓA ĐỀU KHẮP BÀI, TRÁNH DÍNH CHÙM
+        # ---------------------------------------------------------
         avail_p = [p for p in soup.find_all(['p', 'li']) if len(p.get_text(strip=True)) > 20 and not p.find('a') and not p.find('img')]
 
         if avail_p and kws_to_inject:
-            n_chunks = len(kws_to_inject)
-            chunk_size = max(1, len(avail_p) // n_chunks)
+            # Tính toán khoảng cách đều nhau giữa các đoạn văn
+            spacing = max(1, len(avail_p) // len(kws_to_inject))
+            used_p_indices = set()
 
             for i, k in enumerate(kws_to_inject):
-                start_idx = min(i * chunk_size, len(avail_p) - 1)
-                end_idx = min((i + 1) * chunk_size, len(avail_p)) if i < n_chunks - 1 else len(avail_p)
-                chunk_p = avail_p[start_idx:end_idx]
-                if not chunk_p: chunk_p = avail_p
-
                 url, is_e = "", False
                 if self.injected_ext < self.out_lim and ou: url, is_e = random.choice(ou), True
                 elif self.injected_int < self.in_lim and iu: url, is_e = random.choice(iu), False
                 if not url: continue
 
                 injected = False
-                for p in chunk_p:
-                    if re.search(re.escape(k), p.get_text(), flags=re.IGNORECASE):
-                        p.replace_with(BeautifulSoup(re.sub(re.escape(k), lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(p), count=1, flags=re.IGNORECASE), 'html.parser'))
-                        injected = True
+                
+                # Tính vị trí lý tưởng để nhét câu (Rải đều từ đầu đến cuối)
+                ideal_idx = min(i * spacing + (spacing // 2), len(avail_p) - 1)
+                
+                # Tìm thẻ <p> gần nhất chưa bị nhét câu nối
+                target_idx = ideal_idx
+                for offset in range(len(avail_p)):
+                    test_idx = (ideal_idx + offset) % len(avail_p)
+                    if test_idx not in used_p_indices:
+                        target_idx = test_idx
                         break
+                
+                target_p = avail_p[target_idx]
+                used_p_indices.add(target_idx)
 
+                # Dò xem có tự nhiên trùng từ khóa trong thẻ <p> này không
+                if re.search(re.escape(k), target_p.get_text(), flags=re.IGNORECASE):
+                    target_p.replace_with(BeautifulSoup(re.sub(re.escape(k), lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(target_p), count=1, flags=re.IGNORECASE), 'html.parser'))
+                    injected = True
+
+                # Nếu AI lười, Python tự đúc câu nối và nhét vào thẻ <p> đã định vị
                 if not injected:
-                    target_p = random.choice(chunk_p)
                     fallback_sentences = [
                         f" Song song đó, yếu tố cốt lõi liên quan đến {k} luôn được các chuyên gia đánh giá cao.",
                         f" Đồng thời, các khía cạnh liên quan đến {k} cũng cần được phân tích kỹ lưỡng.",
@@ -550,11 +575,12 @@ class AutoSEOPipeline:
                     pattern = re.compile(re.escape(k), re.IGNORECASE)
                     final_html = pattern.sub(f"<a href='{url}'>{k}</a>", gen_txt, count=1)
                     target_p.append(BeautifulSoup(final_html, 'html.parser'))
-                    self.add_log(ui_log, f"⚠️ Dùng câu nối cho từ '{k}' ở Khúc {i+1}.", "warn")
+                    self.add_log(ui_log, f"⚠️ Dùng câu nối cho từ '{k}' - rải ở đoạn văn số {target_idx + 1}.", "warn")
 
                 self.injected_kws_list.append(k)
                 if is_e: self.injected_ext += 1
                 else: self.injected_int += 1
+        # ---------------------------------------------------------
 
         self.add_log(ui_log, f"🛠️ [GẮN LINK] Chốt: {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int. Tổng dùng {len(self.injected_kws_list)} từ khóa.", "success")
 
@@ -570,7 +596,7 @@ class AutoSEOPipeline:
                 if len(self.used_imgs) >= req_img: break
                 u_img = str(r['IMG_URL']).strip()
                 try:
-                    res = requests.get(u_img, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}, stream=True, timeout=5)
+                    res = requests.get(u_img, headers={'User-Agent': 'Mozilla/5.0'}, stream=True, timeout=5)
                     if res.status_code == 200 and 'image' in res.headers.get('Content-Type', '').lower(): 
                         self.used_imgs.append(u_img)
                     else: self.failed_imgs.append(u_img)
@@ -583,50 +609,39 @@ class AutoSEOPipeline:
         else:
             img_max_w = ws_banner
 
+        # ---------------------------------------------------------
+        # BẢN VÁ LỖI 4: ÉP ẢNH THEO VỊ TRÍ THẺ H2, CHỐNG DÍNH CHÙM
+        # ---------------------------------------------------------
         if self.used_imgs:
-            n_imgs = len(self.used_imgs)
-            n_kws = len(self.injected_kws_list)
-            target_kw_idx = []
-            
-            if n_imgs == 1:
-                target_kw_idx = [0] if n_kws > 0 else []
-            elif n_imgs == 2:
-                if n_kws >= 3: target_kw_idx = [0, 2] 
-                else: target_kw_idx = [0, 1] if n_kws >= 2 else ([0] if n_kws > 0 else [])
-            else: 
-                target_kw_idx = list(range(min(n_imgs, n_kws))) 
-
-            all_tags = soup.find_all(['p', 'h2', 'h3'])
-            inserted_tag_indices = []
+            h2_tags = soup.find_all('h2')
+            fallback_p_tags = soup.find_all('p')
             
             for i, img_u in enumerate(self.used_imgs):
-                kw_img_alt = self.injected_kws_list[target_kw_idx[i]] if i < len(target_kw_idx) else self.all_topic_kws[0]
+                kw_img_alt = self.injected_kws_list[i] if i < len(self.injected_kws_list) else self.all_topic_kws[0]
                 img_html = f"<div style='margin: 20px auto; text-align: center;'><img src='{img_u}' alt='{kw_img_alt}' loading='lazy' style='max-width: {img_max_w}; height: auto; width: 100%; display: inline-block;'></div>"
                 inserted = False
 
-                if i < len(target_kw_idx):
-                    target_kw_text = self.injected_kws_list[target_kw_idx[i]]
-                    for t_idx, tag in enumerate(all_tags):
-                        if not any(abs(t_idx - ins_idx) < 3 for ins_idx in inserted_tag_indices):
-                            if tag.name in ['p', 'h2', 'h3'] and re.search(re.escape(target_kw_text), tag.get_text(), flags=re.IGNORECASE):
-                                tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
-                                inserted_tag_indices.append(t_idx)
-                                inserted = True
-                                break
-                                
-                if not inserted:
-                    for t_idx, tag in enumerate(all_tags):
-                        if tag.name == 'p' and not any(abs(t_idx - ins_idx) < 4 for ins_idx in inserted_tag_indices):
-                            tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
-                            inserted_tag_indices.append(t_idx)
-                            inserted = True
-                            break
-                            
-                    if not inserted and all_tags:
-                        all_tags[-1].insert_after(BeautifulSoup(img_html, 'html.parser'))
+                if h2_tags:
+                    if i == 0:
+                        target_tag = h2_tags[0] # Ảnh 1 cắm dưới H2 đầu tiên
+                    elif i == 1:
+                        target_tag = h2_tags[2] if len(h2_tags) >= 3 else h2_tags[-1] # Ảnh 2 cắm dưới H2 thứ 3
+                    else:
+                        target_tag = h2_tags[-1]
+                    
+                    # Kiểm tra an toàn: Nếu chỗ này chưa có ảnh thì mới cắm
+                    if not target_tag.find_next_sibling('div', style=re.compile("text-align: center")):
+                        target_tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
+                        inserted = True
+
+                if not inserted and fallback_p_tags:
+                    # Rớt vào đây nếu không có thẻ H2 nào (hoặc bị trùng), fallback rải đều theo thẻ p
+                    target_p_idx = min((i+1) * 3, len(fallback_p_tags) - 1)
+                    fallback_p_tags[target_p_idx].insert_after(BeautifulSoup(img_html, 'html.parser'))
+        # ---------------------------------------------------------
 
         if self.failed_imgs: self.add_log(ui_log, f"⚠️ Đã loại {len(self.failed_imgs)} ảnh lỗi hoặc không cho phép load.", "warn")
-        self.add_log(ui_log, f"🖼️ [GẮN ẢNH] DOM Inject thành công {len(self.used_imgs)} ảnh (Max-width: {img_max_w} | Anti-Clump Bật).")
+        self.add_log(ui_log, f"🖼️ [GẮN ẢNH] DOM Inject thành công {len(self.used_imgs)} ảnh (Max-width: {img_max_w} | Luật Anti-Clump theo H2: Bật).")
         self.raw_html = str(soup); return True
 
     def step7_qa_validation(self, ui_log) -> str:
