@@ -7,7 +7,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # ==========================================
-# 1. CẤU HÌNH BẢO MẬT 
+# 1. CẤU HÌNH BẢO MẬT & TIMEZONE
 # ==========================================
 def get_secret(key):
     val = os.environ.get(key)
@@ -27,18 +27,16 @@ def get_vn_now(): return datetime.datetime.now(VN_TZ)
 def get_google_sheet():
     creds_json = get_secret("service_account")
     
-    # KHIÊN CHỐNG ĐẠN 1: Báo lỗi tiếng Việt nếu GitHub bị mất Secret
+    # Bọc giáp chống đạn: Báo lỗi nếu thiếu Secret hoặc sai định dạng JSON
     if not creds_json or str(creds_json).strip() == "":
         print("🚨 LỖI BẢO MẬT: GitHub đang không tìm thấy Secret 'service_account'.")
-        print("➤ Cách sửa: Vào Settings -> Secrets and variables -> Actions -> Tạo lại Repository secret!")
         return None
 
     if isinstance(creds_json, str):
         try:
             info = json.loads(creds_json)
         except Exception as e:
-            # KHIÊN CHỐNG ĐẠN 2: Báo lỗi nếu Sếp dán nhầm text không phải JSON
-            print(f"🚨 LỖI ĐỊNH DẠNG: Cái dán trong Secret không phải là chuẩn JSON. Lỗi chi tiết: {e}")
+            print(f"🚨 LỖI ĐỊNH DẠNG: Key Secret không phải là chuẩn JSON. Lỗi chi tiết: {e}")
             return None
     else:
         info = dict(creds_json)
@@ -82,7 +80,7 @@ def send_telegram_noti(dash_config, msg_text):
 
 def run_job():
     now = get_vn_now()
-    print(f"[{now.strftime('%H:%M:%S')}] 🔍 Bắt đầu quét bài PENDING...")
+    print(f"[{now.strftime('%H:%M:%S')}] 🔍 Bắt đầu đi tuần tra tìm bài PENDING...")
     
     ss = get_google_sheet()
     if not ss: 
@@ -101,8 +99,10 @@ def run_job():
     headers = [str(h).strip() for h in data_report[0]]
     idx_res = headers.index('REP_RESULT')
     idx_pub = headers.index('REP_PUBLISH_DATE')
-    idx_html = headers.index('REP_HTML'); idx_log = headers.index('REP_LOG')
-    idx_ws = headers.index('REP_WS_NAME'); idx_title = headers.index('REP_TITLE')
+    idx_html = headers.index('REP_HTML')
+    idx_log = headers.index('REP_LOG')
+    idx_ws = headers.index('REP_WS_NAME')
+    idx_title = headers.index('REP_TITLE')
 
     upd = []
     found_any = False
@@ -112,30 +112,31 @@ def run_job():
             try: pub_dt = VN_TZ.localize(datetime.datetime.strptime(row[idx_pub].strip(), '%Y-%m-%d %H:%M'))
             except: continue
             
+            # Nếu giờ hẹn đăng Nhỏ hơn hoặc Bằng giờ hiện tại -> Bắt buộc ĐĂNG!
             if pub_dt <= now:
                 found_any = True
                 ws_name = row[idx_ws]; title = row[idx_title]; html_content = row[idx_html]
-                print(f"➤ Đang xử lý: '{title}' lên Web: {ws_name}")
+                print(f"➤ Phát hiện mồi ngon: '{title}' -> Chẩn bị đẩy lên Web: {ws_name}")
                 
                 web_info = df_web[df_web['WS_NAME'].astype(str).str.strip() == ws_name.strip()]
                 if not web_info.empty:
                     success, msg = post_to_cms(web_info.iloc[0], title, html_content, dash_dict)
                     if success:
-                        print(f"✅ Thành công: {msg}")
+                        print(f"✅ Đăng thành công: {msg}")
                         upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_res+1)}', 'values': [['DONE']]})
                         upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_html+1)}', 'values': [['']]})
                         upd.append({'range': f'{gspread.utils.rowcol_to_a1(i, idx_log+1)}', 'values': [['']]})
-                        send_telegram_noti(dash_dict, f"⏰ <b>AUTO PUBLISH</b>\n✅ Web: {ws_name}\n📑 {title}")
+                        send_telegram_noti(dash_dict, f"⏰ <b>AUTO PUBLISH THÀNH CÔNG</b>\n✅ Web: {ws_name}\n📑 {title}")
                     else:
                         print(f"🛑 Thất bại: {msg}")
                 else:
-                    print(f"⚠️ Cảnh báo: Không tìm thấy web {ws_name} trong bảng cấu hình.")
+                    print(f"⚠️ Cảnh báo: Không tìm thấy cấu hình web {ws_name}.")
 
     if upd: 
         ws_report.batch_update(upd)
-        print("🎉 Đã lưu thay đổi trạng thái vào Google Sheet.")
+        print("🎉 Đã dọn dẹp hiện trường và cập nhật trạng thái DONE vào Google Sheet.")
     elif not found_any:
-        print("💤 Không có bài nào tới giờ đăng. Robot đi ngủ tiếp.")
+        print("💤 Khu vực an toàn. Không có bài nào tới giờ đăng. Robot đi ngủ tiếp.")
 
 if __name__ == "__main__":
     run_job()
