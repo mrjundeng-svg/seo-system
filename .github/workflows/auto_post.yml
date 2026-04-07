@@ -3,7 +3,7 @@ name: Auto Publish Robot
 on:
   schedule:
     # Nhịp tim 5 phút/lần (Lùa cá cực kỳ sát giờ)
-    - cron: '*/5 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch: # Vẫn giữ nút bấm tay để Sếp thích là test
 
 jobs:
