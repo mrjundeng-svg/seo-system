@@ -2,9 +2,9 @@ name: Auto Publish Robot
 
 on:
   schedule:
-    # Cứ mỗi 30 phút chạy 1 lần (giờ UTC)
-    - cron: '*/30 * * * *'
-  workflow_dispatch: # Cho phép bấm chạy bằng tay để test
+    # Nhịp tim 5 phút/lần (Lùa cá cực kỳ sát giờ)
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # Vẫn giữ nút bấm tay để Sếp thích là test
 
 jobs:
   build:
