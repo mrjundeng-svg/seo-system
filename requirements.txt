@@ -1,8 +1,8 @@
 streamlit
 pandas
 gspread
+google-auth
 google-generativeai
+pytz
 requests
-python-docx
 beautifulsoup4
-google-api-python-client
